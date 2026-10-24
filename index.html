@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261024090601">
+<meta name="spms-build" content="20261024160643">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -680,12 +680,14 @@ const TEST_ACCOUNTS = FIREBASE_BUILD && !FB_TEST ? [] : [
 let ACCOUNTS = TEST_ACCOUNTS.concat(FIREBASE_BUILD ? [] : STAFF);
 let USERS = [];   /* Firebase build: everyone in the users collection, active or not (the Team Leader's Accounts screen) */
 const idFromEmail = e => String(e || '').trim().toLowerCase().split('@')[0].replace(/[^a-z0-9.]/g, '');
-const ROLE = { TECH: 'Technician', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop' };
+const ROLE = { TECH: 'Technician', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver' };
+/* what the person is called on screen: the full-access manager (Mohamed Said) shows as his title, "Technical Manager", not "Team Leader" */
+const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || 'Technical Manager') : (me ? ROLE[me.role] || '' : '');
 const TEST_PW = 'Test#2026';
 const RETURN_HOURS = 48, DEFAULT_RATE = 5, PAGE = 300;
 /* Hubs come from settings/hubs (Stock or the Team Leader add them); these two are the starting set. */
 const DEFAULT_HUBS = [{ code: 'MMH', name: 'Muscat Main Hub', country: 'Oman' }, { code: 'MH', name: 'Muscat Hub', country: 'Oman' }, { code: 'SLH', name: 'Salalah Hub', country: 'Oman' },
-  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' },
+  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' }, { code: 'MSN', name: 'Al Musanaah Hub', country: 'Oman' },
   { code: 'DMH', name: 'Dubai Main Hub', country: 'UAE' }, { code: 'AH', name: 'Abu Dhabi Hub', country: 'UAE' }, { code: 'FH', name: 'Fujairah Hub', country: 'UAE' }];
 const HUBS = [], HUB_NAME = {}, HUB_INFO = [];
 function setHubs(list) {
@@ -739,6 +741,17 @@ const ST = {
   TL: { label: 'Waiting for Team Leader', tone: 'warn', who: 'TL', next: 'Approve or reject' },
   STOCK: { label: 'Approved · waiting for Stock', tone: 'info', who: 'STOCK', next: 'Pick and dispatch' },
   DISPATCHED: { label: 'On the way to technician', tone: 'info', who: 'TECH', next: 'Confirm receipt' },
+  /* Inside Muscat: the part goes from the Muscat Main Hub to the technician by driver. */
+  DRV_PICK: { label: 'Ready · waiting for the driver', tone: 'info', who: 'DRIVER', next: 'Collect the part from the hub' },
+  DRV_GO: { label: 'Driver is bringing the part', tone: 'info', who: 'DRIVER', next: 'Deliver it to the technician' },
+  /* Outside Muscat: the technician uses from his own hub; the Muscat Main Hub replenishes it by driver. */
+  USE_OK: { label: 'Approved · use the part', tone: 'ok', who: 'TECH', next: 'Use the part and start working' },
+  REPL: { label: 'Auto-replenish from Muscat Main Hub', tone: 'warn', who: 'STOCK', next: 'Replenish and send to the hub' },
+  REPL_GO: { label: 'Replenishment on the way to the hub', tone: 'info', who: 'DRIVER', next: 'Deliver it to the hub' },
+  REPL_CONF: { label: 'Confirm the hub is replenished', tone: 'warn', who: 'TECH', next: 'Confirm the part is in your hub' },
+  /* The faulty part can go back to the Muscat Main Hub by driver instead of the technician taking it. */
+  DRV_RET_PICK: { label: 'Faulty part · waiting for the driver', tone: 'warn', who: 'DRIVER', next: 'Collect the faulty part' },
+  DRV_RET_GO: { label: 'Faulty part on the way to Stock', tone: 'info', who: 'DRIVER', next: 'Deliver it to Stock' },
   RECEIVED: { label: 'With technician', tone: 'info', who: 'TECH', next: 'Record replacement' },
   RETURN: { label: 'Return due', tone: 'warn', who: 'TECH', next: 'Send the part back' },
   RETURNING: { label: 'Return on the way to Stock', tone: 'info', who: 'STOCK', next: 'Confirm return received' },
@@ -1501,8 +1514,10 @@ async function createJob(d) {
   if (!dup) dup = (await api.query('jobs', { where: [['techId', '==', me.id], ['scn', '==', scn], ['open', '==', true]] })).map(normJob).find(dupOf);
   if (dup) throw E(`You already have an open request for ${pn} on ${scn} (${dup.id}).`);
   const now = Date.now(), id = newId('REQ');
+  const hub = HUBS.includes(d.hub) ? d.hub : myHub();
+  const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (['MMH', 'MH'].includes(hub) ? 'inside' : 'outside');   /* inside Muscat (from the main hub) or outside Muscat (from the technician's own hub) */
   const body = { id, type: 'req', pn, desc: (d.desc || '').trim() || part(pn).name, qty, scn, machine, machineSn: (findMachine(machine) || {}).sn || '', model: (d.model || '').trim(), customer: (d.customer || '').trim(), contract: (d.contract || '').trim(), site, gps: d.gps || null,
-    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', note: (d.note || '').trim(), techId: me.id, techName: me.name, hub: HUBS.includes(d.hub) ? d.hub : myHub(), status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
+    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', note: (d.note || '').trim(), techId: me.id, techName: me.name, hub, area, status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
     history: [{ at: now, by: me.name, role: 'Technician', action: 'Requested', note: `${pn} × ${qty} for ${scn} · ${machine}` }] };
   await saveJob(body); return id;
 }
@@ -1865,7 +1880,8 @@ const TABS = {
   TECH: [['todo', 'My work', 'inbox'], ['van', 'My van', 'van'], ['all', 'My requests', 'list']],
   TL: [['todo', 'Approvals', 'check'], ['all', 'All requests', 'list'], ['rep', 'Reports', 'chart'], ['db', 'Database', 'db']],
   STOCK: [['todo', 'To do', 'inbox'], ['inv', 'Inventory', 'box'], ['all', 'All requests', 'list']],
-  WS: [['todo', 'To do', 'inbox'], ['all', 'Repairs', 'wrench']]
+  WS: [['todo', 'To do', 'inbox'], ['all', 'Repairs', 'wrench']],
+  DRIVER: [['todo', 'To do', 'inbox'], ['all', 'All requests', 'list']]
 };
 function myJobs(me) { return me.role === 'TECH' ? JOBS.filter(j => j.techId === me.id) : me.role === 'WS' ? JOBS.filter(j => j.status === 'WORKSHOP' ? inMyHub(jobHub(j), me) : j.ws && (j.ws.byId ? j.ws.byId === me.id : j.ws.by === me.name)) : JOBS; }
 function myTodo(me) {
@@ -1908,7 +1924,7 @@ function render() {
   const n = todoCount(me), home = UI.tab === 'todo';
   const bar = $('#bar');
   bar.innerHTML = `<span class="logo"><img src="${CNS_MARK}" alt="CNS"></span>`
-    + (home ? `<div class="ttl"><small>${greet()} · ${esc(ROLE[me.role])}${me.full && me.role !== me.baseRole ? ' (full access)' : ''}</small><b>${esc(me.name)}</b></div>` : `<div class="ttl"><small>${esc(me.name)} · ${esc(ROLE[me.role])}</small><b>${esc(tabTitle(me))}</b></div>`)
+    + (home ? `<div class="ttl"><small>${greet()} · ${esc(roleName(me))}${me.full && me.role !== me.baseRole ? ' (full access)' : ''}</small><b>${esc(me.name)}</b></div>` : `<div class="ttl"><small>${esc(me.name)} · ${esc(roleName(me))}</small><b>${esc(tabTitle(me))}</b></div>`)
     + `<button class="helpb" data-a="sheet" data-s="help" aria-label="Help" title="Help">${ic('info')}</button>`
     + `<button class="avatar" data-a="sheet" data-s="profile" aria-label="Profile and sign out">${esc(initials(me.name))}</button>`;
   $('#tabs').style.gridTemplateColumns = `repeat(${tabs.length},1fr)`;
@@ -2735,8 +2751,8 @@ SH.sent = (d, p) => {
 SH.profile = () => {
   const me = ME();
   /* full access (Mohamed Said): switch to any role to do its steps, in every hub */
-  const full = me.full ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Full access · work as</h2></div><div class="seg" role="group">${['TL', 'STOCK', 'WS', 'TECH'].map(r => `<button type="button" class="${me.role === r ? 'on' : ''}" aria-pressed="${me.role === r}" data-a="workAs" data-v="${r}">${esc(ROLE[r])}</button>`).join('')}</div><span class="hint">You can do every step in SPMS, in every hub. Pick a role to see its screens and do its steps.</span></div>` : '';
-  return { title: 'Profile', sub: ROLE[me.role] + (me.full ? ' · full access' : ''), body: full + `<div class="card" style="flex-direction:row;align-items:center"><span class="avatar mini">${esc(initials(me.name))}</span><div style="min-width:0"><b>${esc(me.name)}</b><div class="t3 muted">${esc(me.title || ROLE[me.role])}</div><div class="mono muted" style="font-size:12px">${esc(me.email)}</div></div></div>
+  const full = me.full ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Full access · work as</h2></div><div class="seg" role="group">${['TL', 'STOCK', 'WS', 'DRIVER', 'TECH'].map(r => `<button type="button" class="${me.role === r ? 'on' : ''}" aria-pressed="${me.role === r}" data-a="workAs" data-v="${r}">${esc(ROLE[r])}</button>`).join('')}</div><span class="hint">You can do every step in SPMS, in every hub. Pick a role to see its screens and do its steps.</span></div>` : '';
+  return { title: 'Profile', sub: roleName(me) + (me.full ? ' · full access' : ''), body: full + `<div class="card" style="flex-direction:row;align-items:center"><span class="avatar mini">${esc(initials(me.name))}</span><div style="min-width:0"><b>${esc(me.name)}</b><div class="t3 muted">${esc(me.title || ROLE[me.role])}</div><div class="mono muted" style="font-size:12px">${esc(me.email)}</div></div></div>
     <div class="list"><div class="row"><span class="lead ${UI.shared === 'live' && UI.canWrite !== false ? 'ok' : 'warn'}">${ic(UI.shared === 'live' ? 'check' : 'alert', 'sm')}</span><div class="main"><div class="t1">${UI.shared === 'live' ? (UI.canWrite === false ? 'Connected · view only' : 'Connected · shared with the team') : 'This device only'}</div><div class="t3">${UI.shared === 'live' ? 'Changes show up on every device straight away' : 'Nothing here is shared'}</div></div></div>
       <button class="row" data-a="soundToggle" aria-pressed="${soundOn()}"><span class="lead info">${ic('bell2', 'sm')}</span><div class="main"><div class="t1">Sound and vibration alerts</div><div class="t3">When something needs you while SPMS is open</div></div><span class="chip ${soundOn() ? 'ok' : ''}">${soundOn() ? 'On' : 'Off'}</span></button>
       <button class="row" data-a="themeToggle" aria-pressed="${isDark()}"><span class="lead info">${ic('moon', 'sm')}</span><div class="main"><div class="t1">Dark theme</div><div class="t3">Light or dark screen, whichever is easier to read</div></div><span class="chip ${isDark() ? 'ok' : ''}">${isDark() ? 'On' : 'Off'}</span></button></div>
@@ -3594,7 +3610,7 @@ async function fbSecondaryAuth() {
    page), sign in, and add everyone else. Mohamed Said is shown as Team Leader and has full access: he can work as
    any role, in every hub. */
 const BUILTIN_TL = [
-  { email: 'mohamed.said@cns-me.com', name: 'Mohamed Said', title: 'Team Leader', hub: 'MMH', full: true },
+  { email: 'mohamed.said@cns-me.com', name: 'Mohamed Said', title: 'Technical Manager', hub: 'MMH', full: true },
   { email: 'madhu.kuriakose@cns-me.com', name: 'Madhu Kuriakose', title: 'Team Leader · Oman', hub: 'MMH' },
   { email: 'mohamed.fawzy@cns-me.com', name: 'Mohamed Fawzy', title: 'Team Leader · Oman', hub: 'MMH' },
   { email: 'asim.butt@cns-me.com', name: 'Asim Butt', title: 'Team Leader · UAE', hub: 'DMH' },
@@ -3643,11 +3659,11 @@ async function fbSendResetFor(email) {
 }
 
 /* ---------- staff accounts (Team Leader) ---------- */
-const ROLE_WORDS = { TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'] };
+const ROLE_WORDS = { TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'] };
 function roleOf(v) {
   const t = String(v || '').trim().toLowerCase(); if (ROLE[t.toUpperCase()]) return t.toUpperCase(); for (const [k, ws] of Object.entries(ROLE_WORDS)) if (ws.includes(t)) return k;
   /* the Team sheet's Role column: "request part from Sohar HUB", "Teamleader approval", "Stock approval", "Workshop approval" */
-  if (/team\s*leader/.test(t)) return 'TL'; if (/^stock\b|logistic/.test(t)) return 'STOCK'; if (/^workshop\b/.test(t)) return 'WS'; if (/^request\b/.test(t)) return 'TECH';
+  if (/team\s*leader/.test(t)) return 'TL'; if (/^stock\b|logistic/.test(t)) return 'STOCK'; if (/^workshop\b/.test(t)) return 'WS'; if (/^driver\b|courier|delivery/.test(t)) return 'DRIVER'; if (/^request\b/.test(t)) return 'TECH';
   return '';
 }
 /* the hub in "request part from <hub>", spelled as a code, a name, or nearly the name ("Slalah HUB") */
@@ -3659,7 +3675,7 @@ function hubFromRole(v) {
   const hit = HUB_INFO.filter(x => lev(core, x.name.toUpperCase().replace(/[^A-Z]/g, '').replace(/HUB$/, '')) <= 1);
   return hit.length === 1 ? hit[0].code : '';
 }
-const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', TL: 'Team Leader' };
+const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', DRIVER: 'Driver', TL: 'Team Leader' };
 function acctHub(v) {
   const h = hubOf(v); if (h) return h;
   const c = guessCountry(v) || (/\bUAE\b|EMIRATES/i.test(String(v || '')) ? 'UAE' : /\bOMAN\b/i.test(String(v || '')) ? 'Oman' : '');
@@ -3748,13 +3764,13 @@ async function downloadAccountsTemplate() {
     const ws = X.utils.aoa_to_sheet([head, ['Example Technician', 'first.last@cns-me.com', 'Technician', HUBS[0], '1234', ''], ['Example Stock', 'store.keeper@cns-me.com', 'Stock', HUBS[0], '5678', '']]);
     ws['!cols'] = [{ wch: 26 }, { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 26 }];
     X.utils.book_append_sheet(wb, ws, 'Accounts');
-    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login'], ['Role', 'Technician, Stock, Workshop or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password, e.g. the employee ID. Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman']]);
+    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login'], ['Role', 'Technician, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password, e.g. the employee ID. Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman']]);
     help['!cols'] = [{ wch: 12 }, { wch: 90 }]; X.utils.book_append_sheet(wb, help, 'How to fill');
     savedToast(await DL.save({ filename: 'SPMS-accounts-template.xlsx', data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Template saved');
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
 }
 function accProgress(n, total) { const t = $('#acc-prog'); if (t) t.innerHTML = `<div class="prog-line"><i style="width:${Math.round(n / total * 100)}%"></i></div><span class="hint">Creating ${n} of ${total}…</span>`; }
-const ROLE_ORDER = { TL: 0, TECH: 1, STOCK: 2, WS: 3 };
+const ROLE_ORDER = { TL: 0, TECH: 1, STOCK: 2, WS: 3, DRIVER: 4 };
 SH.accounts = d => {
   const me = ME(); if (!me || me.role !== 'TL') return { title: 'Staff accounts', body: '<div class="err">Only the Team Leader manages accounts.</div>' };
   if (!d.mode) d.mode = USERS.length > 1 ? 'list' : 'excel';
@@ -3768,7 +3784,7 @@ SH.accounts = d => {
   } else if (d.mode === 'add') {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
     body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email *', 'first.last@cns-me.com')}
-      ${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}
+      ${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}
       ${inp(d, 'pw', 'First password *', 'e.g. the employee ID', { hint: 'They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
     op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: (d.email || '').trim().toLowerCase(), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a); }, stay: true, ok: made => made ? 'Account created' : 'Saved. This email already had a login, so the password didn’t change.' };
   } else {
@@ -3792,7 +3808,7 @@ SH.acct = (d, p) => {
   if (!d._i) { Object.assign(d, { name: u.name, role: u.role, hub: u.hub || HUBS[0], title: u.title || '', active: u.active === false ? 'no' : 'yes' }); d._i = 1; }
   return {
     title: u.name, sub: esc(u.email || u.id),
-    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
+    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
       <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div><p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button></div>`,
     op: { label: 'Save', run: () => fbSaveAcct(u.email || u.id, d), after: () => { toast('Account saved'); openSheet('accounts', { }); } }
@@ -4177,12 +4193,16 @@ async function signIn(email, pw) {
 async function fbSignIn(email, pw) {
   email = (email || '').trim().toLowerCase(); pw = String(pw || ''); if (!email || !pw) throw E('Enter your work email and password.');
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
+  let first;
   try { await FB.auth.signInWithEmailAndPassword(email, fbPw(pw)); return; }
-  catch (e) {
-    const c = String((e && e.code) || '');
-    if (!/wrong-password|invalid-credential|invalid-login-credentials|user-not-found|invalid-password/.test(c) || pw.length < 6) throw mapAuthErr(e);
-    try { await FB.auth.signInWithEmailAndPassword(email, pw); } catch (e2) { throw mapAuthErr(e2); }   /* a password set outside the app */
+  catch (e) { first = e; const c = String((e && e.code) || ''); if (!/wrong-password|invalid-credential|invalid-login-credentials|user-not-found|invalid-password/.test(c)) throw mapAuthErr(e); }
+  if (pw.length >= 6) { try { await FB.auth.signInWithEmailAndPassword(email, pw); return; } catch (e) { /* a password set outside the app; keep trying */ } }
+  /* a built-in Team Leader with no login yet: create it now with the password they typed (direct sign-in, no email step) */
+  if (builtinTL(email)) {
+    try { await FB.auth.createUserWithEmailAndPassword(email, fbPw(pw)); return; }
+    catch (e2) { if (!/email-already-in-use/.test(String((e2 && e2.code) || ''))) throw mapAuthErr(e2, true); }   /* the account already exists → the password is wrong */
   }
+  throw mapAuthErr(first);
 }
 function resetData() { unsubAll(); JOBS = []; JOBS_OPEN = []; JOBS_RECENT = []; ARCHIVE = null; ALL_LOADED = false; LINES = []; PARTS = {}; ADJ = []; LEGACY = []; UI.loaded = false; UI.ledger = null; UI.traceRes = null; }
 async function fbAuthChanged(user) {
@@ -4196,7 +4216,6 @@ async function fbAuthChanged(user) {
     /* a built-in Team Leader signing in for the first time: add them to the staff list (the rules allow it only once their
        email is confirmed, which the password email does) */
     if (!d && bt) {
-      if (!user.emailVerified) { try { await user.sendEmailVerification(mailLink()); } catch (e) { /* sent recently */ } fail('Confirm your email first: SPMS sent you a link. Open it, then sign in again.'); await FB.auth.signOut().catch(() => {}); return; }
       const now = Date.now(); d = { id: email, email, sid: idFromEmail(email), name: bt.name, role: 'TL', title: bt.title, hub: bt.hub, active: true, createdAt: now, createdBy: 'SPMS (built-in Team Leader)', pwAt: now };
       await FB.fs.collection('users').doc(email).set(d);
     }
