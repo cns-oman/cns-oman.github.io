@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261024160643">
+<meta name="spms-build" content="20261025021944">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -686,8 +686,8 @@ const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || '
 const TEST_PW = 'Test#2026';
 const RETURN_HOURS = 48, DEFAULT_RATE = 5, PAGE = 300;
 /* Hubs come from settings/hubs (Stock or the Team Leader add them); these two are the starting set. */
-const DEFAULT_HUBS = [{ code: 'MMH', name: 'Muscat Main Hub', country: 'Oman' }, { code: 'MH', name: 'Muscat Hub', country: 'Oman' }, { code: 'SLH', name: 'Salalah Hub', country: 'Oman' },
-  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' }, { code: 'MSN', name: 'Al Musanaah Hub', country: 'Oman' },
+const DEFAULT_HUBS = [{ code: 'MMH', name: 'Muscat Main Hub', country: 'Oman' }, { code: 'MH', name: 'Al Musanaah Hub', country: 'Oman' }, { code: 'SLH', name: 'Salalah Hub', country: 'Oman' },
+  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' },
   { code: 'DMH', name: 'Dubai Main Hub', country: 'UAE' }, { code: 'AH', name: 'Abu Dhabi Hub', country: 'UAE' }, { code: 'FH', name: 'Fujairah Hub', country: 'UAE' }];
 const HUBS = [], HUB_NAME = {}, HUB_INFO = [];
 function setHubs(list) {
@@ -712,7 +712,7 @@ function hubLL(code) {
   return null;
 }
 const kmBetween = (a, b) => { const r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r, x = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2; return 12742 * Math.asin(Math.sqrt(x)); };
-/* the hub nearest to a position; the person's own hub when it is in the same town (e.g. Muscat Main Hub and Muscat Hub) */
+/* the hub nearest to a position; the person's own hub when it is in the same town */
 function nearestHub(lat, lng, own) {
   const p = [+lat, +lng]; let best = null, bd = Infinity;
   for (const h of HUBS) { const ll = hubLL(h); if (!ll) continue; const k = kmBetween(p, ll); if (k < bd) { bd = k; best = h; } }
@@ -1362,6 +1362,13 @@ async function savePartSettings(pn, d) {
   if (ch.length) log({ t: 'Part settings changed', pn: normPN(pn), qty: 0, note: ch.join(' · ') });
   return ch.length;
 }
+async function fbDeletePart(pn) {
+  mustRole('STOCK', 'TL');
+  pn = normPN(pn); if (!pn) throw E('No part chosen.');
+  if (LINES.some(l => l.pn === pn)) throw E('This part still has stock. Remove its stock first, then delete the part.');
+  await api.del('parts', docId(pn));   /* off the parts list; the inventory log keeps the history */
+  log({ t: 'Part removed', pn, qty: 0 });
+}
 /* Stock sends hub parts to a technician's van: one restock per part number, the technician confirms receipt. */
 async function stockSendToVanMany(d) {
   const me = mustRole('STOCK');
@@ -1515,7 +1522,7 @@ async function createJob(d) {
   if (dup) throw E(`You already have an open request for ${pn} on ${scn} (${dup.id}).`);
   const now = Date.now(), id = newId('REQ');
   const hub = HUBS.includes(d.hub) ? d.hub : myHub();
-  const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (['MMH', 'MH'].includes(hub) ? 'inside' : 'outside');   /* inside Muscat (from the main hub) or outside Muscat (from the technician's own hub) */
+  const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (hub === 'MMH' ? 'inside' : 'outside');   /* inside Muscat (from the Muscat Main Hub) or outside Muscat (from the technician's own hub) */
   const body = { id, type: 'req', pn, desc: (d.desc || '').trim() || part(pn).name, qty, scn, machine, machineSn: (findMachine(machine) || {}).sn || '', model: (d.model || '').trim(), customer: (d.customer || '').trim(), contract: (d.contract || '').trim(), site, gps: d.gps || null,
     urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', note: (d.note || '').trim(), techId: me.id, techName: me.name, hub, area, status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
     history: [{ at: now, by: me.name, role: 'Technician', action: 'Requested', note: `${pn} × ${qty} for ${scn} · ${machine}` }] };
@@ -2648,7 +2655,8 @@ SH.part = (d, p) => {
       ${fld('Each technician’s van', `<div class="two">${inp(d, 'vanMin', 'Minimum', '0', { type: 'number', num: true })}${inp(d, 'vanMax', 'Maximum', '0', { type: 'number', num: true })}</div>`)}
       ${fld('Auto-Rep', segBtns(d, 'autoRep', [['no', 'Off'], ['yes', 'On']]), 'Tops vans up when they drop below the minimum')}
       ${fld('Restricted part', segBtns(d, 'restricted', [['no', 'No'], ['yes', 'Yes']]), 'Always needs the Team Leader')}
-      <span class="hint">0 switches a level off</span>`,
+      <span class="hint">0 switches a level off</span>
+      <div class="card"><div class="sec-h" style="padding:0"><h2>Remove</h2></div><p class="note" style="padding:0">Added by mistake? Remove this part from the list. You can only remove a part that has no stock anywhere.</p><button class="btn sm danger" data-a="partDelete" data-id="${esc(pn)}">${ic('ban', 'sm')}Remove this part</button></div>`,
     op: { label: 'Save settings', run: () => savePartSettings(pn, d), ok: n => n ? 'Part settings saved' : 'Nothing changed' }
   };
 };
@@ -3691,6 +3699,7 @@ function checkAcct(a) {
 }
 async function fbCreateAccount(a) {
   mustRole('TL');
+  if (a.email === 'mohamed.said@cns-me.com') return false;   /* the Technical Manager is built in and locked — never create or overwrite from an import or the form */
   const auth2 = await fbSecondaryAuth(); let made = true;
   try { await auth2.createUserWithEmailAndPassword(a.email, fbPw(a.pw)); }
   catch (e) { if (/email-already-in-use/.test(String(e && e.code))) made = false; else throw mapAuthErr(e, true); }
@@ -3712,6 +3721,12 @@ async function fbSaveAcct(email, d) {
   if (email === me.email && (role !== 'TL' || !active)) throw E('You can’t remove your own Team Leader access. Make someone else Team Leader first, and let them change your account.');
   await api.update('users', email, { name, role, hub, title: (d.title || '').trim() || acctTitle(role, hub), active, updatedAt: Date.now(), updatedBy: me.name });
 }
+async function fbDeleteAccount(email) {
+  const me = mustRole('TL');
+  if (email === 'mohamed.said@cns-me.com') throw E('The Technical Manager account can’t be removed.');
+  if (email === me.email) throw E('You can’t remove your own account. Ask another Team Leader to do it.');
+  await api.del('users', email);   /* off the staff list, so they can no longer sign in; their request history stays */
+}
 /* read staff from Excel: our template, or the BFSI team sheet as it is (Name · Employee ID · Location · Team · Email) */
 const ACC_ALIASES = {
   name: ['name', 'names', 'fullname', 'employeename', 'staffname', 'engineername', 'engineer'],
@@ -3725,8 +3740,9 @@ function parseAccounts(X, wb) {
   for (const sn of wb.SheetNames) {
     const aoa = X.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '', blankrows: false });
     for (let h = 0; h < Math.min(10, aoa.length); h++) {
-      const col = {};
-      aoa[h].forEach((c, i) => { const k = normHead(c); for (const [f, al] of Object.entries(ACC_ALIASES)) if (col[f] == null && al.includes(k)) col[f] = i; });
+      const col = {}, usedCol = new Set();
+      /* match a header to a field: exact alias, or the header starts with an alias (so “Email (login)”, “Employee ID No.” still match). Each column maps to one field. */
+      aoa[h].forEach((c, i) => { const k = normHead(c); if (!k || usedCol.has(i)) return; for (const [f, al] of Object.entries(ACC_ALIASES)) { if (col[f] != null) continue; if (al.includes(k) || al.some(a => a.length >= 4 && k.startsWith(a))) { col[f] = i; usedCol.add(i); break; } } });
       if (col.email == null || col.name == null) continue;
       /* a team column without a heading (as in the BFSI sheet): the column whose values are CS / WS / Logistics / PS */
       if (col.role == null) {
@@ -3805,12 +3821,19 @@ SH.accounts = d => {
 };
 SH.acct = (d, p) => {
   const u = USERS.find(x => (x.email || x.id) === p.id); if (!u) return { title: 'Not found', body: emptyBox('This account no longer exists', '') };
+  if ((u.email || u.id) === 'mohamed.said@cns-me.com') {   /* the Technical Manager: nobody can change or remove this account */
+    return { title: u.name, sub: esc(u.email || u.id),
+      body: `<div class="card" style="flex-direction:row;align-items:center"><span class="avatar mini">${esc(initials(u.name))}</span><div style="min-width:0"><b>${esc(u.name)}</b><div class="t3 muted">${esc(u.title || ROLE[u.role])}</div><div class="mono muted" style="font-size:12px">${esc(u.email || u.id)}${u.hub ? ' · ' + esc(u.hub) : ''}</div></div></div>
+        <div class="infobox">${ic('lock', 'sm')}This is the Technical Manager's account. It can't be changed or removed.</div>`,
+      foot: `<button class="btn sec" data-a="close">Close</button>` };
+  }
   if (!d._i) { Object.assign(d, { name: u.name, role: u.role, hub: u.hub || HUBS[0], title: u.title || '', active: u.active === false ? 'no' : 'yes' }); d._i = 1; }
   return {
     title: u.name, sub: esc(u.email || u.id),
     body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
-      <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div><p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button></div>`,
+      <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div><p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button></div>
+      <div class="card"><div class="sec-h" style="padding:0"><h2>Remove</h2></div><p class="note" style="padding:0">Wrong account? Remove it so they can no longer sign in. Their request history stays.</p><button class="btn sm danger" data-a="acctDelete" data-id="${esc(u.email || u.id)}">${ic('ban', 'sm')}Remove this account</button></div>`,
     op: { label: 'Save', run: () => fbSaveAcct(u.email || u.id, d), after: () => { toast('Account saved'); openSheet('accounts', { }); } }
   };
 };
@@ -4306,6 +4329,8 @@ const A = {
   pwReset(ds) { const s = UI.sheet, a = ACC(ds.id); if (!s || !a) return; s.d._err = ''; s.d._confirm = { text: `Reset ${a.name}’s password to their first password (employee ID)?`, yes: 'Yes, reset', run: () => resetPassword(ds.id), stay: true, ok: `${a.name} can sign in with their employee ID again` }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   accTemplate() { downloadAccountsTemplate(); },
   acctReset(ds) { const s = UI.sheet; if (!s || s.busy) return; const u = USERS.find(x => (x.email || x.id) === ds.id); s.d._err = ''; s.d._confirm = { text: `Email ${u ? u.name : ds.id} a link to choose a new password?`, yes: 'Yes, send', run: () => fbSendResetFor(ds.id), stay: true, ok: e => `Password email sent to ${e}` }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
+  acctDelete(ds) { const s = UI.sheet; if (!s || s.busy) return; const u = USERS.find(x => (x.email || x.id) === ds.id); if (!u) return; s.d._err = ''; s.d._confirm = { text: `Remove ${u.name} from SPMS? They can no longer sign in. Their request history stays.`, danger: true, yes: 'Yes, remove', run: () => fbDeleteAccount(ds.id), after: () => { toast('Account removed'); openSheet('accounts', {}); } }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
+  partDelete(ds) { const s = UI.sheet; if (!s || s.busy) return; const pn = ds.id, pp = part(pn); s.d._err = ''; s.d._confirm = { text: `Remove part ${pp && pp.name ? pp.name + ' (' + pn + ')' : pn} from the parts list?`, danger: true, yes: 'Yes, remove', run: () => fbDeletePart(pn), after: () => { toast('Part removed'); closeSheet(); } }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   workAs(ds) { const me = ME(); if (!me || !me.full || !ROLE[ds.v]) return; me.role = ds.v; UI.tab = 'todo'; closeSheet(); render(); $('#scr').scrollTop = 0; toast(ds.v === me.baseRole ? `Back to ${ROLE[ds.v]}` : `Working as ${ROLE[ds.v]}`); },
   reload() { try { location.reload(); } catch (e) { toast('Close and open the link again'); } },
   headsOpen(ds) { hideHeads(); openSheet(ds.s || 'job', { id: ds.id }); },
