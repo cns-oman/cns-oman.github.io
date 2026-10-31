@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261031162456">
+<meta name="spms-build" content="20261031174315">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1568,6 +1568,16 @@ async function vanAdd(d) {
   await putLine(loc, pn, { qty, name, cond, note, source: 'Added to van' });
   log({ t: 'Added to van', pn, qty, from: me.name, to: loc, note }); return qty;
 }
+/* a technician loads several parts into the van from an Excel file: each row goes through the same checks as typing it in */
+async function vanAddMany(rows, fileName) {
+  mustRole('TECH'); let added = 0; const skipped = [];
+  for (const r of rows) {
+    try { added += await vanAdd({ pn: r.pn, name: r.name, sns: r.sns.join('\n'), qty: r.qty, cond: r.cond, note: 'From Excel' + (fileName ? ' · ' + fileName : '') }); }
+    catch (e) { skipped.push({ row: r.row, pn: r.pn, why: e.message }); }
+  }
+  if (!added && skipped.length) throw E(`Nothing was added. Row ${skipped[0].row}: ${skipped[0].why}`);
+  return { added, skipped };
+}
 async function techCancel(id, d) {
   return jobStep(id, ['TL', 'STOCK'], 'TECH', async (j, me) => {
     if (j.type !== 'req') throw E('Only part requests can be cancelled.');
@@ -1876,7 +1886,9 @@ async function wsFixTime(id, d) {
 function usedLines(d) {
   return (d.used || []).map(u => { const l = LINES.find(x => x.key === u.id && (HUBS.includes(x.loc) || x.loc === SCRAP)); if (!l) return null; const price = l.loc === SCRAP ? 0 : +part(l.pn).price || 0; const qty = l.sn ? 1 : Math.max(1, Math.min(qtyOf(l), +u.qty || 1)); return { id: l.key, key: l.key, loc: l.loc, pn: l.pn, name: l.name || partName(l.pn), sn: l.sn || '', qty, price, max: qtyOf(l), cost: r3(qty * price) }; }).filter(Boolean);
 }
-function repairCost(d, j, msOverride) { const h = Math.round((msOverride == null ? repairMs(j) : msOverride) / HOUR * 100) / 100, rate = SETTINGS.rate, m = r3(sum(usedLines(d), l => l.cost)); const lab = r3(h * rate); return { h, rate, m, lab, total: r3(lab + m) }; }
+const wsParts = j => (j && j.ws && Array.isArray(j.ws.parts)) ? j.ws.parts : [];   /* spare parts already taken from stock during the repair */
+function repairCost(d, j, msOverride) { const h = Math.round((msOverride == null ? repairMs(j) : msOverride) / HOUR * 100) / 100, rate = SETTINGS.rate, m = r3(sum(usedLines(d), l => l.cost) + sum(wsParts(j), p => +p.cost || 0)); const lab = r3(h * rate); return { h, rate, m, lab, total: r3(lab + m) }; }
+const partTxt = x => `${x.name || x.pn}${x.sn ? ' SN ' + x.sn : ' × ' + x.qty}`;
 function checkFinish(j, d) {
   if (tmState(j) === 'new') throw E('Start the repair first.');
   if (!(d.partName || '').trim() && !normSN(d.partSn)) throw E('Enter the part name or the serial number.');
@@ -1890,8 +1902,8 @@ async function wsFinish(id, d) {
     const k = repairCost(d, j, t.acc); const ok = d.outcome !== 'ber'; const used = usedLines(d);
     const taken = await takeMany(used.map(l => ({ key: l.key, qty: l.qty, loc: l.loc })));
     try {
-      const usedTxt = used.map(l => `${l.name || l.pn}${l.sn ? ' SN ' + l.sn : ' × ' + l.qty}`).join(', ');
-      const ws = Object.assign({}, j.ws, { tm: t, partName: (d.partName || '').trim(), partSn: normSN(d.partSn), diagnosis: (d.dx || '').trim(), fix: (d.fix || '').trim(), materials: [usedTxt, (d.materials || '').trim()].filter(Boolean).join('; '), used: used.map(l => ({ pn: l.pn, name: l.name, sn: l.sn, qty: l.qty, price: l.price, cost: l.cost, from: l.loc })), notes: (d.wnote || '').trim(), hours: k.h, rate: k.rate, labour: k.lab, matCost: k.m, total: k.total, outcome: ok ? 'Repaired' : 'Beyond economical repair', doneAt: now, by: (j.ws && j.ws.by) || me.name, doneBy: me.name, days: Math.round((now - j.ws.inAt) / 864e4) / 10 });
+      const prior = wsParts(j), usedTxt = prior.map(partTxt).concat(used.map(partTxt)).join(', ');
+      const ws = Object.assign({}, j.ws, { tm: t, partName: (d.partName || '').trim(), partSn: normSN(d.partSn), diagnosis: (d.dx || '').trim(), fix: (d.fix || '').trim(), materials: [usedTxt, (d.materials || '').trim()].filter(Boolean).join('; '), used: prior.map(p => ({ pn: p.pn, name: p.name, sn: p.sn, qty: p.qty, price: p.price, cost: p.cost, from: p.from })).concat(used.map(l => ({ pn: l.pn, name: l.name, sn: l.sn, qty: l.qty, price: l.price, cost: l.cost, from: l.loc }))), notes: (d.wnote || '').trim(), hours: k.h, rate: k.rate, labour: k.lab, matCost: k.m, total: k.total, outcome: ok ? 'Repaired' : 'Beyond economical repair', doneAt: now, by: (j.ws && j.ws.by) || me.name, doneBy: me.name, days: Math.round((now - j.ws.inAt) / 864e4) / 10 });
       const note = `${ok ? 'Repaired' : 'Not repairable'} · ${fmtDur(t.acc)} × ${money(k.rate)}/h = ${money(k.lab)}${k.m ? ' + materials ' + money(k.m) : ''} · total ${money(k.total)}`;
       const doc = ok ? nextDoc(j, me, 'REPAIRED', 'Repair finished', note, { ws }) : nextDoc(j, me, 'CLOSED', 'Scrapped by Workshop', note, { ws, outcome: 'Scrapped (beyond repair)' });
       await saveJob(doc);
@@ -1900,6 +1912,34 @@ async function wsFinish(id, d) {
       log({ t: ok ? 'Repair finished' : 'Scrapped', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Workshop', to: ok ? 'Stock' : 'Scrap', ref: j.id, note: `${money(k.total)}${ws.fix ? ' · ' + ws.fix : ''}` });
       return doc;
     } catch (e) { await putBack(taken); throw e; }
+  });
+}
+/* during the repair the Workshop records each spare part as it is used: it leaves hub stock (or the scrap pool) right away */
+async function wsUseParts(id, d) {
+  return jobStep(id, 'REPAIRING', 'WS', async (j, me) => {
+    const used = usedLines(d); if (!used.length) throw E('Pick the spare parts you used first.');
+    if ((d.used || []).length !== used.length) throw E('One of the parts you picked is no longer in stock. Check the list.');
+    const taken = await takeMany(used.map(l => ({ key: l.key, qty: l.qty, loc: l.loc })));
+    try {
+      const now = Date.now(), add = taken.map(t => { const price = t.from === SCRAP ? 0 : +part(t.pn).price || 0; return { pn: t.pn, name: t.name, sn: t.sn, qty: t.qty, price, cost: r3(price * t.qty), from: t.from, at: now, by: me.name }; });
+      const doc = await saveJob(nextDoc(j, me, 'REPAIRING', 'Spare parts used', add.map(partTxt).join(', '), { ws: Object.assign({}, j.ws, { parts: wsParts(j).concat(add) }) }));
+      for (const x of add) log({ t: 'Used in repair', pn: x.pn, sn: x.sn, qty: x.qty, from: x.from, to: 'Workshop', ref: j.id, note: `For ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''}` });
+      return doc;
+    } catch (e) { await putBack(taken); throw e; }
+  });
+}
+/* the Workshop can scrap the part at any point of the repair, without finishing it: it goes to the scrap pool and the request closes */
+function checkScrap(j, d) { if (!(d.sreason || '').trim()) throw E('Say why the part can’t be repaired.'); return `Scrap ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''}? It goes to the scrap pool and the request closes. This can’t be undone.`; }
+async function wsScrap(id, d) {
+  return jobStep(id, 'REPAIRING', 'WS', async (j, me) => {
+    checkScrap(j, d);
+    const now = Date.now(), t = Object.assign({ acc: 0, since: null }, (j.ws && j.ws.tm) || {}); if (t.since) { t.acc += now - t.since; t.since = null; }
+    const k = repairCost({}, j, t.acc), parts = wsParts(j), why = d.sreason.trim();
+    const ws = Object.assign({}, j.ws, { tm: t, partName: j.ret.name || j.desc || '', partSn: normSN(j.ret.sn), diagnosis: why, fix: '', used: parts.map(p => ({ pn: p.pn, name: p.name, sn: p.sn, qty: p.qty, price: p.price, cost: p.cost, from: p.from })), materials: parts.map(partTxt).join(', '), notes: '', hours: k.h, rate: k.rate, labour: k.lab, matCost: k.m, total: k.total, outcome: 'Beyond economical repair', doneAt: now, by: (j.ws && j.ws.by) || me.name, doneBy: me.name, days: Math.round((now - ((j.ws && j.ws.inAt) || now)) / 864e4) / 10 });
+    const doc = await saveJob(nextDoc(j, me, 'CLOSED', 'Scrapped by Workshop', `Can’t be repaired: ${why}${k.total ? ' · cost so far ' + money(k.total) : ''}`, { ws, outcome: 'Scrapped (beyond repair)' }));
+    await putLine(SCRAP, j.ret.pn, { sn: j.ret.sn, qty: j.ret.qty || 1, cond: 'Scrap', name: j.ret.name || j.desc, source: 'Scrapped ' + j.id });   /* its good pieces can be reused in other repairs */
+    log({ t: 'Scrapped', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Workshop', to: 'Scrap', ref: j.id, note: why });
+    return doc;
   });
 }
 async function stockBackInStock(id, d) {
@@ -1951,6 +1991,31 @@ async function autoRep(techId, tName, pn) {
     history: [{ at: now, by: 'System', role: 'Auto-Rep', action: 'Auto-Rep raised', note: `${normPN(pn)} × ${qty} to bring ${tName}’s van from ${have} back to ${have + pending + qty}` }, { at: now + 1, by: 'System', role: 'Auto-Rep', action: auto ? 'Auto-approved' : 'Needs Team Leader approval', note: auto ? `Within the limits (${money(POLICY.autoMaxValue)}, ${POLICY.autoMaxQty} units)` : why }] };
   if (auto) job.tl = { by: 'Auto-Rep', at: now, note: 'Auto-approved within limits' };
   await saveJob(job); return job;
+}
+
+/* ---------- Team Leader: clear out test data so the reports and the dashboard start from zero ---------- */
+const WIPE_SETS = [
+  ['jobs', 'Requests and their history', ['jobs']],
+  ['log', 'Inventory log (reports, dashboard, part history)', ['ledger']],
+  ['stock', 'Stock in the hubs, the vans and the scrap pool', ['lines', 'stockrows', 'stock']],
+  ['adj', 'Stock changes (waiting or decided)', ['adj']],
+  ['parts', 'Parts list (names, prices, min / max levels)', ['parts']]
+];
+async function wipeData(keys, onProgress) {
+  const me = mustRole('TL');
+  const sets = WIPE_SETS.filter(x => keys.includes(x[0])), cols = sets.flatMap(x => x[2]);
+  if (!cols.length) throw E('Tick at least one thing to delete.');
+  LOGQ = []; for (const k of Object.keys(ledgerPart)) delete ledgerPart[k];   /* drop log lines not written yet */
+  let done = 0;
+  for (const c of cols) {
+    for (let guard = 0; guard < 500; guard++) {
+      const page = await api.query(c, { limit: 200 }); if (!page.length) break;
+      for (let i = 0; i < page.length; i += 20) { const part = page.slice(i, i + 20); await Promise.all(part.map(x => api.del(c, x.id))); done += part.length; if (onProgress) onProgress(done); }
+    }
+  }
+  ARCHIVE = null; ALL_LOADED = false; UI.ledger = null; UI.traceRes = null;
+  log({ t: 'Test data cleared', qty: done, from: me.name, to: '', note: sets.map(x => x[1].split(' (')[0]).join(' · ') });   /* one line saying who cleared what, and when */
+  return done;
 }
 
 /* ---------- hubs (Stock or Team Leader) ---------- */
@@ -2293,6 +2358,7 @@ function dbView(me) {
     <div class="card"><div class="sec-h" style="padding:0"><h2>Machine list</h2><button class="btn sm sec" data-a="sheet" data-s="machines">${ic('sheet', 'sm')}${UI.machInfo ? 'Update' : 'Import Excel'}</button></div><span class="hint">${ensureMachines(() => { if (UI.tab === 'db') render(); }) && UI.machInfo ? `${UI.machInfo.n.toLocaleString('en-GB')} machines · technicians type the ATM code or serial number and SPMS fills in the rest` : MACHINES ? 'No machines yet. Import the ATM / CDM list so new requests fill in the machine details.' : 'Loading…'}</span></div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Hubs</h2><button class="btn sm sec" data-a="sheet" data-s="hubs">${ic('edit', 'sm')}Manage hubs</button></div><div class="chips">${HUB_INFO.map(h => `<span class="chip plain" title="${esc(h.name)}"><b>${esc(h.code)}</b>&nbsp;${esc(h.name)}${h.country ? ' · ' + esc(h.country) : ''}</span>`).join('')}</div></div>
     <button class="btn" data-a="excel">${ic('download', 'sm')}Download Excel · 10 sheets, with graphs</button>
+    <div class="card"><div class="sec-h" style="padding:0"><h2>Test data</h2><button class="btn sm danger" data-a="sheet" data-s="wipe">${ic('ban', 'sm')}Delete…</button></div><span class="hint">Clear the requests, inventory log and stock left over from testing, so the reports and the dashboard start from zero</span></div>
     <section class="blk"><div class="sec-h"><h2>All records</h2>${JOBS.length > rows.length ? `<span class="t3 muted">Newest ${rows.length} of ${JOBS.length}</span>` : ''}</div><div class="tbl-wrap"><table class="tbl"><thead><tr>${cols.map(c => `<th scope="col">${c}</th>`).join('')}</tr></thead><tbody>${rows.map(j => `<tr data-a="sheet" data-s="job" data-id="${esc(j.id)}" tabindex="0" aria-label="Open ${esc(j.id)}" class="${isLate(j) ? 'flag' : ''}"><td class="mono">${esc(j.id)}</td><td>${esc({ req: 'Request', rep: 'Van restock', van: 'Van use' }[j.type] || 'Request')}</td><td>${esc(j.techName)}</td><td>${esc(j.pn)} × ${jobQty(j)}</td><td class="mono">${esc(j.scn || '')}</td><td>${esc(stLabel(j))}</td><td class="mono">${esc(j.ret ? j.ret.sn : '')}</td><td class="r">${j.ws && j.ws.total != null ? money(j.ws.total) : ''}</td></tr>`).join('') || `<tr><td colspan="${cols.length}" class="muted">No records yet.</td></tr>`}</tbody></table></div>${allLoaded() ? '' : `<button class="btn sec block" data-a="older">${ic('clock', 'sm')}Load older requests</button>`}</section>`;
 }
 /* ==========================================================================
@@ -2489,6 +2555,7 @@ function altActions(j, me) {
   if (me.role === 'TL' && j.status === 'RETURN' && inMyHub(jobHub(j), me)) out.push(['remind', 'Send return reminder', 'remind']);
   if (me.role === 'TECH' && j.techId === me.id && j.status === 'RETURN' && j.ret && j.ret.type === 'defective') out.push(['fixsn', 'Correct serial number']);
   if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && tmState(j) !== 'new' && d0(j)) out.push(['fixtime', 'Correct repair time']);
+  if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && d0(j)) out.push(['scrap', 'Scrap · can’t be repaired']);
   return out;
 }
 const d0 = () => !(UI.sheet && UI.sheet.d.mode === 'finish');
@@ -2497,6 +2564,7 @@ function altForm(j, me, d) {
     case 'cancel': return { title: 'Cancel request', form: box(`<p style="margin:0">Cancel the request for <b>${esc(j.pn)} × ${j.qty}</b> on <span class="mono">${esc(j.scn)}</span>? Use this when the part is no longer needed.</p>${area(d, 'cnote', 'Reason (optional)', 'e.g. Fixed without a new part')}`), op: { label: 'Cancel request', cls: 'danger', danger: true, yes: 'Yes, cancel it', check: () => 'Cancel this request? It will close and Stock won’t send the part.', run: () => techCancel(j.id, d), ok: 'Request cancelled' } };
     case 'withdraw': return { title: 'Withdraw approval', form: box(`<p style="margin:0">Stock has not sent this part yet. Withdrawing closes the ${j.type === 'rep' ? 'restock' : 'request'} as rejected, and the technician sees your reason.</p>${area(d, 'wnote', 'Why are you withdrawing it? (required)', 'e.g. Customer replaced the machine')}`), op: { label: 'Withdraw approval', cls: 'danger', danger: true, yes: 'Yes, withdraw', check: () => checkWithdraw(j, d), run: () => tlWithdraw(j.id, d), ok: 'Approval withdrawn' } };
     case 'fixsn': return { title: 'Correct serial number', form: box(`<p style="margin:0">Current serial number of the part you are returning: <b class="mono">${esc(j.ret.sn || '(none)')}</b></p>${inp(d, 'fsn', 'Correct serial number *', 'As printed on the part', { mono: true })}${inp(d, 'fwhy', 'Why is it changing? *', 'e.g. Typing mistake')}<span class="hint">The old value is kept in the history and the inventory log.</span>`), op: { label: 'Save correction', run: () => techFixSn(j.id, d), stay: true, ok: 'Serial number corrected' } };
+    case 'scrap': return { title: 'Scrap the part', form: box(`<p style="margin:0">Can’t repair <b class="mono">${esc(j.ret.pn)}${j.ret.sn ? ' SN ' + esc(j.ret.sn) : ''}</b>? Scrap it here. It goes to the scrap pool (its good pieces can be used in other repairs) and the request closes.</p>${area(d, 'sreason', 'Why can’t it be repaired? *', 'e.g. Main board burnt, no spare available')}${wsParts(j).length ? `<span class="hint">Spare parts already used (${money(sum(wsParts(j), p => +p.cost || 0))}) stay on the repair cost.</span>` : ''}`), op: { label: 'Scrap part', cls: 'danger', danger: true, yes: 'Yes, scrap it', check: () => checkScrap(j, d), run: () => wsScrap(j.id, d), ok: 'Scrapped. The part is in the scrap pool.' } };
     case 'fixtime': return { title: 'Correct repair time', form: box(`<p style="margin:0">Timer now: <b data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</b>. Enter the time actually worked so far. ${tmState(j) === 'running' ? 'The timer keeps running from the corrected time.' : ''}</p><div class="two">${inp(d, 'fh', 'Hours', '0', { type: 'number', num: true })}${inp(d, 'fm', 'Minutes', '0', { type: 'number', num: true })}</div>${inp(d, 'fwhy', 'Why are you correcting it? *', 'e.g. Forgot to start the timer')}<span class="hint">The Team Leader sees every correction in the repair report and the Excel file.</span>`), op: { label: 'Save time', run: () => wsFixTime(j.id, d), stay: true, ok: 'Repair time corrected' } };
   }
   return { title: 'Request', form: '', op: null };
@@ -2572,13 +2640,20 @@ function actionForm(j, me, d) {
     case 'REPAIRING': {
       const tm = tmState(j);
       const timer = `<div style="display:flex;align-items:center;gap:12px"><span class="lead ${tm === 'running' ? 'ok' : 'warn'}">${ic('clock', 'sm')}</span><div><div class="t3 muted">${tm === 'new' ? 'Repair not started' : tm === 'running' ? 'Repair in progress' : 'Repair paused'}</div><div class="num" style="font-family:var(--font-display);font-size:32px;font-weight:600;line-height:1.1" data-timer="${esc(j.id)}" role="timer">${fmtDur(repairMs(j))}</div></div></div>`;
-      if (d.mode !== 'finish') return { form: box(timer + `<span class="hint">Time counts only while the timer runs</span>`), op: null };
-      if (!d.outcome) d.outcome = 'fixed'; if (!d.used) d.used = [];
+      const done = wsParts(j), doneList = done.length ? `<div class="list">${done.map(p => `<div class="row"><div class="main"><div class="t1">${tag(p.pn)} ${esc(p.name || '')}</div><div class="t3">${p.sn ? 'SN ' + esc(p.sn) : '× ' + p.qty} · ${esc(p.from === SCRAP ? 'scrap pool' : p.from)} · ${esc(fmtDT(p.at))}</div></div><b class="num">${money(p.cost)}</b></div>`).join('')}</div>` : '';
+      if (!d.used) d.used = [];
+      const picker = `<div id="live-used">${usedBox(d)}</div><div class="searchbox">${ic('search')}<input class="inp" id="f-uq" data-d="uq" data-live="usesug" placeholder="Search hub stock or scrap: number or name" value="${esc(d.uq || '')}" autocomplete="off" aria-label="Search hub stock or scrap"></div><div id="live-usesug">${useSuggest(d)}</div>`;
+      if (d.mode !== 'finish') {
+        const n = d.used.length;
+        const parts = `<div class="card" style="gap:8px"><div class="sec-h" style="padding:0"><h2>Spare parts used</h2>${done.length ? `<span class="t3 muted">${done.length} · ${money(sum(done, p => +p.cost || 0))}</span>` : ''}</div>${doneList || '<span class="hint">None yet. Add each spare part as you use it.</span>'}${picker}${n ? `<button class="btn" data-a="wsUse" id="ws-use">${ic('check', 'sm')}Take ${n} part${n === 1 ? '' : 's'} from stock</button>` : ''}<span class="hint">From hub stock or the scrap pool (free). They leave the stock when you press Take.</span></div>`;
+        return { form: box(timer + `<span class="hint">Time counts only while the timer runs</span>`) + parts, op: null };
+      }
+      if (!d.outcome) d.outcome = 'fixed';
       if (d.partName == null) d.partName = r.name || j.desc || ''; if (d.partSn == null) d.partSn = r.sn || '';
       return { form: box(`${timer}${fld('Result', segBtns(d, 'outcome', [['fixed', 'Repaired'], ['ber', 'Beyond repair (scrap)']]))}
         <div class="two">${inp(d, 'partName', 'Part name', 'e.g. Card reader')}${inp(d, 'partSn', 'Serial number', '', { mono: true })}</div><span class="hint">Part name or serial number required</span>
         ${area(d, 'dx', 'What was wrong', 'e.g. Shutter motor stalls')}${area(d, 'fix', 'How it was fixed', 'e.g. Replaced motor, cleaned head, tested')}
-        ${fld('Parts used (hub stock or scrap)', `<div id="live-used">${usedBox(d)}</div><div class="searchbox">${ic('search')}<input class="inp" id="f-uq" data-d="uq" data-live="usesug" placeholder="Search hub stock or scrap: number or name" value="${esc(d.uq || '')}" autocomplete="off" aria-label="Search hub stock or scrap"></div><div id="live-usesug">${useSuggest(d)}</div>`, 'Scrap parts are free · they leave stock when you save')}
+        ${fld(done.length ? 'Spare parts used (more can be added)' : 'Parts used (hub stock or scrap)', `${doneList}${picker}`, 'Scrap parts are free · they leave stock when you save')}
         ${inp(d, 'materials', 'Other things used (no cost)', 'e.g. Cleaning kit, cable ties')}
         <div class="infobox">Rate ${money(SETTINGS.rate)} per hour</div>
         ${area(d, 'wnote', 'Notes', 'Optional')}
@@ -2828,11 +2903,21 @@ SH.vanuse = d => {
 /* ---------- technician: add a part to their own van ---------- */
 SH.vanadd = d => {
   const me = ME(); if (!me || me.role !== 'TECH') return { title: 'Add to my van', body: '<div class="err">Only a technician can add to their van.</div>' };
-  if (!d.qty) d.qty = 1; if (!d.cond) d.cond = 'New';
+  if (!d.qty) d.qty = 1; if (!d.cond) d.cond = 'New'; if (!d.vmode) d.vmode = 'type';
+  const seg = segBtns(d, 'vmode', [['type', 'Type it in'], ['excel', 'From Excel']]);
+  if (d.vmode === 'excel') {
+    const v = d.vimp, n2 = v ? sum(v.ready, r => r.qty) : 0;
+    const body = `${seg}<div class="card"><p class="note" style="padding:0">One row per part: <b>Part number</b>, <b>Part name</b>, <b>Serial number</b> (or <b>Quantity</b> for parts without one) and <b>Condition</b> (New, Repaired or Used).</p><button class="btn sm sec" data-a="vanTemplate">${ic('download', 'sm')}Download template</button></div>
+      <label class="drop" for="f-vanfile">${ic('inbox')}<b>${v ? esc(v.name) : 'Choose the Excel file'}</b><span>${v ? 'Choose another file' : 'or drop it here'}</span><input class="vh" type="file" id="f-vanfile" accept=".xlsx,.xlsm,.xls,.csv"></label>${d.vBusy ? '<div class="infobox" role="status">Reading the file…</div>' : ''}
+      ${v ? (v.ready.length ? tbl(['Row', 'Part', 'Serial / qty', 'Condition'], v.ready.slice(0, 200).map(r => `<tr><td class="r">${r.row}</td><td>${tag(r.pn)} ${esc(r.name)}</td><td class="mono">${r.sns.length ? esc(r.sns.join(', ')) : '× ' + r.qty}</td><td>${esc(r.cond)}</td></tr>`)) : '<div class="infobox">No parts to add from this file.</div>')
+        + (v.bad.length ? `<div class="sec-h"><h2>Skipped</h2></div>${tbl(['Row', 'Part', 'Why'], v.bad.slice(0, 100).map(b => `<tr class="flag"><td class="r">${b.row}</td><td>${esc(b.pn || '')}</td><td class="wrap">${esc(b.why)}</td></tr>`))}` : '') : ''}`;
+    const op = v && v.ready.length ? { label: `Add ${n2} part${n2 === 1 ? '' : 's'} to my van`, run: () => vanAddMany(v.ready, v.name), ok: r => r.skipped.length ? `${r.added} added · skipped ${r.skipped.slice(0, 3).map(x => 'row ' + x.row + ' (' + x.why + ')').join(', ')}` : `${r.added} added to your van` } : null;
+    return { title: 'Add parts to my van', sub: 'From an Excel file', body, op, foot: op ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
+  }
   const n = parseSNs(d.sns).length;
   return {
     title: 'Add a part to my van', sub: 'Goes straight into your van stock',
-    body: `${inp(d, 'pn', 'Part number *', 'Type to search', { mono: true, live: 'pnsug', auto: 'pn' })}<div id="live-pnsug" aria-live="polite">${pnSuggest(d)}</div>${inp(d, 'name', 'Part name', 'Filled in for known parts')}
+    body: `${seg}${inp(d, 'pn', 'Part number *', 'Type to search', { mono: true, live: 'pnsug', auto: 'pn' })}<div id="live-pnsug" aria-live="polite">${pnSuggest(d)}</div>${inp(d, 'name', 'Part name', 'Filled in for known parts')}
       ${fld('Serial numbers', `<textarea class="inp mono" id="f-sns" data-d="sns" data-live="rcvqty" placeholder="One per line, if the parts have them">${esc(d.sns || '')}</textarea>`, 'Leave empty for bulk parts')}<div id="live-rcvqty" aria-live="polite">${rcvQty(d)}</div>
       ${n ? '' : fld('Quantity', stepper(d, 'qty', 1, 99, 'Quantity'))}
       ${fld('Condition', segBtns(d, 'cond', [['New', 'New'], ['Repaired', 'Repaired'], ['Used', 'Used']]))}
@@ -2908,6 +2993,23 @@ SH.delparts = d => {
     }).join('') || '<div class="empty">No parts in the list</div>'}</div>`;
   const op = picked.length ? { label: `Remove ${picked.length} part${picked.length === 1 ? '' : 's'}`, danger: true, yes: 'Yes, remove', check: () => `Remove ${picked.length} part${picked.length === 1 ? '' : 's'}? Any stock they have is removed too.`, run: () => fbDeletePartsMany(picked), stay: true, after: () => { d.sel = {}; }, ok: n => `${n} part${n === 1 ? '' : 's'} removed` } : null;
   return { title: 'Remove parts', sub: 'Select parts to remove', body, op, foot: op ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
+};
+
+/* ---------- Team Leader: delete the test data ---------- */
+SH.wipe = d => {
+  const me = ME(); if (!me || me.role !== 'TL') return { title: 'Delete test data', body: '<div class="err">Only the Team Leader can do this.</div>' };
+  if (!d.sel) { d.sel = {}; for (const x of WIPE_SETS) d.sel[x[0]] = true; }
+  const picked = WIPE_SETS.filter(x => d.sel[x[0]]);
+  const body = `<div class="alert bad"><span class="lead bad">${ic('alert', 'sm')}</span><div class="main"><b>This permanently deletes data for everyone</b><span class="s">Use it to clear test data before going live. It can’t be undone. Download the Excel file first if you want a copy.</span></div></div>
+    <div class="list">${WIPE_SETS.map(([k, label]) => { const on = !!d.sel[k]; return `<button class="row ${on ? 'on' : ''}" data-a="wipePick" data-id="${k}"><span class="pickbox${on ? ' on' : ''}">${on ? ic('check', 'sm') : ''}</span><div class="main"><div class="t1">${esc(label)}</div></div></button>`; }).join('')}</div>
+    <p class="note" style="padding:2px">Kept: staff accounts, the machine list, hubs, the workshop rate and other settings.</p>
+    ${inp(d, 'word', 'Type DELETE to confirm *', 'DELETE', { mono: true })}
+    <div id="wipe-prog" aria-live="polite"></div>`;
+  const op = picked.length ? { label: picked.length === WIPE_SETS.length ? 'Delete everything' : `Delete ${picked.length} item${picked.length === 1 ? '' : 's'}`, cls: 'danger', danger: true, yes: 'Yes, delete',
+    check: () => { if (String(d.word || '').trim().toUpperCase() !== 'DELETE') throw E('Type DELETE in the box to confirm.'); return `Permanently delete: ${picked.map(x => x[1].split(' (')[0].toLowerCase()).join(', ')}? This can’t be undone.`; },
+    run: () => wipeData(picked.map(x => x[0]), n => { const t = $('#wipe-prog'); if (t) t.innerHTML = `<span class="hint">Deleted ${n} records…</span>`; }),
+    ok: n => `Deleted ${n} record${n === 1 ? '' : 's'}. SPMS starts clean.` } : null;
+  return { title: 'Delete test data', sub: 'Start the reports from zero', body, op, foot: op ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
 };
 
 /* ---------- Stock: one stock line ---------- */
@@ -3136,6 +3238,44 @@ async function readImportFile(file) {
     d.imp = parseImport(X, wb, file.name);
   } catch (e) { d._err = e instanceof UserError ? e.message : 'Could not read this file. Save it as .xlsx or .csv and try again.'; if (!(e instanceof UserError)) console.error(e); }
   d.impBusy = false; if (UI.sheet === s) renderSheet();
+}
+/* ---------- technician: load parts into the van from Excel (same column names as the stock import) ---------- */
+function vanRows(raw) {
+  const ready = [], bad = [], seen = new Set();
+  for (const o of raw) {
+    const pn = normPN(o.pn), sns = parseSNs(o.sn), c = String(o.cond || '').trim().toLowerCase();
+    const cond = /^rep/.test(c) ? 'Repaired' : /^used/.test(c) ? 'Used' : 'New';
+    let why = '', qty = sns.length;
+    if (!pn) why = 'No part number';
+    else if (!sns.length) { const q = String(o.qty || '').trim().replace(/\.0+$/, ''); qty = !q ? 1 : /^\d+$/.test(q) ? +q : NaN; if (!(qty >= 1 && qty <= 99)) why = 'Quantity must be 1 to 99'; }
+    if (!why && sns.length !== new Set(sns).size) why = 'The same serial number is twice in this row';
+    if (!why && sns.some(sn => seen.has(sn))) why = 'Serial number repeated in the file';
+    if (why) { bad.push({ row: o.row, pn: o.pn, why }); continue; }
+    sns.forEach(sn => seen.add(sn));
+    ready.push({ row: o.row, pn, name: String(o.name || '').trim(), sns, qty, cond });
+  }
+  return { ready, bad };
+}
+async function readVanFile(file) {
+  const s = UI.sheet; if (!s || s.name !== 'vanadd' || !file) return; const d = s.d;
+  d._err = ''; d._confirm = null; d.vBusy = true; d.vimp = null; renderSheet();
+  try {
+    if (file.size > 10 * 1024 * 1024) throw E('This file is bigger than 10 MB. Split it into smaller files.');
+    if (!/\.(xlsx|xlsm|xls|csv)$/i.test(file.name)) throw E('Choose an Excel file (.xlsx or .xls) or a .csv file.');
+    const X = await needXLSX(), wb = X.read(await file.arrayBuffer(), { type: 'array' });
+    const p = parseImport(X, wb, file.name); d.vimp = Object.assign({ name: file.name, sheet: p.sheet }, vanRows(p.raw));
+  } catch (e) { d._err = e instanceof UserError ? e.message : 'Could not read this file. Save it as .xlsx or .csv and try again.'; if (!(e instanceof UserError)) console.error(e); }
+  d.vBusy = false; if (UI.sheet === s) renderSheet();
+}
+async function downloadVanTemplate() {
+  if (!DL) return toast('Downloads work in the published app.', 'bad');
+  try {
+    const X = await needXLSX(), wb = X.utils.book_new();
+    const ws = X.utils.aoa_to_sheet([['Part number', 'Part name', 'Serial number', 'Quantity', 'Condition'], ['01750105679', 'Card reader', 'CR-123456', '', 'New'], ['01750044443', 'Belt set (no serial number)', '', 4, 'New']]);
+    ws['!cols'] = [{ wch: 16 }, { wch: 28 }, { wch: 18 }, { wch: 10 }, { wch: 12 }];
+    X.utils.book_append_sheet(wb, ws, 'My van');
+    savedToast(await DL.save({ filename: 'SPMS-van-template.xlsx', data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Template saved');
+  } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
 }
 async function downloadTemplate() {
   if (!DL) return toast('Downloads work in the published app.', 'bad');
@@ -3841,6 +3981,12 @@ async function exportExcel() {
    back to the plain text. */
 const fbPw = p => 'spms:' + String(p);
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+/* people with no work email sign in with a username: SPMS logs them in as username@spms.invalid. ".invalid" is reserved,
+   so no real mailbox can ever exist there; such accounts get no emails (no login code, no reset email). */
+const USER_DOMAIN = 'spms.invalid', USERNAME_RE = /^[a-z0-9][a-z0-9._-]{1,29}$/;
+const isUserLogin = e => String(e || '').toLowerCase().endsWith('@' + USER_DOMAIN);
+const loginShow = e => isUserLogin(e) ? String(e).split('@')[0] : String(e || '');
+function toLogin(x) { const s = String(x || '').trim().toLowerCase(); return !s || s.includes('@') || !USERNAME_RE.test(s) ? s : s + '@' + USER_DOMAIN; }
 function mapAuthErr(e, creating) {
   if (e instanceof UserError) return e;
   const c = String((e && e.code) || '');
@@ -3941,7 +4087,7 @@ function acctHub(v) {
 const acctTitle = (role, hub) => `${ROLE_TITLE[role]} · ${role === 'STOCK' ? HUB_NAME[hub] || hub : (HUB_INFO.find(h => h.code === hub) || {}).country || HUB_NAME[hub] || hub}`;
 function checkAcct(a) {
   if (!a.name) return 'Name missing';
-  if (!EMAIL_RE.test(a.email)) return 'Email missing or not valid';
+  if (!EMAIL_RE.test(a.email)) return 'Email or username missing or not valid (a username uses only letters, numbers, . _ -)';
   if (!ROLE[a.role]) return `Role “${a.rawRole || ''}” is not used in SPMS`;
   if (!a.pw || String(a.pw).length < 4 || /\s/.test(String(a.pw))) return 'Password / employee ID missing (4+ characters, no spaces)';
   return '';
@@ -3954,8 +4100,11 @@ async function fbCreateAccount(a) {
   catch (e) { if (/email-already-in-use/.test(String(e && e.code))) made = false; else throw mapAuthErr(e, true); }
   finally { try { await auth2.signOut(); } catch (e) { /* already signed out */ } }
   const me = ME(), now = Date.now(), old = USERS.find(u => (u.email || u.id) === a.email);
-  const role = (old && old.role === 'TL') || builtinTL(a.email) ? 'TL' : a.role;   /* an import never demotes a Team Leader (built-in ones stay Team Leaders); that is done on purpose in the account itself */
-  await api.set('users', a.email, { email: a.email, sid: (old && old.sid) || idFromEmail(a.email), name: a.name, role, title: role === a.role ? a.title || acctTitle(role, a.hub) : (old && old.title) || acctTitle(role, a.hub), hub: a.hub, active: true, createdAt: (old && old.createdAt) || now, createdBy: (old && old.createdBy) || me.name, updatedAt: now, updatedBy: me.name, pwAt: (old && old.pwAt) || now });
+  const role = (old && old.role === 'TL') || builtinTL(a.email) ? 'TL' : a.role;
+  /* the short id (van, requests) must be unique: ahmed@cns-me.com and the username ahmed would otherwise share one */
+  let sid = (old && old.sid) || idFromEmail(a.email);
+  if (!old) { const base = sid; for (let n = 2; USERS.some(u => (u.email || u.id) !== a.email && (u.sid || idFromEmail(u.email || u.id)) === sid); n++) sid = base + n; }   /* an import never demotes a Team Leader (built-in ones stay Team Leaders); that is done on purpose in the account itself */
+  await api.set('users', a.email, { email: a.email, sid, name: a.name, role, title: role === a.role ? a.title || acctTitle(role, a.hub) : (old && old.title) || acctTitle(role, a.hub), hub: a.hub, active: true, createdAt: (old && old.createdAt) || now, createdBy: (old && old.createdBy) || me.name, updatedAt: now, updatedBy: me.name, pwAt: (old && old.pwAt) || now });
   return made;
 }
 async function fbCreateMany(rows, onProgress) {
@@ -3988,7 +4137,7 @@ async function fbDeleteAccountsMany(emails) {
 /* read staff from Excel: our template, or the BFSI team sheet as it is (Name · Employee ID · Location · Team · Email) */
 const ACC_ALIASES = {
   name: ['name', 'names', 'fullname', 'employeename', 'staffname', 'engineername', 'engineer'],
-  email: ['email', 'emailaddress', 'mail', 'workemail', 'emailid'],
+  email: ['email', 'emailaddress', 'mail', 'workemail', 'emailid', 'username', 'loginname', 'login', 'userid'],
   role: ['role', 'team', 'department', 'dept', 'function', 'jobrole'],
   hub: ['hub', 'location', 'country', 'base', 'site', 'region'],
   pw: ['password', 'employeeid', 'empid', 'empno', 'employeeno', 'employeenumber', 'staffid', 'id', 'pass'],
@@ -4011,7 +4160,7 @@ function parseAccounts(X, wb) {
       const rows = [];
       for (let r = h + 1; r < aoa.length; r++) {
         const row = aoa[r], get = f => col[f] == null ? '' : cellStr(row[col[f]]);
-        const email = get('email').toLowerCase(), name = get('name'); if (!email && !name) continue;
+        const email = toLogin(get('email')), name = get('name'); if (!email && !name) continue;
         let pw = get('pw'); if (/^\d+\.0+$/.test(pw)) pw = pw.replace(/\.0+$/, '');
         const role = roleOf(get('role')), hub = hubFromRole(get('role')) || acctHub(get('hub'));
         rows.push({ row: r + 1, name, email, role, rawRole: get('role'), hub, pw, title: get('title') });
@@ -4038,7 +4187,7 @@ async function downloadAccountsTemplate() {
     const ws = X.utils.aoa_to_sheet([head, ['Example Technician', 'first.last@cns-me.com', 'Technician', HUBS[0], '1234', ''], ['Example Stock', 'store.keeper@cns-me.com', 'Stock', HUBS[0], '5678', '']]);
     ws['!cols'] = [{ wch: 26 }, { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 26 }];
     X.utils.book_append_sheet(wb, ws, 'Accounts');
-    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login'], ['Role', 'Technician, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password, e.g. the employee ID. Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman']]);
+    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login. No email? Put a username instead (letters, numbers, . _ -) — they sign in with it.'], ['Role', 'Technician, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password, e.g. the employee ID. Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman']]);
     help['!cols'] = [{ wch: 12 }, { wch: 90 }]; X.utils.book_append_sheet(wb, help, 'How to fill');
     savedToast(await DL.save({ filename: 'SPMS-accounts-template.xlsx', data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Template saved');
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
@@ -4064,7 +4213,7 @@ SH.accounts = d => {
       ${selOn ? `<div style="display:flex;gap:8px;align-items:center;padding:2px 2px 0"><p class="note" style="padding:0;margin:0;flex:1">Tick the accounts to remove, then press Remove.</p>${selList.length ? `<button class="btn sm ${allSel ? 'sec' : ''}" data-a="accAll" style="flex:none">${allSel ? 'Clear' : 'Select all'}</button>` : ''}</div>` : ''}
       <div class="list">${list.map(u => {
         const id = u.email || u.id, role = `<span class="chip plain">${esc(ROLE[u.role] || u.role)}${u.hub ? ' · ' + esc(u.hub) : ''}</span>`;
-        const nm = `<div class="main"><div class="t1">${esc(u.name)}${u.active === false ? ' <span class="chip bad">No access</span>' : ''}</div><div class="t3 mono">${esc(id)}</div></div>`;
+        const nm = `<div class="main"><div class="t1">${esc(u.name)}${u.active === false ? ' <span class="chip bad">No access</span>' : ''}</div><div class="t3 mono">${esc(loginShow(id))}${isUserLogin(id) ? ' · username' : ''}</div></div>`;
         if (selOn) {
           if (id === SAID) return `<div class="row" style="opacity:.55"><span class="pickbox"></span>${nm}<span class="chip plain">Locked</span></div>`;
           const on = !!sel[id];
@@ -4075,10 +4224,10 @@ SH.accounts = d => {
     if (selOn && picked.length) op = { label: `Remove ${picked.length} account${picked.length === 1 ? '' : 's'}`, danger: true, yes: 'Yes, remove', check: () => `Remove ${picked.length} account${picked.length === 1 ? '' : 's'}? They can no longer sign in. Their history stays.`, run: () => fbDeleteAccountsMany(picked), stay: true, after: () => { d.selOn = false; d.selIds = {}; }, ok: n => `${n} account${n === 1 ? '' : 's'} removed` };
   } else if (d.mode === 'add') {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
-    body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email *', 'first.last@cns-me.com')}
+    body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email or username *', 'first.last@cns-me.com or a username', { hint: 'No email? Type a username (letters, numbers, . _ -). They sign in with that username and password.' })}
       ${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}
       ${inp(d, 'pw', 'First password *', 'e.g. the employee ID', { hint: 'They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
-    op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: (d.email || '').trim().toLowerCase(), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a); }, stay: true, ok: made => made ? 'Account created' : 'Saved. This email already had a login, so the password didn’t change.' };
+    op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: toLogin(d.email), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a); }, stay: true, ok: made => made ? 'Account created' : 'Saved. This login already existed, so the password didn’t change.' };
   } else {
     const rows = d.acc ? d.acc.rows : [], known = new Set(USERS.map(u => u.email || u.id));
     const seen = new Set(), ready = [], bad = [];
@@ -4088,7 +4237,7 @@ SH.accounts = d => {
       <div class="card"><div class="sec-h" style="padding:0"><h2>2 · Choose the file</h2></div><label class="drop" for="f-accfile">${ic('inbox')}<b>${d.acc ? esc(d.acc.name) : 'Drop the Excel file here'}</b><span>${d.acc ? 'Choose another file' : 'or tap to choose it'}</span><input class="vh" type="file" id="f-accfile" accept=".xlsx,.xlsm,.xls,.csv"></label>${d.accBusy ? '<div class="infobox" role="status">Reading the file…</div>' : ''}</div>
       ${d.acc ? `<section class="blk"><div class="sec-h"><h2>3 · Check and create</h2><span class="t3 muted">${esc(d.acc.sheet)}</span></div>
         <div class="kpis k3">${kpi('Ready', ready.length)}${kpi('New logins', fresh)}${kpi('Skipped', bad.length, bad.length ? 'warn' : '')}</div>
-        ${ready.length ? tbl(['Name', 'Email', 'Role', 'Hub'], ready.slice(0, 200).map(r => `<tr><td>${esc(r.name)}${known.has(r.email) ? ' <span class="chip plain">has login</span>' : ''}</td><td class="mono">${esc(r.email)}</td><td>${esc(ROLE[r.role])}</td><td>${esc(r.hub)}</td></tr>`)) : '<div class="infobox">Nobody to add from this file.</div>'}
+        ${ready.length ? tbl(['Name', 'Email', 'Role', 'Hub'], ready.slice(0, 200).map(r => `<tr><td>${esc(r.name)}${known.has(r.email) ? ' <span class="chip plain">has login</span>' : ''}</td><td class="mono">${esc(loginShow(r.email))}</td><td>${esc(ROLE[r.role])}</td><td>${esc(r.hub)}</td></tr>`)) : '<div class="infobox">Nobody to add from this file.</div>'}
         ${bad.length ? `<div class="sec-h"><h2>Skipped</h2></div>${tbl(['Row', 'Name', 'Why'], bad.slice(0, 100).map(b => `<tr class="flag"><td class="r">${b.row}</td><td>${esc(b.name || b.email)}</td><td class="wrap">${esc(b.why)}</td></tr>`))}` : ''}
         <div id="acc-prog" aria-live="polite"></div><p class="note">Safe to run again: people who already have a login keep their password.</p></section>` : ''}`;
     if (ready.length) op = { label: `Create ${ready.length} account${ready.length === 1 ? '' : 's'}`, yes: 'Yes, create', check: () => `Create SPMS logins for ${ready.length} people? Their first password is the one in the file.`, run: () => fbCreateMany(ready, accProgress), stay: true, ok: r => `${r.made} account${r.made === 1 ? '' : 's'} created${r.had ? ` · ${r.had} already had a login (details updated)` : ''}` };
@@ -4105,10 +4254,10 @@ SH.acct = (d, p) => {
   }
   if (!d._i) { Object.assign(d, { name: u.name, role: u.role, hub: u.hub || HUBS[0], title: u.title || '', active: u.active === false ? 'no' : 'yes' }); d._i = 1; }
   return {
-    title: u.name, sub: esc(u.email || u.id),
+    title: u.name, sub: esc(loginShow(u.email || u.id)) + (isUserLogin(u.email || u.id) ? ' · signs in with a username' : ''),
     body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
-      <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div><p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button></div>
+      <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div>${isUserLogin(u.email || u.id) ? `<p class="note" style="padding:0">This person signs in with the username <b class="mono">${esc(loginShow(u.email || u.id))}</b> and has no email, so SPMS can’t send them a password link. If they forget their password, remove this account and add them again with a new username.</p>` : `<p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button>`}</div>
       <div class="card"><div class="sec-h" style="padding:0"><h2>Remove</h2></div><p class="note" style="padding:0">Wrong account? Remove it so they can no longer sign in. Their request history stays.</p><button class="btn sm danger" data-a="acctDelete" data-id="${esc(u.email || u.id)}">${ic('ban', 'sm')}Remove this account</button></div>`,
     op: { label: 'Save', run: () => fbSaveAcct(u.email || u.id, d), after: () => { toast('Account saved'); openSheet('accounts', { }); } }
   };
@@ -4418,7 +4567,7 @@ function renderSignIn() {
   $('#scr').innerHTML = `<div class="signin">
     <div class="si-head"><img class="wm" src="${CNS_SWIRL}" alt=""><div class="si-brand"><img class="sw" src="${CNS_SWIRL}" alt=""><img class="wd" src="${CNS_WORD_W}" alt="CNS"></div><span class="si-me">MIDDLE EAST</span><h1>SPMS Field</h1><p>Spare parts for ATM and CDM field service · Oman &amp; UAE</p></div>
     <form id="si-form" class="card" novalidate>
-      <div class="fld"><label class="lbl" for="si-email">Work email</label><input class="inp" id="si-email" type="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@cns-me.com" value=""></div>
+      <div class="fld"><label class="lbl" for="si-email">Work email or username</label><input class="inp" id="si-email" type="text" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@cns-me.com or username" value=""></div>
       <div class="fld"><label class="lbl" for="si-pw">Password</label><div class="pw"><input class="inp" id="si-pw" type="password" autocomplete="off" value=""><button type="button" class="pw-t" data-a="pwToggle" aria-label="Show password">Show</button></div></div>
       <div id="si-err" class="err" role="alert"${UI.siErr ? '' : ' hidden'}>${esc(UI.siErr || '')}</div>
       <button class="btn block" type="submit" id="si-go">Sign in</button>
@@ -4483,14 +4632,14 @@ function renderOffline() {
 async function sha256hex(str) { if (!(window.crypto && crypto.subtle)) throw E('This browser cannot check passwords securely.'); const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(''); }
 const fails = {};
 async function signIn(email, pw) {
-  email = (email || '').trim().toLowerCase(); if (!email || !pw) throw E('Enter your work email and password.');
+  email = toLogin(email); if (!email || !pw) throw E('Enter your email or username, and your password.');
   const f = fails[email]; if (f && f.until > Date.now()) throw E(`Too many failed attempts. Try again in ${Math.ceil((f.until - Date.now()) / 60000)} min.`);
   const a = ACCOUNTS.find(x => x.email === email);
   if (!a || !(await checkPassword(a, pw))) { const g = fails[email] = fails[email] || { n: 0, until: 0 }; if (++g.n >= 5) { g.until = Date.now() + 5 * 60000; g.n = 0; } throw E('Email or password is incorrect.'); }
   delete fails[email]; return a;
 }
 async function fbSignIn(email, pw) {
-  email = (email || '').trim().toLowerCase(); pw = String(pw || ''); if (!email || !pw) throw E('Enter your work email and password.');
+  email = toLogin(email); pw = String(pw || ''); if (!email || !pw) throw E('Enter your email or username, and your password.');
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
   let first;
   try { await FB.auth.signInWithEmailAndPassword(email, fbPw(pw)); return; }
@@ -4529,7 +4678,7 @@ async function fbAuthChanged(user) {
   Object.assign(UI, { tab: 'todo', q: '', iq: '', filter: 'open', report: 'dash', drafts: {}, traceq: '', traceRes: null, auditq: '' });
   UI.authReady = true;
   /* gates, in order: first the one-time login code on a new phone, then the 30-day password change */
-  if (otpRequired()) { UI.gate = 'otp'; UI.gateD = {}; render(); startOtpGate(); return; }
+  if (otpRequired() && !isUserLogin(email)) { UI.gate = 'otp'; UI.gateD = {}; render(); startOtpGate(); return; }   /* username logins have no email to receive a code */
   if (pwMustChange(UI.pwDoc)) { UI.gate = 'pw'; UI.gateD = {}; render(); return; }
   UI.gate = null;
   UI.store = 'connecting'; render(); $('#scr').scrollTop = 0; subscribeAll(); toast(`Signed in as ${UI.profile.name}`); refreshPush();
@@ -4604,6 +4753,8 @@ const A = {
   sentCancel(ds) { openSheet('job', { id: ds.id }); const s = UI.sheet; if (s && s.name === 'job') { s.d.alt = 'cancel'; renderSheet(); const t = $('#sheet-title'); if (t) t.focus({ preventScroll: true }); } },
   pwReset(ds) { const s = UI.sheet, a = ACC(ds.id); if (!s || !a) return; s.d._err = ''; s.d._confirm = { text: `Reset ${a.name}’s password to their first password (employee ID)?`, yes: 'Yes, reset', run: () => resetPassword(ds.id), stay: true, ok: `${a.name} can sign in with their employee ID again` }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   accTemplate() { downloadAccountsTemplate(); },
+  vanTemplate() { downloadVanTemplate(); },
+  wipePick(ds) { const d = sd(); d.sel = d.sel || {}; d.sel[ds.id] = !d.sel[ds.id]; d._err = ''; renderSheet(); },
   acctReset(ds) { const s = UI.sheet; if (!s || s.busy) return; const u = USERS.find(x => (x.email || x.id) === ds.id); s.d._err = ''; s.d._confirm = { text: `Email ${u ? u.name : ds.id} a link to choose a new password?`, yes: 'Yes, send', run: () => fbSendResetFor(ds.id), stay: true, ok: e => `Password email sent to ${e}` }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   acctDelete(ds) { const s = UI.sheet; if (!s || s.busy) return; const u = USERS.find(x => (x.email || x.id) === ds.id); if (!u) return; s.d._err = ''; s.d._confirm = { text: `Remove ${u.name} from SPMS? They can no longer sign in. Their request history stays.`, danger: true, yes: 'Yes, remove', run: () => fbDeleteAccount(ds.id), after: () => { toast('Account removed'); openSheet('accounts', {}); } }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   partDelete(ds) { const s = UI.sheet; if (!s || s.busy) return; const pn = ds.id, pp = part(pn), n = LINES.filter(l => l.pn === pn).length; s.d._err = ''; s.d._confirm = { text: `Remove part ${pp && pp.name ? pp.name + ' (' + pn + ')' : pn} from the parts list?${n ? ` It still has stock in ${n} place${n === 1 ? '' : 's'} — that stock is removed too.` : ''}`, danger: true, yes: 'Yes, remove', run: () => fbDeletePart(pn), after: () => { toast('Part removed'); closeSheet(); } }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
@@ -4663,6 +4814,7 @@ const A = {
   cNo() { const d = sd(); d._confirm = null; renderSheet(); const g = $('#f-go') || $('#ws-save'); if (g) g.focus(); },
   alt(ds) { const d = sd(); d.alt = ds.v; d._err = ''; d._confirm = null; renderSheet(); const t = $('#sheet-title'); if (t) t.focus({ preventScroll: true }); },
   altBack() { const d = sd(); d.alt = ''; d._err = ''; d._confirm = null; renderSheet(); },
+  wsUse() { const s = UI.sheet; if (!s || s.busy) return; const d = s.d, id = s.p.id; d._err = ''; runOp({ run: () => wsUseParts(id, d), stay: true, ok: 'Taken from stock and added to this repair' }, '#ws-use'); },
   ws(ds) {
     const s = UI.sheet; if (!s || s.busy) return; const d = s.d, id = s.p.id; d._err = '';
     if (ds.v === 'finish') { d.mode = 'finish'; return renderSheet(); }
@@ -4719,13 +4871,14 @@ document.addEventListener('change', e => {
   if (el.id === 'f-file' && el.files && el.files[0]) { readImportFile(el.files[0]); el.value = ''; return; }
   if (el.id === 'f-accfile' && el.files && el.files[0]) { readAccountsFile(el.files[0]); return; }
   if (el.id === 'f-machfile' && el.files && el.files[0]) { readMachinesFile(el.files[0]); el.value = ''; return; }
+  if (el.id === 'f-vanfile' && el.files && el.files[0]) { readVanFile(el.files[0]); el.value = ''; return; }
   if (el.tagName === 'SELECT' && el.dataset.d && UI.sheet) { const d = UI.sheet.d; d[el.dataset.d] = el.value; (d._picked = d._picked || {})[el.dataset.d] = 1; if (el.dataset.rr) renderSheet(); }
 });
 /* drag an Excel file onto the import drop zone */
 const dropZone = e => e.target && e.target.closest ? e.target.closest('.drop') : null;
 document.addEventListener('dragover', e => { const z = dropZone(e); if (z) { e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = dropZone(e); if (z) z.classList.remove('over'); });
-document.addEventListener('drop', e => { const z = dropZone(e); if (!z) return; e.preventDefault(); z.classList.remove('over'); const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) { if (UI.sheet && UI.sheet.name === 'accounts') readAccountsFile(f); else if (UI.sheet && UI.sheet.name === 'machines') readMachinesFile(f); else readImportFile(f); } });
+document.addEventListener('drop', e => { const z = dropZone(e); if (!z) return; e.preventDefault(); z.classList.remove('over'); const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) { if (UI.sheet && UI.sheet.name === 'accounts') readAccountsFile(f); else if (UI.sheet && UI.sheet.name === 'machines') readMachinesFile(f); else if (UI.sheet && UI.sheet.name === 'vanadd') readVanFile(f); else readImportFile(f); } });
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && UI.sheet) { e.preventDefault(); if (UI.sheet.d._confirm) A.cNo(); else closeSheet(); return; }
