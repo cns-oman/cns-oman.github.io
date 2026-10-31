@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261031083739">
+<meta name="spms-build" content="20261031112113">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2796,8 +2796,10 @@ SH.delparts = d => {
   const q = (d.q || '').trim().toLowerCase();
   const pns = [...new Set(Object.keys(PARTS).concat(LINES.map(l => l.pn)))].filter(pn => { const p = part(pn); return pn && (!q || [pn, p.name].join(' ').toLowerCase().includes(q)); }).sort();
   const sel = d.sel || (d.sel = {}), picked = pns.filter(pn => sel[pn]);
+  d._pns = pns;
+  const allSel = pns.length && pns.every(pn => sel[pn]);
   const body = `<div class="searchbox">${ic('search')}<input class="inp" id="f-q" data-d="q" data-live="rr" placeholder="Search part number or name" value="${esc(d.q || '')}" autocomplete="off" aria-label="Search parts"></div>
-    <p class="note" style="padding:2px 2px 0">Tick the parts to remove, then press Remove. Any stock a part has is removed with it.</p>
+    <div style="display:flex;gap:8px;align-items:center;padding:2px 2px 0"><p class="note" style="padding:0;margin:0;flex:1">Tick the parts to remove, then press Remove. Any stock a part has is removed with it.</p>${pns.length ? `<button class="btn sm ${allSel ? 'sec' : ''}" data-a="partsAll" style="flex:none">${allSel ? 'Clear' : 'Select all'}</button>` : ''}</div>
     <div class="list">${pns.map(pn => { const p = part(pn), tot = sum(LINES.filter(l => l.pn === pn), qtyOf), on = !!sel[pn];
       return `<button class="row ${on ? 'on' : ''}" data-a="partPick" data-id="${esc(pn)}"><span class="pickbox${on ? ' on' : ''}">${on ? ic('check', 'sm') : ''}</span><div class="main"><div class="t1">${esc(p.name || pn)}</div><div class="t3 mono">${esc(pn)}${tot ? ` · ${tot} in stock` : ''}</div></div></button>`;
     }).join('') || '<div class="empty">No parts in the list</div>'}</div>`;
@@ -3950,10 +3952,13 @@ SH.accounts = d => {
     const list = USERS.filter(u => !q || [u.name, u.email, ROLE[u.role], u.hub].join(' ').toLowerCase().includes(q)).sort((a, b) => ((a.active === false) - (b.active === false)) || (ROLE_ORDER[a.role] - ROLE_ORDER[b.role]) || String(a.name).localeCompare(b.name));
     const SAID = 'mohamed.said@cns-me.com', selOn = !!d.selOn, sel = d.selIds || (d.selIds = {});
     const picked = Object.keys(sel).filter(k => sel[k]);
+    const selList = selOn ? list.map(u => u.email || u.id).filter(id => id !== SAID) : [];
+    d._accSel = selList;
+    const allSel = selList.length && selList.every(id => sel[id]);
     body = `<div style="display:flex;gap:8px;align-items:center">
         <div class="searchbox" style="flex:1;margin:0">${ic('search')}<input class="inp" id="f-aq" data-d="aq" data-live="rr" placeholder="Search name, email, role" value="${esc(d.aq || '')}" autocomplete="off" aria-label="Search staff"></div>
         <button class="btn sm ${selOn ? '' : 'sec'}" data-a="accSelMode">${selOn ? 'Cancel' : 'Select'}</button></div>
-      ${selOn ? '<p class="note" style="padding:2px 2px 0">Tick the accounts to remove, then press Remove.</p>' : ''}
+      ${selOn ? `<div style="display:flex;gap:8px;align-items:center;padding:2px 2px 0"><p class="note" style="padding:0;margin:0;flex:1">Tick the accounts to remove, then press Remove.</p>${selList.length ? `<button class="btn sm ${allSel ? 'sec' : ''}" data-a="accAll" style="flex:none">${allSel ? 'Clear' : 'Select all'}</button>` : ''}</div>` : ''}
       <div class="list">${list.map(u => {
         const id = u.email || u.id, role = `<span class="chip plain">${esc(ROLE[u.role] || u.role)}${u.hub ? ' · ' + esc(u.hub) : ''}</span>`;
         const nm = `<div class="main"><div class="t1">${esc(u.name)}${u.active === false ? ' <span class="chip bad">No access</span>' : ''}</div><div class="t3 mono">${esc(id)}</div></div>`;
@@ -4502,6 +4507,8 @@ const A = {
   accSelMode() { const d = sd(); d.selOn = !d.selOn; d.selIds = {}; d._confirm = null; d._err = ''; renderSheet(); },
   accPick(ds) { const d = sd(); d.selIds = d.selIds || {}; d.selIds[ds.id] = !d.selIds[ds.id]; d._err = ''; renderSheet(); },
   partPick(ds) { const d = sd(); d.sel = d.sel || {}; d.sel[ds.id] = !d.sel[ds.id]; d._err = ''; renderSheet(); },
+  partsAll() { const d = sd(); const pns = d._pns || []; d.sel = d.sel || {}; const on = pns.length && pns.every(pn => d.sel[pn]); pns.forEach(pn => d.sel[pn] = !on); d._err = ''; renderSheet(); },
+  accAll() { const d = sd(); const ids = d._accSel || []; d.selIds = d.selIds || {}; const on = ids.length && ids.every(id => d.selIds[id]); ids.forEach(id => d.selIds[id] = !on); d._err = ''; renderSheet(); },
   addPart() { const d = sd(); const pn = normPN(d.pn); d.parts = d.parts || [];
     if (!pn) { d._err = 'Enter a part number first.'; renderSheet(); return; }
     if (d.parts.some(x => normPN(x.pn) === pn)) { d._err = 'That part is already in the request.'; renderSheet(); return; }
