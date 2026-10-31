@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261031112113">
+<meta name="spms-build" content="20261031162456">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1522,30 +1522,36 @@ async function createJob(d) {
   const me = mustRole('TECH');
   const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
   const qty = parseInt(d.qty, 10); if (!(qty >= 1 && qty <= 99)) throw E('Quantity must be between 1 and 99.');
-  const scn = (d.scn || '').trim().toUpperCase(); if (!scn) throw E('Enter the Service Call Number. Parts can only be requested against a call.');
-  const machine = (d.machine || '').trim().toUpperCase(); if (!machine) throw E('Enter the machine ID.');
-  const site = (d.site || '').trim(); if (!site && !d.gps) throw E('Add your location: use GPS or type the site address.');
-  const dupOf = x => x.type === 'req' && x.techId === me.id && normPN(x.pn) === pn && (x.scn || '') === scn && isOpenStatus(x.status);
-  let dup = JOBS.find(dupOf);
-  if (!dup) dup = (await api.query('jobs', { where: [['techId', '==', me.id], ['scn', '==', scn], ['open', '==', true]] })).map(normJob).find(dupOf);
-  if (dup) throw E(`You already have an open request for ${pn} on ${scn} (${dup.id}).`);
+  const forVan = !!d.forVan;   /* a part asked only for the technician's own van stock: no call, machine or site needed */
+  let scn = '', machine = '', site = '';
+  if (!forVan) {
+    scn = (d.scn || '').trim().toUpperCase(); if (!scn) throw E('Enter the Service Call Number. Parts can only be requested against a call.');
+    machine = (d.machine || '').trim().toUpperCase(); if (!machine) throw E('Enter the machine ID.');
+    site = (d.site || '').trim(); if (!site && !d.gps) throw E('Add your location: use GPS or type the site address.');
+    const dupOf = x => x.type === 'req' && !x.forVan && x.techId === me.id && normPN(x.pn) === pn && (x.scn || '') === scn && isOpenStatus(x.status);
+    let dup = JOBS.find(dupOf);
+    if (!dup) dup = (await api.query('jobs', { where: [['techId', '==', me.id], ['scn', '==', scn], ['open', '==', true]] })).map(normJob).find(dupOf);
+    if (dup) throw E(`You already have an open request for ${pn} on ${scn} (${dup.id}).`);
+  }
   const now = Date.now(), id = newId('REQ');
   const hub = HUBS.includes(d.hub) ? d.hub : myHub();
   const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (hub === 'MMH' ? 'inside' : 'outside');   /* inside Muscat (from the Muscat Main Hub) or outside Muscat (from the technician's own hub) */
-  const body = { id, type: 'req', pn, desc: (d.desc || '').trim() || part(pn).name, qty, scn, machine, machineSn: (findMachine(machine) || {}).sn || '', model: (d.model || '').trim(), customer: (d.customer || '').trim(), contract: (d.contract || '').trim(), site, gps: d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
-    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', note: (d.note || '').trim(), techId: me.id, techName: me.name, hub, area, status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
-    history: [{ at: now, by: me.name, role: 'Technician', action: 'Requested', note: `${pn} × ${qty} for ${scn} · ${machine}` }] };
+  const body = { id, type: 'req', forVan, pn, desc: (d.desc || '').trim() || part(pn).name, qty, scn, machine, machineSn: forVan ? '' : (findMachine(machine) || {}).sn || '', model: forVan ? '' : (d.model || '').trim(), customer: forVan ? '' : (d.customer || '').trim(), contract: forVan ? '' : (d.contract || '').trim(), site, gps: forVan ? null : d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
+    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', note: (d.note || '').trim(), reason: forVan ? 'For van stock' : '', techId: me.id, techName: me.name, hub, area, grp: d.grp || '', status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
+    history: [{ at: now, by: me.name, role: 'Technician', action: 'Requested', note: forVan ? `${pn} × ${qty} for van stock` : `${pn} × ${qty} for ${scn} · ${machine}` }] };
   await saveJob(body); return id;
 }
-/* one form, several parts for the same machine: make one request per part, all sharing the machine, call and location (entered once) */
+/* one form, several parts: make one request per part so each is tracked on its own, all sharing a group id (grp) so the
+   Team Leader sees them as a single request with approve/reject per part and approve-all / reject-all */
 async function createJobs(d) {
   mustRole('TECH');
   const parts = (d.parts || []).slice();
   const curPn = normPN(d.pn);
   if (curPn && !parts.some(x => normPN(x.pn) === curPn)) parts.push({ pn: d.pn, desc: d.desc, qty: d.qty });
   if (!parts.length) throw E('Add at least one part to the request.');
+  const grp = parts.length > 1 ? newId('GRP') : '';
   const ids = [];
-  for (const pt of parts) ids.push(await createJob(Object.assign({}, d, { pn: pt.pn, desc: pt.desc, qty: pt.qty })));
+  for (const pt of parts) ids.push(await createJob(Object.assign({}, d, { pn: pt.pn, desc: pt.desc, qty: pt.qty, grp })));
   return ids;
 }
 /* a technician adds parts straight into their own van (parts they already hold) */
@@ -1594,22 +1600,37 @@ async function tlWithdraw(id, d) {
 }
 
 /* Stock picks parts: plan from the selection; fewer than needed → back-order for the rest */
+/* every part that leaves Stock must carry a serial number: stock lines that have one provide it; bulk stock and parts not
+   in the inventory need the serial number typed in. Without enough serial numbers the request stays pending (nothing is sent). */
 function dispatchPlan(j, d) {
   const need = j.qtyApproved || j.qty; const avail = hubLines(j.pn);
+  const typed = parseSNs(d.msns);
+  if (new Set(typed).size !== typed.length) throw E('The same serial number is listed twice.');
   if (avail.length) {
     const keys = (d.items || []).filter(k => avail.some(l => l.key === k));
     if (!keys.length) throw E('Pick the part(s) to send from the inventory list.');
-    const plan = []; let left = need;
-    for (const k of keys) { if (left <= 0) break; const l = avail.find(x => x.key === k); const n = Math.min(qtyOf(l), left); plan.push({ key: k, qty: n, loc: l.loc, sn: l.sn }); left -= n; }
+    const plan = []; let left = need, bulkNeed = 0;
+    for (const k of keys) { if (left <= 0) break; const l = avail.find(x => x.key === k); const n = Math.min(qtyOf(l), left); plan.push({ key: k, qty: n, loc: l.loc, sn: l.sn }); if (!l.sn) bulkNeed += n; left -= n; }
     const send = need - left;
-    return { need, send, rest: left, plan, manual: false };
+    if (bulkNeed > 0 && typed.length < bulkNeed) throw E(`Add a serial number for every part you send. ${bulkNeed} ${bulkNeed === 1 ? 'has' : 'have'} no serial number in stock — type ${bulkNeed === 1 ? 'it' : 'them'} into the serial numbers box.`);
+    return { need, send, rest: left, plan, manual: false, typed, bulkNeed };
   }
-  const sns = parseSNs(d.msns), from = HUBS.includes(d.from) ? d.from : HUBS[0];
-  if (!sns.length) return { need, send: need, rest: 0, plan: [], manual: true, sns, from };   /* parts without serial numbers */
-  if (new Set(sns).size !== sns.length) throw E('The same serial number is listed twice.');
-  if (sns.length > need) throw E(`You listed ${sns.length} serial numbers but only ${need} are approved.`);
-  const send = sns.length;
-  return { need, send, rest: need - send, plan: [], manual: true, sns, from: HUBS.includes(d.from) ? d.from : HUBS[0] };
+  const from = HUBS.includes(d.from) ? d.from : HUBS[0];
+  if (!typed.length) throw E('Enter the serial number of the part you are sending. A part can’t be sent without one.');
+  if (typed.length > need) throw E(`You listed ${typed.length} serial numbers but only ${need} are approved.`);
+  const send = typed.length;
+  return { need, send, rest: need - send, plan: [], manual: true, sns: typed, typed, from };
+}
+/* spread typed serial numbers over the units that came from bulk stock (no serial number of their own) */
+function assignSns(taken, typed) {
+  const q = (typed || []).slice(), out = [];
+  for (const it of taken) {
+    if (it.sn || !q.length) { out.push(it); continue; }
+    let n = it.qty || 1;
+    while (n > 0 && q.length) { out.push(Object.assign({}, it, { sn: q.shift(), qty: 1 })); n--; }
+    if (n > 0) out.push(Object.assign({}, it, { qty: n }));
+  }
+  return out;
 }
 function checkDispatch(j, d) {
   const p = dispatchPlan(j, d); const who = j.type === 'rep' ? `${j.techName}’s van` : j.techName;
@@ -1620,9 +1641,9 @@ function checkDispatch(j, d) {
 async function stockDispatch(id, d) {
   return jobStep(id, 'STOCK', 'STOCK', async (j, me) => {
     const p = dispatchPlan(j, d);
-    let items;
-    if (p.manual) items = p.sns.length ? p.sns.map(sn => ({ pn: normPN(j.pn), name: j.desc || partName(j.pn), sn, qty: 1, from: p.from, cond: 'Not in inventory', price: +part(j.pn).price || 0 })) : [{ pn: normPN(j.pn), name: j.desc || partName(j.pn), sn: '', qty: p.send, from: p.from, cond: 'Not in inventory', price: +part(j.pn).price || 0 }];
-    else items = await takeMany(p.plan);
+    let items, taken = null;
+    if (p.manual) items = p.sns.map(sn => ({ pn: normPN(j.pn), name: j.desc || partName(j.pn), sn, qty: 1, from: p.from, cond: 'Not in inventory', price: +part(j.pn).price || 0 }));
+    else { taken = await takeMany(p.plan); items = assignSns(taken, p.typed); }
     try {
       const now = Date.now(), courier = d.courier || COURIERS[0], ref = (d.ref || '').trim() || 'DSP-' + id.slice(-6);
       const sns = items.map(t => t.sn || 'bulk × ' + t.qty).join(', '), from = [...new Set(items.map(t => t.from))].join(' + ');
@@ -1637,15 +1658,15 @@ async function stockDispatch(id, d) {
       await saveJob(doc);
       for (const t of items) log({ t: j.type === 'rep' ? 'Sent to van stock' : 'Dispatched to technician', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: j.type === 'rep' ? vanLoc(j.techId) : j.techName, ref: j.id });
       return doc;
-    } catch (e) { if (!p.manual) await putBack(items); throw e; }
+    } catch (e) { if (taken) await putBack(taken); throw e; }
   });
 }
 async function techReceive(id) {
   return jobStep(id, 'DISPATCHED', 'TECH', async (j, me) => {
     const now = Date.now(); const items = (j.dispatch && j.dispatch.items) || [];
-    if (j.type === 'rep') {
-      for (const t of items) { await putLine(vanLoc(me.id), t.pn, { sn: t.sn, qty: t.qty, cond: t.cond === 'Not in inventory' ? 'New' : t.cond, name: t.name, source: 'Restock ' + j.id }); log({ t: 'Received into van', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: vanLoc(me.id), ref: j.id }); }
-      return saveJob(nextDoc(j, me, 'CLOSED', 'Restock received into van', items.map(t => t.sn || 'bulk × ' + t.qty).join(', '), { receivedAt: now, outcome: 'Added to van stock' }));
+    if (j.type === 'rep' || j.forVan) {
+      for (const t of items) { await putLine(vanLoc(me.id), t.pn, { sn: t.sn, qty: t.qty, cond: t.cond === 'Not in inventory' ? 'New' : t.cond, name: t.name, source: (j.forVan ? 'Van request ' : 'Restock ') + j.id }); log({ t: 'Received into van', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: vanLoc(me.id), ref: j.id }); }
+      return saveJob(nextDoc(j, me, 'CLOSED', j.forVan ? 'Van part received into van' : 'Restock received into van', items.map(t => t.sn || 'bulk × ' + t.qty).join(', '), { receivedAt: now, outcome: 'Added to van stock' }));
     }
     for (const t of items) log({ t: 'Received by technician', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: me.name, ref: j.id });
     return saveJob(nextDoc(j, me, 'RECEIVED', 'Receipt confirmed', (j.dispatch && j.dispatch.sn) || '', { receivedAt: now }));
@@ -1774,8 +1795,12 @@ async function stockReceiveReturn(id, d) {
 function checkRoute(j, d) {
   const route = d.route || (j.ret.type === 'unused' ? 'stock' : 'repair'); const what = `${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + (j.ret.qty || 1)}`;
   if (route === 'stock' && j.ret.type !== 'unused') throw E('A defective part cannot go back to stock without repair.');
-  if (route === 'scrap') return `Scrap ${what}? This can’t be undone.`;
-  if (route === 'consume') return `Mark ${what} as consumed? This closes the request.`;
+  const rep = d.replace === 'yes' && j.ret.type === 'defective';
+  if (rep && !normSN(d.repSn)) throw E('Enter the serial number of the replacement part you are sending.');
+  const repTxt = rep ? ` A replacement (SN ${normSN(d.repSn)}) is sent to ${j.techName}.` : '';
+  if (route === 'scrap') return `Scrap ${what}?${repTxt} This can’t be undone.`;
+  if (route === 'consume') return `Mark ${what} as consumed?${repTxt} This closes the request.`;
+  if (rep) return `Send ${route === 'repair' ? 'the part for repair' : 'the part back'} and a replacement (SN ${normSN(d.repSn)}) to ${j.techName}?`;
   return null;
 }
 async function stockRoute(id, d) {
@@ -1784,14 +1809,38 @@ async function stockRoute(id, d) {
     const route = d.route || (j.ret.type === 'unused' ? 'stock' : 'repair'), note = (d.note || '').trim(), hub = HUBS.includes(d.hub) ? d.hub : HUBS[0], now = Date.now();
     const ret = Object.assign({}, j.ret, { route, routeNote: note, routedAt: now, routeHub: route === 'stock' ? hub : '' });
     const q = j.ret.qty || 1;
-    if (route === 'repair') { const doc = await saveJob(nextDoc(j, me, 'WORKSHOP', 'Sent to Workshop for repair', note, { ret })); log({ t: 'Sent to workshop', pn: ret.pn, sn: ret.sn, qty: q, from: 'Stock', to: 'Workshop', ref: j.id, note }); return doc; }
-    const label = { stock: 'Returned to stock (not used)', scrap: 'Scrapped (not repairable)', consume: 'Consumed' }[route];
-    if (route === 'stock') await putLine(hub, ret.pn, { sn: ret.sn, qty: q, cond: 'Returned unused', name: ret.name || j.desc, source: 'Unused return ' + j.id });
-    if (route === 'scrap') await putLine(SCRAP, ret.pn, { sn: ret.sn, qty: q, cond: 'Scrap', name: ret.name || j.desc, source: 'Scrapped ' + j.id });   /* into the scrap pool for reuse in repairs */
-    const doc = await saveJob(nextDoc(j, me, 'CLOSED', label, note + (route === 'stock' ? (note ? ' · ' : '') + 'into ' + hub : ''), { ret, outcome: label }));
-    log({ t: { stock: 'Returned to stock', scrap: 'Scrapped', consume: 'Consumed' }[route], pn: ret.pn, sn: ret.sn, qty: q, from: 'Stock', to: route === 'stock' ? hub : label, ref: j.id, note });
+    const sendRep = d.replace === 'yes' && j.ret.type === 'defective', repId = sendRep ? newId('REQ') : '', repTxt = repId ? ' · replacement sent to ' + j.techName : '';
+    let doc;
+    if (route === 'repair') { doc = await saveJob(nextDoc(j, me, 'WORKSHOP', 'Sent to Workshop for repair', note + repTxt, { ret, replacedBy: repId || '' })); log({ t: 'Sent to workshop', pn: ret.pn, sn: ret.sn, qty: q, from: 'Stock', to: 'Workshop', ref: j.id, note }); }
+    else {
+      const label = { stock: 'Returned to stock (not used)', scrap: 'Scrapped (not repairable)', consume: 'Consumed' }[route];
+      if (route === 'stock') await putLine(hub, ret.pn, { sn: ret.sn, qty: q, cond: 'Returned unused', name: ret.name || j.desc, source: 'Unused return ' + j.id });
+      if (route === 'scrap') await putLine(SCRAP, ret.pn, { sn: ret.sn, qty: q, cond: 'Scrap', name: ret.name || j.desc, source: 'Scrapped ' + j.id });   /* into the scrap pool for reuse in repairs */
+      doc = await saveJob(nextDoc(j, me, 'CLOSED', label, note + (route === 'stock' ? (note ? ' · ' : '') + 'into ' + hub : '') + repTxt, { ret, replacedBy: repId || '', outcome: label }));
+      log({ t: { stock: 'Returned to stock', scrap: 'Scrapped', consume: 'Consumed' }[route], pn: ret.pn, sn: ret.sn, qty: q, from: 'Stock', to: route === 'stock' ? hub : label, ref: j.id, note });
+    }
+    if (repId) await sendReplacement(j, d, me, now, repId);
     return doc;
   });
+}
+/* Stock sends a fresh part of the same kind straight to the engineer (no second Team Leader approval): taken from the
+   inventory when that serial number is in stock, otherwise sent as a part not in the inventory. Always carries a serial number. */
+async function sendReplacement(j, d, me, now, repId) {
+  const pn = normPN(j.ret.pn), sn = normSN(d.repSn);
+  const inv = LINES.find(l => HUBS.includes(l.loc) && normPN(l.pn) === pn && normSN(l.sn) === sn);
+  let from, cond;
+  if (inv) { const t = await takeLine(inv.key, 1, inv.loc); from = t.from; cond = t.cond || 'New'; }
+  else { from = HUBS.includes(d.repFrom) ? d.repFrom : jobHub(j); cond = 'Not in inventory'; }
+  const item = { pn, name: j.ret.name || j.desc || partName(pn), sn, qty: 1, from, cond, price: +part(pn).price || 0 };
+  const rep = Object.assign(cleanCopy(j), {
+    id: repId, type: 'req', forVan: false, pn, desc: j.ret.name || j.desc || partName(pn), qty: 1, qtyApproved: 1, note: '', grp: '',
+    replacementFor: j.id, parent: '', backorder: false, split: false, status: 'DISPATCHED', open: true, createdAt: now, updatedAt: now, updatedBy: me.name, use: null, ret: null, tl: j.tl || null,
+    dispatch: { by: me.name, at: now, items: [item], sn, from, courier: COURIERS[0], ref: 'REP-' + j.id.slice(-6) },
+    history: [{ at: now, by: me.name, role: 'Stock', action: 'Replacement sent', note: `${pn} SN ${sn} to ${j.techName} (replaces faulty part from ${j.id})` }]
+  });
+  await saveJob(rep);
+  log({ t: 'Replacement dispatched', pn, sn, qty: 1, from, to: j.techName, ref: repId });
+  return repId;
 }
 async function wsAccept(id) {
   return jobStep(id, 'WORKSHOP', 'WS', async (j, me) => {
@@ -2060,6 +2109,7 @@ function steps(j) {
 function kindPills(j) {
   let s = '';
   if (j.type === 'rep') s += `<span class="pill">${j.auto ? 'Auto-Rep' : 'Van restock'}</span>`;
+  if (j.forVan) s += '<span class="pill">For van</span>';
   if (j.type === 'van') s += '<span class="pill">From van</span>';
   if (j.backorder) s += '<span class="pill">Back-order</span>';
   if (j.split) s += '<span class="pill">Separate return</span>';
@@ -2087,6 +2137,27 @@ function jobRow(j, me) {
       <span class="j-t2">${tag(j.pn)}<span class="num">× ${jobQty(j)}</span>${who ? `<span>· ${who}</span>` : ''}${kindPills(j)}</span>
       <span class="j-t3">${mine && stNext(j) ? `<span class="next">${esc(stNext(j))}${ic('chev')}</span>` : stChip(j)}${lateChip(j)}</span>
       ${extra ? `<span class="wait">${extra}</span>` : ''}${rem}</span>
+  </button>`;
+}
+/* multi-part requests waiting for the Team Leader show as ONE card (the group); everything else as its own card */
+function todoRows(jobs, me) {
+  const seen = new Set(), out = [];
+  for (const j of jobs) {
+    if (j.grp && j.status === 'TL') { if (seen.has(j.grp)) continue; seen.add(j.grp); out.push(groupCard(j.grp, me)); }
+    else out.push(jobRow(j, me));
+  }
+  return out.join('');
+}
+function groupCard(grp, me) {
+  const sibs = JOBS.filter(j => j.grp === grp).sort((a, b) => a.createdAt - b.createdAt), j0 = sibs[0];
+  if (!j0) return '';
+  const pending = sibs.filter(j => j.status === 'TL').length;
+  const who = j0.forVan ? 'van stock' : me.role !== 'TECH' ? esc(j0.techName) : (j0.scn ? `<span class="mono">${esc(j0.scn)}</span>` : '');
+  return `<button class="jcard mine" data-a="sheet" data-s="group" data-id="${esc(grp)}">
+    <span class="j-ic t-amber">${ic('box')}</span>
+    <span class="j-main"><span class="j-t1"><b>Request · ${sibs.length} parts</b><span class="when">${rel(j0.updatedAt)}</span></span>
+      <span class="j-t2">${sibs.slice(0, 5).map(s => tag(s.pn)).join('')}${who ? `<span>· ${who}</span>` : ''}</span>
+      <span class="j-t3"><span class="next">${pending} to approve${ic('chev')}</span></span></span>
   </button>`;
 }
 function greet() { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
@@ -2123,7 +2194,7 @@ function todoView(me) {
     if (pa.length) adj = `<section class="blk"><div class="sec-h"><h2>Stock changes</h2><span class="t3 muted">${pa.length}</span></div><div class="list">${pa.map(a => `<button class="row" data-a="sheet" data-s="adj" data-id="${esc(a.id)}"><span class="lead warn">${ic('edit', 'sm')}</span><div class="main"><div class="t1">${tag(a.pn)} ${esc(adjText(a))}</div><div class="t3">${esc(a.reason)} · ${esc(a.by)} · ${rel(a.at)}</div></div><span class="chev">${ic('chev', 'sm')}</span></button>`).join('')}</div></section>`;
   }
   const sorted = me.role === 'TL' && todo.length > 1 ? '<span class="t3 muted">Oldest first</span>' : '';
-  const list = todo.length ? `<section class="blk"><div class="sec-h"><h2>${me.role === 'TL' ? 'Requests' : 'Your next steps'}</h2>${sorted}</div><div class="jobs">${todo.map(j => jobRow(j, me)).join('')}</div></section>` : '';
+  const list = todo.length ? `<section class="blk"><div class="sec-h"><h2>${me.role === 'TL' ? 'Requests' : 'Your next steps'}</h2>${sorted}</div><div class="jobs">${todoRows(todo, me)}</div></section>` : '';
   return `${homeCard(me, n)}${quick(QUICK[me.role] || [])}${pushBanner()}${alerts ? `<div class="blk">${alerts}</div>` : ''}${adj}${list}`;
 }
 
@@ -2389,6 +2460,28 @@ SH.job = (d, p) => {
   return { title: d.alt ? a.title : turn ? stNext(j) : kind, sub: `${esc(j.pn)}${j.scn ? ' · ' + esc(j.scn) : ''}${j.type === 'rep' ? ' · ' + esc(j.techName) + '’s van' : ''}`, body, op: a && a.op, foot };
 };
 
+/* ---------- Team Leader: one multi-part request, approve/reject each part or all at once ---------- */
+SH.group = (d, p) => {
+  const grp = p.id, sibs = JOBS.filter(j => j.grp === grp).sort((a, b) => a.createdAt - b.createdAt);
+  if (!sibs.length) return { title: 'Not found', body: emptyBox('This request no longer exists', '') };
+  const me = ME(), j0 = sibs[0], forVan = !!j0.forVan;
+  const pending = sibs.filter(j => j.status === 'TL');
+  const canAct = !!(me && me.role === 'TL' && inMyHub(jobHub(j0), me) && pending.length);
+  if (canAct && !d.reason) d.reason = REJECT_REASONS[0];
+  const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
+  const facts = fact('Technician', esc(j0.techName)) + (forVan ? fact('For', 'Van stock') : fact('Service call', `<span class="mono">${esc(j0.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j0.machine || '–')}</span>`) + fact(j0.customer ? 'Customer' : 'Site', esc(j0.customer || j0.site || '–'))) + fact('Raised', fmtD(j0.createdAt));
+  const head = `<div class="card"><div class="jh-t">Request · ${sibs.length} part${sibs.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} to decide` : ' · all decided'}</div><div class="facts">${facts}</div></div>`;
+  const rows = sibs.map(j => {
+    const decided = j.status !== 'TL';
+    const stTxt = j.status === 'REJECTED' ? '<span class="chip bad">Rejected</span>' : decided ? `<span class="chip ok">Approved${j.qtyApproved && j.qtyApproved !== j.qty ? ' × ' + j.qtyApproved : ''}</span>` : '';
+    const btns = (canAct && !decided) ? `<div class="two" style="gap:6px"><button class="btn sm ok" data-a="grpOne" data-id="${esc(j.id)}" data-m="approve">Approve</button><button class="btn sm danger" data-a="grpOne" data-id="${esc(j.id)}" data-m="reject">Reject</button></div>` : '';
+    return `<div class="card" style="gap:8px"><div class="chips">${tag(j.pn)}<b class="num">× ${j.qty}</b>${stTxt}</div><div class="t3">${esc(j.desc || partName(j.pn) || '')} · in stock: ${esc(availText(j.pn))}</div>${btns}</div>`;
+  }).join('');
+  const rejectBox = canAct ? `${sel(d, 'reason', 'Reason for any reject', REJECT_REASONS)}${area(d, 'remarks', d.reason === 'Other' ? 'Explain the reject (required)' : 'Remarks (optional)', 'The technician sees this on rejected parts')}` : '';
+  const allBtns = canAct ? `<div class="two"><button class="btn ok" data-a="grpAll" data-m="approve">Approve all ${pending.length}</button><button class="btn danger" data-a="grpAll" data-m="reject">Reject all ${pending.length}</button></div>` : '';
+  return { title: 'Request', sub: forVan ? esc(j0.techName) + ' · van stock' : `${esc(j0.scn || '')}${j0.machine ? ' · ' + esc(j0.machine) : ''}`, body: `${head}${rows}${rejectBox}${allBtns}`, foot: `<button class="btn sec" data-a="close">Close</button>` };
+};
+
 function altActions(j, me) {
   const out = [];
   if (me.role === 'TECH' && j.techId === me.id && j.type === 'req' && ['TL', 'STOCK'].includes(j.status)) out.push(['cancel', 'Cancel request']);
@@ -2426,11 +2519,14 @@ function actionForm(j, me, d) {
       if (!d.items) { d.items = []; let c = 0; for (const l of av) { if (c >= need) break; d.items.push(l.key); c += qtyOf(l); } }
       d.items = d.items.filter(k => av.some(l => l.key === k));
       const send = Math.min(need, sum(d.items.map(k => av.find(l => l.key === k)), qtyOf));
+      let leftC = need, bulkNeed = 0;
+      for (const k of d.items) { if (leftC <= 0) break; const l = av.find(x => x.key === k); if (!l) continue; const n = Math.min(qtyOf(l), leftC); if (!l.sn) bulkNeed += n; leftC -= n; }
+      const snBox = bulkNeed > 0 ? fld(`Serial numbers for the ${bulkNeed} part${bulkNeed === 1 ? '' : 's'} without one *`, `<textarea class="inp mono" id="f-msns" data-d="msns" placeholder="One per line">${esc(d.msns || '')}</textarea>`, `The stock you picked has no serial number of its own, so type ${bulkNeed === 1 ? 'the serial number' : 'one serial number per part'} here.`, 'f-msns') : '';
       const who = j.type === 'rep' ? `${j.techName}’s van` : j.techName;
       const pick = av.length
         ? fld(`Pick from inventory (${send} of ${need} selected)`, `<div class="opts">${av.map(l => { const on = d.items.includes(l.key); return `<button class="opt ${on ? 'on' : ''}" aria-pressed="${on}" data-a="togItem" data-id="${esc(l.key)}"><span class="radio"></span><span class="main"><span class="t1">${l.sn ? '<span class="mono">SN ' + esc(l.sn) + '</span>' : 'Bulk × ' + qtyOf(l)}</span><span class="t2">${esc(l.loc)} · ${esc(l.cond || 'New')}${l.bin ? ' · bin ' + esc(l.bin) : ''}</span></span></button>`; }).join('')}</div>`, `Requested from ${esc(HUB_NAME[rh] || rh)}`)
-          + (send < need && send > 0 ? `<div class="alert warn"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>Only ${send} of ${need} selected</b><span class="s">${need - send} more become a back-order</span></div></div>` : '')
-        : `<div class="alert warn"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>${esc(j.pn)} is not in the inventory</b><span class="s">Receive it first, or send it without taking it from the inventory</span></div></div>${fld('Sending from', hubSeg(d, 'from'))}${fld('Serial numbers (optional)', `<textarea class="inp mono" id="f-msns" data-d="msns" placeholder="One per line, if the parts have them">${esc(d.msns || '')}</textarea>`, `Empty sends all ${need} without serial numbers. Fewer serials than ${need} makes a back-order.`, 'f-msns')}`;
+          + (send < need && send > 0 ? `<div class="alert warn"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>Only ${send} of ${need} selected</b><span class="s">${need - send} more become a back-order</span></div></div>` : '') + snBox
+        : `<div class="alert warn"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>${esc(j.pn)} is not in the inventory</b><span class="s">Receive it first, or send it with its serial number without taking it from the inventory</span></div></div>${fld('Sending from', hubSeg(d, 'from'))}${fld('Serial numbers *', `<textarea class="inp mono" id="f-msns" data-d="msns" placeholder="One per line">${esc(d.msns || '')}</textarea>`, `One serial number per part. A part can’t be sent without one; fewer than ${need} makes a back-order for the rest.`, 'f-msns')}`;
       const form = box(`${pick}${inp(d, 'ref', 'Dispatch reference', 'Automatic if empty', { mono: true })}<div class="infobox">${ic('truck', 'sm')} By company van to ${esc(who)}${j.type === 'rep' ? '' : `: ${esc(j.site || '')}${j.gps ? ` · <a href="${mapsUrl(j.gps)}" target="_blank" rel="noopener" style="font-weight:600">GPS location</a>` : ''}`}</div>`);
       return { form, op: { label: j.type === 'rep' ? 'Send to van' : 'Dispatch', yes: 'Yes, send', check: () => checkDispatch(j, d), run: () => stockDispatch(j.id, d) } };
     }
@@ -2464,7 +2560,12 @@ function actionForm(j, me, d) {
     case 'ATHUB': {
       const opts = r.type === 'unused' ? [['stock', 'Back to stock'], ['repair', 'Repair'], ['scrap', 'Scrap']] : [['repair', 'Send to repair'], ['scrap', 'Scrap'], ['consume', 'Consume']];
       if (!d.route) d.route = opts[0][0]; if (!d.hub) d.hub = (j.dispatch && HUBS.includes(j.dispatch.from)) ? j.dispatch.from : myHub();
-      return { form: box(`<p style="margin:0">${r.type === 'defective' ? 'Defective' : 'Unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> is at Stock.</p>${segBtns(d, 'route', opts)}${d.route === 'stock' ? fld('Put into', hubSeg(d, 'hub')) : ''}${area(d, 'note', 'Note', 'Condition, fault notes')}`), op: { label: 'Confirm', cls: ['scrap', 'consume'].includes(d.route) ? 'danger' : '', danger: true, yes: d.route === 'scrap' ? 'Yes, scrap it' : 'Yes, consume it', check: () => checkRoute(j, d), run: () => stockRoute(j.id, d) } };
+      if (!d.replace) d.replace = 'no'; if (!d.repFrom) d.repFrom = (j.dispatch && HUBS.includes(j.dispatch.from)) ? j.dispatch.from : myHub();
+      const repSection = r.type === 'defective'
+        ? fld(`Send ${esc(j.techName)} a replacement?`, segBtns(d, 'replace', [['no', 'No'], ['yes', 'Yes']]), 'A new one of the same part, sent straight to the engineer.')
+          + (d.replace === 'yes' ? `${fld('Replacement sent from', hubSeg(d, 'repFrom'))}${inp(d, 'repSn', 'Serial number of the replacement *', 'As printed on the part', { mono: true, hint: 'If this serial number is in the inventory, it is taken from there.' })}` : '')
+        : '';
+      return { form: box(`<p style="margin:0">${r.type === 'defective' ? 'Defective' : 'Unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> is at Stock.</p>${segBtns(d, 'route', opts)}${d.route === 'stock' ? fld('Put into', hubSeg(d, 'hub')) : ''}${area(d, 'note', 'Note', 'Condition, fault notes')}${repSection}`), op: { label: d.replace === 'yes' ? 'Confirm & send replacement' : 'Confirm', cls: ['scrap', 'consume'].includes(d.route) ? 'danger' : '', danger: true, yes: d.route === 'scrap' ? 'Yes, scrap it' : 'Yes, consume it', check: () => checkRoute(j, d), run: () => stockRoute(j.id, d) } };
     }
     case 'WORKSHOP':
       return { form: box(`<p style="margin:0">Confirm the Workshop received <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> arrived.</p>`), op: { label: 'Accept part', run: () => wsAccept(j.id) } };
@@ -2672,7 +2773,8 @@ function photoStrip(list, label) {
   return `<div class="sec-h" style="padding:6px 0 0"><h2>${esc(label)}</h2></div><div class="thumbs">${list.map((src, i) => `<a class="thumb" href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${esc(label)} ${i + 1}"></a>`).join('')}</div>`;
 }
 SH.new = d => {
-  if (!d.qty) d.qty = 1; if (!d.urgency) d.urgency = 'normal'; if (!HUBS.includes(d.hub)) { d.hub = myHub(); d._hubGps = false; }
+  if (!d.qty) d.qty = 1; if (!d.urgency) d.urgency = 'normal'; if (d.forVan == null) d.forVan = ''; if (!HUBS.includes(d.hub)) { d.hub = myHub(); d._hubGps = false; }
+  const forVan = !!d.forVan;
   const g = d.gps;
   const gpsBox = `<div class="card" style="gap:10px"><div class="sec-h" style="padding:0"><h2>Your location</h2>${g ? `<span class="chip ${g.doubt ? 'warn' : 'ok'}">${g.how === 'gps' ? (g.doubt ? 'Check it · ±' : 'GPS ±') + g.acc + ' m' : 'Entered'}</span>` : ''}</div>
     ${g ? `<div class="mono" style="font-size:14px">${(+g.lat).toFixed(6)}, ${(+g.lng).toFixed(6)}</div><a href="${mapsUrl(g)}" target="_blank" rel="noopener" style="color:var(--brand-on);font-weight:600">Check on Google Maps</a>` : ''}
@@ -2685,16 +2787,17 @@ SH.new = d => {
   const star = parts.length ? '' : ' *';
   const partList = parts.length ? `<div class="list card" style="padding:0;margin-bottom:10px">${parts.map((pt, i) => `<div class="row"><span class="lead info">${ic('box', 'sm')}</span><div class="main"><div class="t1">${tag(pt.pn)} <span class="num">× ${pt.qty}</span></div><div class="t3">${esc(pt.desc || partName(pt.pn) || '')}</div></div><button class="btn sm sec" data-a="delPart" data-i="${i}" aria-label="Remove part">${ic('x', 'sm')}</button></div>`).join('')}</div>` : '';
   return {
-    title: 'New request', sub: 'Goes to the Team Leader',
+    title: 'New request', sub: forVan ? 'For your van · goes to the Team Leader' : 'Goes to the Team Leader',
     body: `${parts.length ? `<div class="sec-h" style="padding:0"><h2>Parts in this request · ${parts.length}</h2></div>` : ''}${partList}
       ${inp(d, 'pn', 'Part number' + star, 'Type to search stock and your van', { mono: true, live: 'pnsug', auto: 'pn' })}<div id="live-pnsug" aria-live="polite">${pnSuggest(d)}</div>${inp(d, 'desc', 'Part description', 'Filled in for known part numbers')}
       ${fld('Quantity' + star, `<div class="stepper" role="group" aria-label="Quantity"><button type="button" data-a="step" data-k="qty" data-delta="-1" aria-label="Less"${d.qty <= 1 ? ' disabled' : ''}>−</button><output class="num">${d.qty}</output><button type="button" data-a="step" data-k="qty" data-delta="1" aria-label="More"${d.qty >= 99 ? ' disabled' : ''}>+</button></div>`)}
-      <button class="btn sec" data-a="addPart">${ic('plus', 'sm')}Add another part for the same machine</button>
-      <div class="sec-h" style="padding:10px 0 0"><h2>The machine</h2></div>
+      <button class="btn sec" data-a="addPart">${ic('plus', 'sm')}Add another part${forVan ? '' : ' for the same machine'}</button>
+      ${fld('What is this for?', segBtns(d, 'forVan', [['', 'For a machine'], ['1', 'For my van']]), forVan ? 'Van stock — no call or machine needed. It goes into your van when you receive it.' : 'A part for a job on a machine.')}
+      ${forVan ? '' : `<div class="sec-h" style="padding:10px 0 0"><h2>The machine</h2></div>
       ${inp(d, 'scn', 'Service Call Number *', 'e.g. SCN-26-04831', { mono: true, auto: 'scn' })}${machineField(d)}${autoHint(d, 'scn', 'machine')}
       <div class="two">${inp(d, 'model', 'Machine model', 'e.g. DN Series 200')}${inp(d, 'customer', 'Customer / bank', '')}</div>${inp(d, 'contract', 'AMC / lease contract', 'Optional', { mono: true })}
       ${gpsBox}
-      ${inp(d, 'site', 'Site / delivery address', 'Branch, building, street', { hint: 'Needed without GPS' })}
+      ${inp(d, 'site', 'Site / delivery address', 'Branch, building, street', { hint: 'Needed without GPS' })}`}
       ${fld('Requesting from hub *', hubSeg(d, 'hub'), d._hubGps && !(d._picked && d._picked.hub) ? 'Nearest hub to your location. Change it if needed.' : 'Your hub. Change it if you request from another hub.')}
       ${fld('Urgency', segBtns(d, 'urgency', [['normal', 'Normal'], ['urgent', 'Urgent (machine down)']]))}
       ${area(d, 'note', 'Note', 'Optional')}
@@ -4509,6 +4612,26 @@ const A = {
   partPick(ds) { const d = sd(); d.sel = d.sel || {}; d.sel[ds.id] = !d.sel[ds.id]; d._err = ''; renderSheet(); },
   partsAll() { const d = sd(); const pns = d._pns || []; d.sel = d.sel || {}; const on = pns.length && pns.every(pn => d.sel[pn]); pns.forEach(pn => d.sel[pn] = !on); d._err = ''; renderSheet(); },
   accAll() { const d = sd(); const ids = d._accSel || []; d.selIds = d.selIds || {}; const on = ids.length && ids.every(id => d.selIds[id]); ids.forEach(id => d.selIds[id] = !on); d._err = ''; renderSheet(); },
+  async grpOne(ds) {
+    const s = UI.sheet; if (!s || s.busy) return; const d = s.d; s.busy = true; d._err = ''; renderSheet();
+    try {
+      if (ds.m === 'reject') await tlDecide(ds.id, { mode: 'reject', reason: d.reason || REJECT_REASONS[0], remarks: d.remarks || '' });
+      else { const j = JOB(ds.id); await tlDecide(ds.id, { mode: 'approve', q: j ? j.qty : 1 }); }
+      toast(ds.m === 'reject' ? 'Part rejected' : 'Part approved');
+    } catch (e) { d._err = e.message; toast(e.message, 'bad'); }
+    s.busy = false; renderSheet();
+  },
+  async grpAll(ds) {
+    const s = UI.sheet; if (!s || s.busy) return; const d = s.d; const grp = s.p.id;
+    const pend = JOBS.filter(j => j.grp === grp && j.status === 'TL'); if (!pend.length) return;
+    s.busy = true; d._err = ''; renderSheet();
+    let n = 0, err = '';
+    for (const j of pend) {
+      try { if (ds.m === 'reject') await tlDecide(j.id, { mode: 'reject', reason: d.reason || REJECT_REASONS[0], remarks: d.remarks || '' }); else await tlDecide(j.id, { mode: 'approve', q: j.qty }); n++; }
+      catch (e) { err = e.message; }
+    }
+    s.busy = false; d._err = err; toast(err || `${n} part${n === 1 ? '' : 's'} ${ds.m === 'reject' ? 'rejected' : 'approved'}`, err ? 'bad' : ''); renderSheet();
+  },
   addPart() { const d = sd(); const pn = normPN(d.pn); d.parts = d.parts || [];
     if (!pn) { d._err = 'Enter a part number first.'; renderSheet(); return; }
     if (d.parts.some(x => normPN(x.pn) === pn)) { d._err = 'That part is already in the request.'; renderSheet(); return; }
