@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261101065605">
+<meta name="spms-build" content="20261101081217">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -756,6 +756,130 @@ button.grp:hover h2 { color: var(--brand-on); }
 .mini-n { font-family: var(--font-display); font-weight: 700; font-size: 24px; letter-spacing: -.02em; line-height: 1.1; }
 .row.is-late-row { background: color-mix(in srgb, var(--bad-soft) 75%, var(--surface)); box-shadow: inset 3px 0 0 var(--bad); }
 .sub-h { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 2px 0 -2px; }
+/* engineer budget */
+.bud { gap: 10px; }
+.bud-h { display: flex; align-items: center; gap: 12px; }
+.bud-h .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bud-h .main b { font-size: 15px; } .bud-h .main .s { font-size: 13.5px; color: var(--ink-2); }
+.bud-h .lead { width: 42px; height: 42px; border-radius: 14px; }
+.bud-pct { font-family: var(--font-display); font-weight: 700; font-size: 26px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.bud-pct.ok { color: var(--ok); } .bud-pct.warn { color: var(--warn); } .bud-pct.bad { color: var(--bad); }
+.bud-bar { height: 10px; border-radius: 999px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.bud-bar i { display: block; height: 100%; border-radius: inherit; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+.bud-bar.ok i { background: linear-gradient(90deg, color-mix(in srgb, var(--ok) 70%, #fff), var(--ok)); }
+.bud-bar.warn i { background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 70%, #fff), var(--warn)); }
+.bud-bar.bad i { background: linear-gradient(90deg, color-mix(in srgb, var(--bad) 70%, #fff), var(--bad)); }
+.bud-nums { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
+.bud-nums b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.budnew { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: var(--r-sm); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.budnew.warn { background: var(--warn-soft); box-shadow: none; } .budnew.bad { background: var(--bad-soft); box-shadow: none; }
+.budnew .lead { width: 34px; height: 34px; border-radius: 11px; flex: none; }
+.budnew .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.budnew .main b { font-size: 14.5px; } .budnew.bad .main b { color: var(--bad); } .budnew.warn .main b { color: var(--warn); }
+.budnew .main .s { font-size: 12.5px; color: var(--ink-2); }
+.budnew .bud-bar { height: 6px; margin-top: 2px; }
+.t-bad { color: var(--bad); font-weight: 600; }
+/* ---------- dashboard: hero band, glass tiles, smooth trend, pipeline, ranking, donut, ring ---------- */
+.dash { gap: 16px; }
+.dhero { position: relative; overflow: hidden; isolation: isolate; color: #fff; background: var(--hero); border-radius: 26px; padding: 20px 16px 16px; box-shadow: 0 24px 48px -24px rgba(126,27,31,.85); display: flex; flex-direction: column; gap: 14px; }
+.dhero::before { content: ""; position: absolute; z-index: -1; width: 380px; height: 380px; right: -140px; bottom: -220px; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,255,255,.18), rgba(255,255,255,0)); }
+.dhero .wm { position: absolute; z-index: -1; right: -46px; top: -54px; height: 230px; opacity: .1; pointer-events: none; }
+.dh-k { font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; opacity: .82; }
+.dh-t { margin: 4px 0 2px; font-family: var(--font-display); font-size: 30px; font-weight: 700; letter-spacing: -.025em; line-height: 1.08; }
+.dh-s { font-size: 14px; opacity: .9; font-variant-numeric: tabular-nums; }
+.dh-range { display: flex; flex-wrap: wrap; gap: 6px; }
+.dh-range button { border: 0; font: inherit; font-size: 13px; font-weight: 600; color: #fff; background: rgba(255,255,255,.13); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); padding: 0 13px; min-height: 34px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background .2s, color .2s, box-shadow .2s; }
+.dh-range button:hover { background: rgba(255,255,255,.22); }
+.dh-range button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.dh-range button.on { background: #fff; color: #9E2328; box-shadow: 0 8px 18px -10px rgba(0,0,0,.55); }
+.dh-range button svg { width: 15px; height: 15px; }
+.dh-dates { display: flex; gap: 10px; flex-wrap: wrap; padding: 12px; border-radius: 18px; background: rgba(0,0,0,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+.dh-dates label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 700; letter-spacing: .02em; flex: 1 1 140px; min-width: 0; }
+.dh-dates input { font: inherit; font-size: 15px; font-weight: 600; color: #fff; background: rgba(255,255,255,.14); border: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,.32); border-radius: 12px; padding: 0 12px; min-height: 44px; color-scheme: dark; width: 100%; min-width: 0; }
+.dh-dates input:focus { outline: 2px solid #fff; outline-offset: 1px; }
+.dh-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.dh-tile { position: relative; overflow: hidden; border-radius: 18px; padding: 12px 12px 0; display: flex; flex-direction: column; min-width: 0;
+  background: linear-gradient(155deg, rgba(255,255,255,.22) 0%, rgba(255,255,255,.07) 100%); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2), 0 12px 26px -18px rgba(0,0,0,.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.dh-tk { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; min-width: 0; }
+.dh-tk span:last-child { min-width: 0; line-height: 1.2; }
+.dh-ic { width: 26px; height: 26px; border-radius: 9px; background: rgba(255,255,255,.2); display: grid; place-items: center; flex: none; }
+.dh-ic svg { width: 15px; height: 15px; }
+.dh-vr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.dh-v { font-family: var(--font-display); font-weight: 700; font-size: 34px; letter-spacing: -.03em; line-height: 1.05; font-variant-numeric: lining-nums tabular-nums; }
+.dh-d { font-size: 11.5px; line-height: 1.35; opacity: .88; margin-top: 3px; }
+.dh-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,.22); font-size: 12px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dh-tile .spark { position: relative; height: 38px; margin: 6px -12px 0; }
+.dh-tile .spark svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.dh-tile .spark .sl { fill: none; stroke: #fff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.dh-tile .spark .end { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.28); transform: translate(-50%, -50%); }
+@media (min-width: 760px) { .dhero { padding: 26px 24px 22px; gap: 16px; } .dh-t { font-size: 36px; } .dh-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; } .dh-v { font-size: 38px; } }
+.dcard { border-radius: 22px; padding: 18px; gap: 14px; }
+.lc-area .lc-fill { stroke: none; }
+.lc-area .ln { stroke-width: 2.5; }
+.lc-dot { width: 11px; height: 11px; box-shadow: 0 0 0 2.5px var(--surface), 0 2px 8px rgba(16,24,40,.25); }
+.lc-legend span { padding: 4px 10px 4px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-weight: 600; font-size: 12.5px; }
+.key.s4 { background: var(--s4); }
+.pipe { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pipe li { position: relative; display: flex; gap: 12px; align-items: center; padding: 4px 0; }
+.pipe li:not(:last-child)::after { content: ""; position: absolute; left: 13px; top: 32px; height: calc(100% - 22px); width: 2px; border-radius: 2px; background: var(--line); }
+.pp-n { position: relative; z-index: 1; width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; color: #fff; background: linear-gradient(140deg, color-mix(in srgb, var(--s1) 70%, #fff), var(--s1)); box-shadow: 0 6px 14px -8px var(--s1); }
+.pipe li.zero .pp-n { background: var(--surface); color: var(--ink-3); box-shadow: inset 0 0 0 1.5px var(--line); }
+.pp-m, .rk-m { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pp-h, .rk-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 14px; }
+.pp-h b, .rk-h b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pipe li.zero .pp-h { color: var(--ink-3); }
+.pp-tr, .rk-tr { height: 8px; border-radius: 999px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.pp-tr i, .rk-tr i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, color-mix(in srgb, var(--s1) 55%, #fff), var(--s1)); }
+.rank { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.rank li { display: flex; gap: 12px; align-items: center; }
+.rk-n { width: 30px; height: 30px; border-radius: 10px; flex: none; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: var(--ink-2); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.rk-n.r1 { color: #fff; background: linear-gradient(140deg, #D23C42, #9E2328); box-shadow: 0 8px 16px -10px rgba(158,35,40,.9); }
+.rk-n.r2, .rk-n.r3 { color: var(--brand-on); background: var(--brand-soft); box-shadow: none; }
+.rk-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rk-nm { font-size: 12.5px; color: var(--ink-3); }
+.rk-h b span { font-weight: 500; font-size: 12px; color: var(--ink-3); }
+.donut { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.dn-fig { position: relative; width: 136px; height: 136px; flex: none; }
+.dn-fig svg, .ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dn-track { fill: none; stroke: var(--surface-2); stroke-width: 5.5; }
+.dn-arc { fill: none; stroke-width: 5.5; }
+.dn-arc.s1 { stroke: var(--s1); } .dn-arc.s2 { stroke: var(--s2); } .dn-arc.s3 { stroke: var(--s3); } .dn-arc.s4 { stroke: var(--s4); }
+.dn-c, .rg-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.dn-c b, .rg-c b { font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.dn-c span, .rg-c span { font-size: 12px; color: var(--ink-3); margin-top: 3px; }
+.dn-leg { list-style: none; margin: 0; padding: 0; flex: 1 1 170px; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.dn-leg li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto 38px; align-items: center; gap: 8px; font-size: 13.5px; }
+.dn-leg li.zero { color: var(--ink-3); }
+.dn-leg .key { width: 12px; height: 12px; border-radius: 4px; }
+.dn-leg b { font-variant-numeric: tabular-nums; }
+.dn-leg em { font-style: normal; text-align: right; font-size: 12.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ws-box { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.ring { position: relative; width: 124px; height: 124px; flex: none; }
+.rg-track { fill: none; stroke: var(--ok-soft); stroke-width: 5; }
+.rg-arc { fill: none; stroke: var(--ok); stroke-width: 5; stroke-linecap: round; }
+.ws-nums { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; }
+.ws-nums div { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.ws-nums div:last-child { border-bottom: 0; }
+.ws-nums span { font-size: 13.5px; color: var(--ink-2); }
+.ws-nums b { order: 2; font-family: var(--font-display); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.xl-card { flex-direction: row; align-items: center; gap: 12px; }
+.xl-card .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.xl-card .lead { width: 42px; height: 42px; border-radius: 14px; flex: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .dash.anim > * { animation: d-rise .6s cubic-bezier(.2, .8, .2, 1) both; }
+  .dash.anim > :nth-child(2) { animation-delay: .07s; } .dash.anim > :nth-child(3) { animation-delay: .14s; } .dash.anim > :nth-child(4) { animation-delay: .21s; } .dash.anim > :nth-child(n+5) { animation-delay: .28s; }
+  .dash.anim .dh-tile { animation: d-rise .6s cubic-bezier(.2, .8, .2, 1) both; }
+  .dash.anim .dh-tile:nth-child(2) { animation-delay: .06s; } .dash.anim .dh-tile:nth-child(3) { animation-delay: .12s; } .dash.anim .dh-tile:nth-child(4) { animation-delay: .18s; }
+  .dash.anim .pp-tr i, .dash.anim .rk-tr i { transform-origin: left center; animation: d-grow 1s .3s cubic-bezier(.2, .8, .2, 1) both; }
+  .dash.anim .lc-area svg, .dash.anim .dh-tile .spark svg { animation: d-wipe 1.2s .25s cubic-bezier(.4, 0, .2, 1) both; }
+  .dash.anim .dn-arc, .dash.anim .rg-arc { animation: d-arc 1.1s .35s cubic-bezier(.2, .8, .2, 1) both; }
+  .dash.anim .lc-dot, .dash.anim .dh-tile .spark .end { animation: d-pop .35s 1.25s both; }
+}
+@keyframes d-rise { from { opacity: 0; transform: translateY(14px); } }
+@keyframes d-grow { from { transform: scaleX(0); } }
+@keyframes d-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes d-arc { from { stroke-dasharray: 0 100; } }
+@keyframes d-pop { from { opacity: 0; transform: translate(-50%, -50%) scale(.3); } }
 </style>
 
 </head>
@@ -967,6 +1091,7 @@ const jobQty = j => j.dispatch && j.dispatch.items ? sum(j.dispatch.items, t => 
 
 /* ---------- icons ---------- */
 const ICONS = {
+  wallet: '<path d="M5 8V7a2.5 2.5 0 0 1 2.5-2.5H17V8"/><rect x="3.5" y="8" width="17" height="11.5" rx="2.5"/><path d="M15.5 13.75h2"/>',
   moon: '<path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/>',
   info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><path d="M12 7.6v.4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>', chev: '<path d="m9.5 6 6 6-6 6"/>',
@@ -1034,7 +1159,7 @@ function applyQuery(arr, q) {
 function deepMerge(a, b) { const o = Object.assign({}, a); for (const k of Object.keys(b)) o[k] = b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object' && !Array.isArray(a[k]) ? deepMerge(a[k], b[k]) : b[k]; return o; }
 
 function localBackend() {
-  const COLS = ['jobs', 'stock', 'settings', 'parts', 'lines', 'ledger', 'adj', 'creds', 'stockrows'];
+  const COLS = ['jobs', 'stock', 'settings', 'parts', 'lines', 'ledger', 'adj', 'creds', 'stockrows', 'budgets'];
   const read = () => { let o; try { o = JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}') || {}; } catch (e) { o = {}; } for (const c of COLS) if (!o[c] || typeof o[c] !== 'object') o[c] = {}; return o; };
   const write = o => { try { localStorage.setItem(LOCAL_KEY, JSON.stringify(o)); } catch (e) { throw E('This browser blocked saving. Turn off private browsing and try again.'); } };
   const subs = new Map(); let n = 0;
@@ -1389,6 +1514,11 @@ function subscribeAll() {
     }
     DATAV.set++; changed();
   });
+  /* engineer budgets for this year: a technician reads only their own */
+  const by = budYear();
+  unsubs.budgets = api.sub('budgets', { where: (techOnly() ? [['sid', '==', UI.profile.id]] : []).concat([['year', '==', by]]) }, list => {
+    const m = {}; for (const b of list) if (b.sid) m[b.id] = b; BUDGETS = m; DATAV.set++; changed();
+  }, e => { console.warn('budgets', e); });
   let top = null;
   unsubs.ledgerTop = api.sub('ledger', { orderBy: ['at', 'desc'], limit: 1 }, list => { const t = list[0] ? list[0].id + ':' + (list[0].n || 0) : ''; if (t === top) return; top = t; DATAV.led++; if (UI.tab === 'rep' && ['moves', 'audit'].includes(UI.report)) changed(); });
 }
@@ -1436,6 +1566,7 @@ function afterLoad() {
   const was = UI.loaded;
   UI.loaded = ready.jobsOpen && ready.jobsRecent && ready.parts && ready.lines && ready.settings && ready.adj;
   if (UI.loaded && ready.stock) runMigration();
+  if (UI.loaded) setTimeout(() => settleBudgets(), 1500);   /* Stock / Team Leader phones add up finished requests (every 10 minutes at most) */
   if (UI.loaded && !was && UI.store === 'connecting') UI.store = api.kind;
   changed();
   if (UI.loaded && UI.openJob) setTimeout(openPendingJob, 0);
@@ -1860,7 +1991,7 @@ async function createJob(d) {
   const now = Date.now(), id = newId('REQ');
   const hub = HUBS.includes(d.hub) ? d.hub : myHub();
   const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (hub === 'MMH' ? 'inside' : 'outside');   /* inside Muscat (from the Muscat Main Hub) or outside Muscat (from the technician's own hub) */
-  const body = { id, type: 'req', forVan, pn, desc: (d.desc || '').trim() || part(pn).name, qty, scn, machine, machineSn: forVan ? '' : (findMachine(machine) || {}).sn || '', model: forVan ? '' : (d.model || '').trim(), customer: forVan ? '' : (d.customer || '').trim(), contract: forVan ? '' : (d.contract || '').trim(), site, gps: forVan ? null : d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
+  const body = { id, type: 'req', forVan, pn, desc: (d.desc || '').trim() || part(pn).name, qty, unit: +part(pn).price || 0, scn, machine, machineSn: forVan ? '' : (findMachine(machine) || {}).sn || '', model: forVan ? '' : (d.model || '').trim(), customer: forVan ? '' : (d.customer || '').trim(), contract: forVan ? '' : (d.contract || '').trim(), site, gps: forVan ? null : d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
     urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', note: (d.note || '').trim(), reason: forVan ? 'For van stock' : '', techId: me.id, techName: me.name, hub, area, grp: d.grp || '', status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
     history: [{ at: now, by: me.name, role: 'Technician', action: 'Requested', note: forVan ? `${pn} × ${qty} for van stock` : `${pn} × ${qty} for ${scn} · ${machine}` }] };
   await saveJob(body); return id;
@@ -2167,7 +2298,7 @@ async function sendReplacement(j, d, me, now, repId) {
   else { from = HUBS.includes(d.repFrom) ? d.repFrom : jobHub(j); cond = 'Not in inventory'; }
   const item = { pn, name: j.ret.name || j.desc || partName(pn), sn, qty: 1, from, cond, price: +part(pn).price || 0 };
   const rep = Object.assign(cleanCopy(j), {
-    id: repId, type: 'req', forVan: false, pn, desc: j.ret.name || j.desc || partName(pn), qty: 1, qtyApproved: 1, note: '', grp: '',
+    id: repId, type: 'req', forVan: false, pn, desc: j.ret.name || j.desc || partName(pn), qty: 1, qtyApproved: 1, unit: item.price, note: '', grp: '',
     replacementFor: j.id, parent: '', backorder: false, split: false, status: 'DISPATCHED', open: true, createdAt: now, updatedAt: now, updatedBy: me.name, use: null, ret: null, tl: j.tl || null,
     dispatch: { by: me.name, at: now, items: [item], sn, from, courier: COURIERS[0], ref: 'REP-' + j.id.slice(-6) },
     history: [{ at: now, by: me.name, role: 'Stock', action: 'Replacement sent', note: `${pn} SN ${sn} to ${j.techName} (replaces faulty part from ${j.id})` }]
@@ -2290,7 +2421,7 @@ async function vanUse(d) {
   const me = mustRole('TECH'); const { l, n } = checkVanUse(d);
   const [t] = await takeMany([{ key: l.key, qty: n, loc: vanLoc(me.id) }]);
   const now = Date.now(), id = newId('USE'), rsn = normSN(d.rsn), rpn = normPN(d.rpn) || t.pn, scn = d.scn.trim().toUpperCase(), machine = d.machine.trim().toUpperCase();
-  const job = { id, type: 'van', pn: t.pn, desc: t.name, qty: n, qtyApproved: n, scn, machine, machineSn: (findMachine(machine) || {}).sn || '', model: (d.model || '').trim(), customer: (d.customer || '').trim(), contract: (d.contract || '').trim(), site: (d.site || '').trim(), gps: null, urgency: 'normal', note: (d.note || '').trim(),
+  const job = { id, type: 'van', pn: t.pn, desc: t.name, qty: n, qtyApproved: n, unit: +t.price || +part(t.pn).price || 0, scn, machine, machineSn: (findMachine(machine) || {}).sn || '', model: (d.model || '').trim(), customer: (d.customer || '').trim(), contract: (d.contract || '').trim(), site: (d.site || '').trim(), gps: null, urgency: 'normal', note: (d.note || '').trim(),
     techId: me.id, techName: me.name, hub: myHub(), status: 'RETURN', open: true, createdAt: now, updatedAt: now, updatedBy: me.name, receivedAt: now,
     dispatch: { by: me.name, at: now, items: [t], sn: t.sn || 'bulk × ' + n, from: vanLoc(me.id), courier: '', ref: '' },
     use: { at: now, replaced: true, units: t.sn ? [{ sn: t.sn, used: true, removedPn: rpn, removedSn: rsn }] : [{ bulk: true, qty: n, used: n }], removedPn: rpn, removedSn: rsn, note: (d.note || '').trim() },
@@ -2342,7 +2473,13 @@ async function wipeData(keys, onProgress) {
       for (let i = 0; i < page.length; i += 20) { const part = page.slice(i, i + 20); await Promise.all(part.map(x => api.del(c, x.id))); done += part.length; if (onProgress) onProgress(done); }
     }
   }
-  ARCHIVE = null; ALL_LOADED = false; UI.ledger = null; UI.traceRes = null;
+  if (keys.includes('jobs')) {   /* the requests are gone, so the budget totals counted from them start again (the budgets stay) */
+    for (const r of await api.query('budgets', {})) {
+      if (r.id === '_state') { await api.del('budgets', r.id); continue; }
+      if (+r.settled || r.upto) { const o = Object.assign({}, r, { settled: 0, upto: 0, done: {} }); delete o.id; await api.set('budgets', r.id, o); }
+    }
+  }
+  ARCHIVE = null; ALL_LOADED = false; UI.ledger = null; UI.traceRes = null; dashLog = null;
   log({ t: 'Test data cleared', qty: done, from: me.name, to: '', note: sets.map(x => x[1].split(' (')[0]).join(' · ') });   /* one line saying who cleared what, and when */
   return done;
 }
@@ -2386,6 +2523,98 @@ async function removeHub(code) {
 /* ---------- settings (Team Leader) ---------- */
 async function setRate(v) { const me = mustRole('TL'); const r = +v; if (v === '' || v == null || !(r >= 0)) throw E('Enter the hourly rate (0 or more).'); await api.set('settings', 'workshop', { rate: r, updatedAt: Date.now(), by: me.name }); SETTINGS.rate = r; log({ t: 'Workshop rate changed', qty: 0, note: money(r) + ' per hour' }); }
 async function setPolicy(v, q) { const me = mustRole('TL'); const a = +v, b = parseInt(q, 10); if (v === '' || !(a >= 0)) throw E('Enter the Auto-Rep value limit (0 or more).'); if (!(b >= 0)) throw E('Enter the Auto-Rep quantity limit (0 or more).'); await api.set('settings', 'policy', { autoMaxValue: a, autoMaxQty: b, updatedAt: Date.now(), by: me.name }); POLICY = { autoMaxValue: a, autoMaxQty: b }; log({ t: 'Auto-Rep limits changed', qty: 0, note: `Up to ${money(a)} and ${b} units approved automatically` }); }
+
+/* ---------- engineer budgets (yearly, OMR) ----------
+   The Team Leader sets each engineer's budget for the year and, when starting, how much of it is already used.
+   A request counts against the budget from the moment it is sent. What doesn't end up installed in a machine is given
+   back: rejected, cancelled or withdrawn requests, parts that arrived faulty, parts returned unused, and parts that go into
+   the van (van requests, parts kept in the van, Auto-Rep and Stock refills), which count when they are used from the van.
+   Used = base (set by the Team Leader) + settled (finished requests, added up once by a Stock or Team Leader phone)
+   + everything not settled yet (worked out live), so nobody's phone has to read a whole year of requests.
+   Records: budgets/<staff id>~<year> { sid, year, amount, base, at, settled, upto, done }, budgets/_state { cursor }. */
+let BUDGETS = {}, budSettling = false, budLast = 0;
+const BUD_LOOK = 2 * HOUR;
+const budYear = t => new Date(t || Date.now()).getFullYear();
+const yearStart = y => new Date(y, 0, 1).getTime();
+const budKey = (sid, y) => `${sid}~${y}`;
+const budOffice = () => { const r = UI.profile && (UI.profile.baseRole || UI.profile.role); return ['TL', 'STOCK'].includes(r); };
+/* what a request costs the engineer's budget right now */
+function jobSpend(j) {
+  if (!j || j.split || j.type === 'rep' || ['REJECTED', 'CANCELLED'].includes(j.status)) return 0;
+  const up = +(j.unit != null ? j.unit : part(j.pn).price) || 0, items = (j.dispatch && j.dispatch.items) || [];
+  const priceOf = it => it && +it.price > 0 ? +it.price : up;
+  if (j.use && Array.isArray(j.use.units) && j.use.units.length) {   /* after the job: only what was installed */
+    let v = 0;
+    j.use.units.forEach((u, i) => { const it = u.sn ? items.find(t => normSN(t.sn) === normSN(u.sn)) || items[i] : items[i] || items[0]; if (u.bulk) v += (+u.used || 0) * priceOf(it); else if (u.used) v += priceOf(it); });
+    return r3(v);
+  }
+  if (j.use) return j.use.replaced ? r3(up * (+(j.qtyApproved || j.qty) || 0)) : 0;
+  if (!j.open) return 0;   /* finished without being used here (e.g. received into the van) */
+  if (items.length) return r3(items.reduce((n, t) => n + priceOf(t) * (+t.qty || 1), 0));
+  return r3(up * (+(j.qtyApproved || j.qty) || 0));
+}
+/* an engineer's budget this year: { amount, used, left, set } */
+function budgetInfo(sid, y) {
+  y = y || budYear(); const row = BUDGETS[budKey(sid, y)] || null;
+  const amount = row ? +row.amount || 0 : 0, from = row && row.at ? row.at : yearStart(y), done = (row && row.done) || {}, upto = row ? +row.upto || 0 : 0;
+  let live = 0;
+  for (const j of JOBS) {
+    if (j.techId !== sid || !j.createdAt || j.createdAt < from || budYear(j.createdAt) !== y) continue;
+    if (!j.open && j.closedAt && (done[j.id] || (upto && j.closedAt < upto - BUD_LOOK))) continue;   /* already in the settled total */
+    live += jobSpend(j);
+  }
+  const used = r3((row ? (+row.base || 0) + (+row.settled || 0) : 0) + live);
+  return { year: y, amount, used, left: r3(amount - used), set: amount > 0, pct: amount > 0 ? used / amount : 0, from };
+}
+/* cost of parts about to be requested (price on the parts list × quantity) */
+const partsCost = list => r3(sum(list || [], p => (+part(p.pn).price || 0) * (parseInt(p.qty, 10) || 0)));
+/* add finished requests to the engineers' settled totals: each request once, read only once */
+async function settleBudgets(force) {
+  if (budSettling || !budOffice() || UI.canWrite === false || !UI.loaded) return 0;
+  if (!force && Date.now() - budLast < 10 * 60000) return 0;
+  budSettling = true; budLast = Date.now(); let n = 0;
+  try {
+    await withLocks(['budgets/_state'], async () => {
+      const st = (await api.get('budgets', '_state')) || {}, now = Date.now(), cursor = +st.cursor || now;
+      const jobs = (await api.query('jobs', { where: [['closedAt', '>=', cursor - BUD_LOOK]], orderBy: ['closedAt', 'asc'], limit: 500 })).map(normJob);
+      const rows = new Map(); let top = cursor;
+      for (const j of jobs) {
+        top = Math.max(top, +j.closedAt || 0);
+        const v = jobSpend(j); if (!(v > 0) || !j.techId || !j.createdAt) continue;
+        const y = budYear(j.createdAt), id = budKey(j.techId, y);
+        if (!rows.has(id)) rows.set(id, (await api.get('budgets', id)) || { sid: j.techId, year: y, amount: 0, base: 0, at: yearStart(y), settled: 0, upto: 0, done: {} });
+        const r = rows.get(id); r.done = r.done || {};
+        if (j.createdAt < (+r.at || 0) || r.done[j.id]) continue;
+        r.settled = r3((+r.settled || 0) + v); r.done[j.id] = +j.closedAt; r._dirty = true; n++;
+      }
+      const next = jobs.length >= 500 ? top : Math.max(top, now);
+      for (const [id, r] of rows) {
+        if (!r._dirty) continue; delete r._dirty; delete r.id;
+        r.upto = next; for (const k of Object.keys(r.done)) if (r.done[k] < next - BUD_LOOK) delete r.done[k];
+        await api.set('budgets', id, r);
+      }
+      await api.set('budgets', '_state', { cursor: next, at: now });
+    });
+  } catch (e) { console.warn('budgets', e); }
+  finally { budSettling = false; }
+  return n;
+}
+/* Team Leader: set an engineer's budget for this year. Changing "used so far" starts the count again from that figure. */
+async function saveBudget(sid, d) {
+  const me = mustRole('TL'), y = budYear();
+  const num = (v, label) => { const s = String(v == null ? '' : v).replace(/,/g, '').trim(); if (s === '') return null; const n = +s; if (!(n >= 0)) throw E(`${label} must be a number, 0 or more.`); return r3(n); };
+  const amount = num(d.bamt, 'The yearly budget'), used = num(d.bused, 'Used so far');
+  if (amount == null) throw E('Enter the yearly budget (OMR).');
+  return withLocks(['budgets/_state'], async () => {
+    const id = budKey(sid, y), cur = (await api.get('budgets', id)) || { sid, year: y, amount: 0, base: 0, at: yearStart(y), settled: 0, upto: 0, done: {} };
+    const now = Date.now(), was = budgetInfo(sid, y).used, doc = Object.assign({}, cur, { sid, year: y, amount, setAt: now, setBy: me.name });
+    delete doc.id;
+    if (used != null && Math.abs(used - was) > 0.0005) Object.assign(doc, { base: used, at: now, settled: 0, upto: 0, done: {} });   /* a new starting figure */
+    await api.set('budgets', id, doc);
+    BUDGETS[id] = Object.assign({}, doc, { id }); changed();
+    return doc;
+  });
+}
 /* ==========================================================================
    Screens
    ========================================================================== */
@@ -2464,6 +2693,33 @@ const PAGE_TITLES = {
 };
 function tabTitle(me) { let t = PAGE_TITLES[UI.tab]; if (t && !Array.isArray(t)) t = t[me.role]; return t ? t[0] : (TABS[me.role].find(x => x[0] === UI.tab) || [, 'SPMS'])[1]; }
 /* the crimson home card: one big number, two shortcuts */
+/* ---------- engineer budget (yearly) ---------- */
+const budTone = (used, amount) => used > amount ? 'bad' : used >= amount * 0.8 ? 'warn' : 'ok';
+const budBar = (used, amount) => `<div class="bud-bar ${budTone(used, amount)}" role="img" aria-label="${Math.round(used / amount * 100)}% of the budget used"><i style="width:${Math.min(100, used / amount * 100).toFixed(1)}%"></i></div>`;
+/* the engineer's own card on My work */
+function budgetCard(sid, title) {
+  const b = budgetInfo(sid); if (!b.set) return '';
+  const tone = budTone(b.used, b.amount), pct = Math.round(b.pct * 100);
+  return `<section class="card bud" aria-label="Budget"><div class="bud-h"><span class="lead ${tone}">${ic('wallet')}</span><div class="main"><b>${esc(title || 'My budget ' + b.year)}</b><span class="s">${b.left < 0 ? `<span class="t-bad">Over budget by ${money(-b.left)}</span>` : `${money(b.left)} left`}</span></div><span class="bud-pct ${tone}">${pct}%</span></div>
+    ${budBar(b.used, b.amount)}<div class="bud-nums"><span>Used <b>${money(b.used)}</b></span><span>Budget <b>${money(b.amount)}</b></span></div></section>`;
+}
+/* one line about a technician's budget: on the new request form, and for the Team Leader approving */
+function budgetLine(sid, cost, already, who, forVan) {
+  const b = budgetInfo(sid); if (!b.set) return '';
+  const used = r3(b.used - (already || 0) + (cost || 0)), left = r3(b.amount - used), tone = budTone(used, b.amount);
+  const head = left < 0 ? `Over ${who ? 'the' : 'your'} budget by ${money(-left)}` : `${money(left)} left${cost ? ' after this request' : ''}`;
+  const sub = `${who ? esc(who) + '’s budget' : 'Budget'} ${b.year}: ${money(used)} used of ${money(b.amount)}${cost ? ' · this request ' + money(cost) : ''}${forVan ? ' · given back when it reaches the van' : ''}`;
+  return `<div class="budnew ${tone}" role="status"><span class="lead ${tone}">${ic('wallet', 'sm')}</span><div class="main"><b>${head}</b><span class="s">${sub}</span>${budBar(used, b.amount)}</div></div>`;
+}
+/* new request form: what the parts in it cost the technician */
+function newBudget(d) {
+  const me = ME(); if (!me || me.role !== 'TECH') return '';
+  const list = (d.parts || []).slice(), cur = normPN(d.pn); if (cur && !list.some(x => normPN(x.pn) === cur)) list.push({ pn: cur, qty: d.qty });
+  const html = budgetLine(me.id, partsCost(list), 0, '', !!d.forVan); if (!html) return '';
+  const noPrice = list.filter(p => !(+part(p.pn).price > 0)).length;
+  return html + (noPrice && list.length ? `<span class="hint">${noPrice === list.length ? 'No price on the parts list for this part yet: it counts as 0 until Stock adds one.' : 'Some parts have no price yet and count as 0.'}</span>` : '');
+}
+
 function homeCard(me, n) {
   const all = myJobs(me);
   const open = me.role === 'WS' ? all.filter(j => ['WORKSHOP', 'REPAIRING'].includes(j.status)).length : all.filter(j => isOpenStatus(j.status)).length;
@@ -2589,7 +2845,7 @@ function todoView(me) {
   }
   const sorted = me.role === 'TL' && todo.length > 1 ? '<span class="t3 muted">Oldest first</span>' : '';
   const list = todo.length ? `<section class="blk"><div class="sec-h"><h2>${me.role === 'TL' ? 'Requests' : 'Your next steps'}</h2>${sorted}</div><div class="jobs">${todoRows(todo, me)}</div></section>` : '';
-  return `${homeCard(me, n)}${quick(QUICK[me.role] || [])}${pushBanner()}${alerts ? `<div class="blk">${alerts}</div>` : ''}${adj}${list}`;
+  return `${homeCard(me, n)}${me.role === 'TECH' ? budgetCard(me.id) : ''}${quick(QUICK[me.role] || [])}${pushBanner()}${alerts ? `<div class="blk">${alerts}</div>` : ''}${adj}${list}`;
 }
 
 const FILTERS = [['open', 'Open'], ['closed', 'Completed'], ['rejected', 'Rejected'], ['all', 'All']];
@@ -2865,7 +3121,7 @@ SH.group = (d, p) => {
   if (canAct && !d.reason) d.reason = REJECT_REASONS[0];
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
   const facts = fact('Technician', esc(j0.techName)) + (forVan ? fact('For', 'Van stock') : fact('Service call', `<span class="mono">${esc(j0.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j0.machine || '–')}</span>`) + fact(j0.customer ? 'Customer' : 'Site', esc(j0.customer || j0.site || '–'))) + fact('Raised', fmtD(j0.createdAt));
-  const head = `<div class="card"><div class="jh-t">Request · ${sibs.length} part${sibs.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} to decide` : ' · all decided'}</div><div class="facts">${facts}</div></div>`;
+  const head = `<div class="card"><div class="jh-t">Request · ${sibs.length} part${sibs.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} to decide` : ' · all decided'}</div><div class="facts">${facts}</div>${canAct ? budgetLine(j0.techId, 0, 0, j0.techName, forVan) : ''}</div>`;
   const rows = sibs.map(j => {
     const decided = j.status !== 'TL';
     const stTxt = j.status === 'REJECTED' ? '<span class="chip bad">Rejected</span>' : decided ? `<span class="chip ok">Approved${j.qtyApproved && j.qtyApproved !== j.qty ? ' × ' + j.qtyApproved : ''}</span>` : '';
@@ -2905,7 +3161,8 @@ function actionForm(j, me, d) {
     case 'TL': {
       if (!d.mode) d.mode = 'approve'; if (d.q == null) d.q = j.qty; if (!d.reason) d.reason = REJECT_REASONS[0];
       const rep = j.type === 'rep', why = rep ? ((j.history || []).find(h => /Needs Team Leader/.test(h.action)) || {}).note : '';
-      const form = box(`${rep ? `<div class="infobox">${j.auto ? 'Auto-Rep restock' : 'Van restock'} for ${esc(j.techName)}’s van: ${esc(j.reason || '')}.${why ? ' Needs you because: ' + esc(why) + '.' : ''} Value ${money(jobQty(j) * (+part(j.pn).price || 0))}.</div>` : ''}${segBtns(d, 'mode', [['approve', 'Approve'], ['reject', 'Reject']])}
+      const bud = rep ? '' : budgetLine(j.techId, r3((+(j.unit != null ? j.unit : part(j.pn).price) || 0) * (+d.q || j.qty)), j.createdAt >= budgetInfo(j.techId).from ? jobSpend(j) : 0, j.techName, !!j.forVan);
+      const form = box(`${bud}${rep ? `<div class="infobox">${j.auto ? 'Auto-Rep restock' : 'Van restock'} for ${esc(j.techName)}’s van: ${esc(j.reason || '')}.${why ? ' Needs you because: ' + esc(why) + '.' : ''} Value ${money(jobQty(j) * (+part(j.pn).price || 0))}.</div>` : ''}${segBtns(d, 'mode', [['approve', 'Approve'], ['reject', 'Reject']])}
         ${d.mode === 'approve' ? fld('Quantity to approve', stepper(d, 'q', 1, 99, 'Quantity to approve'), +d.q !== j.qty ? `Requested ${j.qty}.` : '') + area(d, 'remarks', 'Remarks (optional)', rep ? 'Visible to Stock' : 'Visible to the technician')
           : sel(d, 'reason', 'Reason', REJECT_REASONS) + area(d, 'remarks', d.reason === 'Other' ? 'Explain (required)' : 'Note (optional)', 'Visible to the technician')}`);
       return { form, op: { label: d.mode === 'reject' ? 'Reject' : 'Approve', cls: d.mode === 'reject' ? 'danger' : 'ok', danger: true, yes: 'Yes, reject', check: () => checkTl(j, d), run: () => tlDecide(j.id, d) } };
@@ -3197,6 +3454,7 @@ SH.new = d => {
       ${fld('Quantity' + star, `<div class="stepper" role="group" aria-label="Quantity"><button type="button" data-a="step" data-k="qty" data-delta="-1" aria-label="Less"${d.qty <= 1 ? ' disabled' : ''}>−</button><output class="num">${d.qty}</output><button type="button" data-a="step" data-k="qty" data-delta="1" aria-label="More"${d.qty >= 99 ? ' disabled' : ''}>+</button></div>`)}
       <button class="btn sec" data-a="addPart">${ic('plus', 'sm')}Add another part${forVan ? '' : ' for the same machine'}</button>
       ${fld('What is this for?', segBtns(d, 'forVan', [['', 'For a machine'], ['1', 'For my van']]), forVan ? 'Van stock — no call or machine needed. It goes into your van when you receive it.' : 'A part for a job on a machine.')}
+      <div id="live-budnew" aria-live="polite">${newBudget(d)}</div>
       ${forVan ? '' : `<div class="sec-h" style="padding:10px 0 0"><h2>The machine</h2></div>
       ${inp(d, 'scn', 'Service Call Number *', 'e.g. SCN-26-04831', { mono: true, auto: 'scn' })}${machineField(d)}${autoHint(d, 'scn', 'machine')}
       <div class="two">${inp(d, 'model', 'Machine model', 'e.g. DN Series 200')}${inp(d, 'customer', 'Customer / bank', '')}</div>${inp(d, 'contract', 'AMC / lease contract', 'Optional', { mono: true })}
@@ -4034,31 +4292,75 @@ function dashData(jobs, led, now) {
 }
 const niceMax = m => { if (m <= 4) return 4; const p = Math.pow(10, Math.floor(Math.log10(m))); for (const k of [1, 2, 2.5, 5, 10]) if (k * p >= m) return k * p; return 10 * p; };
 /* ---------- the dashboard (on screen): one period filter on top scopes everything below it ---------- */
-const DASH_RANGES = [[7, '7 days'], [30, '30 days'], [90, '90 days']];
-const dashDays = () => [7, 30, 90].includes(+UI.dashDays) ? +UI.dashDays : 30;
-/* the period cut into buckets for the trend: 7 days by day, 30 days in 3-day steps, 90 days by week */
-function dashBuckets(days, now) {
-  const d0 = new Date(now); d0.setHours(0, 0, 0, 0); const end = d0.getTime() + DAY, size = days === 7 ? 1 : days === 30 ? 3 : 7, n = Math.ceil(days / size), out = [];
-  for (let i = n - 1; i >= 0; i--) { const e = end - i * size * DAY, s = e - size * DAY; out.push({ s, e, size }); }
+const DASH_PRESETS = [['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['month', 'This month'], ['year', 'This year'], ['custom', 'Custom']];
+const ymd = t => { const d = new Date(t); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+const fromYmd = s => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '')); if (!m) return null; const t = new Date(+m[1], +m[2] - 1, +m[3]).getTime(); return isNaN(t) ? null : t; };
+const dayStart = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const addDays = (t, n) => { const d = new Date(t); d.setDate(d.getDate() + n); return d.getTime(); };
+/* the period on screen: a preset, or any From – To the Team Leader picks (up to about three years, never past today) */
+function dashRange(now) {
+  const today = dayStart(now || Date.now()), end0 = addDays(today, 1), m = String(UI.dashMode || '30'), td = new Date(today);
+  if (m === 'month') return { mode: m, start: new Date(td.getFullYear(), td.getMonth(), 1).getTime(), end: end0 };
+  if (m === 'year') return { mode: m, start: new Date(td.getFullYear(), 0, 1).getTime(), end: end0 };
+  if (m === 'custom') {
+    let s = fromYmd(UI.dashFrom), e = fromYmd(UI.dashTo);
+    if (e == null || e > today) e = today; if (s == null) s = addDays(e, -29); if (s > e) s = e;
+    if (s < addDays(e, -1100)) s = addDays(e, -1100);
+    return { mode: m, start: s, end: addDays(e, 1) };
+  }
+  const n = [7, 30, 90].includes(+m) ? +m : 30; return { mode: String(n), start: addDays(end0, -n), end: end0 };
+}
+const rangeDays = r => Math.round((r.end - r.start) / DAY);
+const rangeText = r => { const a = r.start, b = addDays(r.end, -1), y = new Date(a).getFullYear() !== new Date(b).getFullYear(), f = (t, yr) => new Date(t).toLocaleDateString('en-GB', yr ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' }); return a === b ? f(a, true) : `${f(a, y)} – ${f(b, true)}`; };
+const rangeTitle = r => ({ month: 'This month', year: 'This year', custom: 'Your dates' }[r.mode] || `Last ${r.mode} days`);
+/* the period cut into steps for the trend: by day up to two weeks, every 3 days up to two months, by week up to six
+   months, then by month (steps counted back from the end, so the newest step is always a whole one) */
+function dashBuckets(r) {
+  const span = rangeDays(r), out = [], back = (size, kind) => { for (let e = r.end; e > r.start; e = addDays(e, -size)) out.unshift({ s: Math.max(r.start, addDays(e, -size)), e, kind }); };
+  if (span <= 14) back(1, 'day');
+  else if (span <= 62) back(3, 'days');
+  else if (span <= 180) back(7, 'week');
+  else { let t = r.start; while (t < r.end) { const d = new Date(t), n = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(); out.push({ s: t, e: Math.min(r.end, n), kind: 'month' }); t = n; } }
   return out;
 }
-const bucketLabel = b => b.size === 1 ? shortDay(b.s) : `${shortDay(b.s)} – ${shortDay(b.e - DAY)}`;
+const bucketLabel = b => b.kind === 'day' ? shortDay(b.s) : b.kind === 'month' ? new Date(b.s).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : `${shortDay(b.s)} – ${shortDay(addDays(b.e, -1))}`;
+const bucketTick = b => b.kind === 'month' ? new Date(b.s).toLocaleDateString('en-GB', { month: 'short' }) : shortDay(b.s);
+const STEP_WORD = { day: 'by day', days: 'every 3 days', week: 'by week', month: 'by month' }, STEP_COL = { day: 'Day', days: 'Days', week: 'Week', month: 'Month' };
 const DASH_PHASES = [['Waiting for your approval', ['TL']], ['Approved · Stock to send', ['STOCK', 'REPL', 'REPL_GO', 'DRV_PICK', 'DRV_GO']], ['With the technician', ['DISPATCHED', 'RECEIVED', 'USE_OK', 'REPL_CONF']], ['Return on its way back', ['RETURN', 'RETURNING', 'DRV_RET_PICK', 'DRV_RET_GO']], ['At Stock · to decide', ['ATHUB']], ['In the Workshop', ['WORKSHOP', 'REPAIRING', 'REPAIRED']]];
-function dashModel(jobs, led, days, now) {
-  now = now || Date.now();
-  const units = e => Math.abs(+e.qty || 0) || 1, B = dashBuckets(days, now), start = B[0].s, end = B[B.length - 1].e, pStart = start - (end - start);
+function dashModel(jobs, led, r) {
+  const units = e => Math.abs(+e.qty || 0) || 1, B = dashBuckets(r), start = r.start, end = r.end, pStart = start - (end - start);
   const cnt = (k, s, t) => sum(led.filter(e => e.at >= s && e.at < t && DASH_EV[k].includes(e.t)), units);
-  const tiles = [['taken', 'Taken from stock'], ['inst', 'Installed'], ['back', 'Back in stock'], ['scrap', 'Scrapped']].map(([k, label]) => ({ k, label, v: cnt(k, start, end), prev: cnt(k, pStart, start), trend: B.map(b => cnt(k, b.s, b.e)) }));
+  const tiles = [['taken', 'Taken from stock', 'box'], ['inst', 'Installed', 'wrench'], ['back', 'Back in stock', 'ret'], ['scrap', 'Scrapped', 'ban']].map(([k, label, icon]) => ({ k, label, icon, v: cnt(k, start, end), prev: cnt(k, pStart, start), trend: B.map(b => cnt(k, b.s, b.e)) }));
   const series = B.map(b => ({ b, taken: cnt('taken', b.s, b.e), back: cnt('back', b.s, b.e), scrap: cnt('scrap', b.s, b.e) }));
   const open = jobs.filter(j => isOpenStatus(j.status));
   const phases = DASH_PHASES.map(([label, sts]) => [label, open.filter(j => sts.includes(j.status)).length]);
   const rest = open.length - sum(phases, p => p[1]); if (rest > 0) phases.push(['Other steps', rest]);
   const inP = t => (t || 0) >= start && (t || 0) < end;
   const routed = jobs.filter(j => j.ret && j.ret.route && inP(j.ret.routedAt || j.updatedAt));
-  const decisions = [['Back to stock', 'stock'], ['Sent to Workshop', 'repair'], ['Scrapped by Stock', 'scrap'], ['Consumed', 'consume']].map(([l, r]) => [l, sum(routed.filter(j => j.ret.route === r), j => j.ret.qty || 1)]);
+  const decisions = [['Back to stock', 'stock'], ['Sent to Workshop', 'repair'], ['Scrapped by Stock', 'scrap'], ['Consumed', 'consume']].map(([l, k]) => [l, sum(routed.filter(j => j.ret.route === k), j => j.ret.qty || 1)]);
   const wsDone = jobs.filter(j => j.ws && j.ws.doneAt && inP(j.ws.doneAt)), wsScrap = wsDone.filter(j => /^Scrapped/.test(j.outcome || '') || /Beyond/.test(j.ws.outcome || ''));
   const top = groupSum(led.filter(e => e.at >= start && e.at < end && DASH_EV.taken.includes(e.t) && e.pn), e => e.pn, units).slice(0, 5);
-  return { days, start, end, tiles, series, open: open.length, phases, decisions, repaired: wsDone.length - wsScrap.length, wsScrapped: wsScrap.length, repairCost: sum(wsDone, j => +j.ws.total || 0), top };
+  const oldest = jobs.length ? Math.min(...jobs.map(j => j.createdAt || Infinity)) : Infinity;
+  return { r, start, end, kind: B[0].kind, tiles, series, open: open.length, phases, decisions, repaired: wsDone.length - wsScrap.length, wsScrapped: wsScrap.length, repairCost: sum(wsDone, j => +j.ws.total || 0), top, partial: !allLoaded() && oldest > start };
+}
+/* the inventory log for the period on screen and the one before it (for the comparison): only the log records that
+   overlap it are read, then only the ones that changed since */
+let dashLog = null, dashLogP = null;
+function ensureDashLog(from) {
+  const covers = !!(dashLog && dashLog.from <= from);
+  if (covers && dashLog.v === DATAV.led) return true;
+  if (!dashLogP) {
+    const v = DATAV.led, prev = covers ? dashLog : null, since = prev ? prev.at - 15 * 60000 : from;
+    dashLogP = (async () => {
+      const docs = new Map(prev ? prev.docs : []); let last = null;
+      for (let guard = 0; guard < 40; guard++) {
+        const ds = await api.query('ledger', { orderBy: ['at', 'desc'], limit: 200, where: [['at', '>=', since]].concat(last != null ? [['at', '<', last]] : []) });
+        for (const d of ds) docs.set(d.id, d); if (ds.length < 200) break; last = ds[ds.length - 1].at;
+      }
+      dashLog = { from: prev ? prev.from : from, at: Date.now(), v, docs, rows: flatLedger([...docs.values()]) };
+    })().catch(e => { UI.ledgerErr = e.message || 'Could not load the log'; }).finally(() => { dashLogP = null; if (UI.tab === 'rep' && UI.report === 'dash') render(); });
+  }
+  return covers;   /* the copy already here keeps showing while the newest changes load */
 }
 /* returns from engineers: due 2 days after the install at the Muscat Main Hub, 4 days at the other hubs */
 function returnsData(jobs, now) {
@@ -4083,35 +4385,63 @@ const pctOf = (v, t) => t ? Math.round(v / t * 1000) / 10 : 0;
 const cardH = (title, right) => `<div class="card-h"><h2>${esc(title)}</h2>${right ? `<span class="t3 muted">${right}</span>` : ''}</div>`;
 /* a thin bar split into parts, no text (the figures sit beside it) */
 const segThin = parts => { const t = sum(parts, p => p[1]); return t ? `<div class="segbar" role="img" aria-label="${esc(parts.filter(p => p[1]).map(p => `${p[0]} ${p[1]}`).join(', '))}">${parts.filter(p => p[1]).map(p => `<i class="${p[2]}" style="width:${pctOf(p[1], t)}%"></i>`).join('')}</div>` : ''; };
-/* the tall bar: its share printed inside each block that is wide enough, names in the legend below */
-function segTall(parts, label) {
-  const t = sum(parts, p => p[1]); if (!t) return '<p class="note" style="padding:0">Nothing in this period.</p>';
-  const cls = ['c1', 'c2', 'c3', 'c4'];
-  return `<div class="segbar tall" role="img" aria-label="${esc(label + ': ' + parts.filter(p => p[1]).map(p => `${p[0]} ${p[1]} (${Math.round(p[1] / t * 100)}%)`).join(', '))}">${parts.map((p, i) => p[1] ? `<i class="${cls[i]}${i === 3 ? ' dk' : ''}" style="width:${pctOf(p[1], t)}%" title="${esc(`${p[0]}: ${p[1]}`)}">${p[1] / t >= .14 ? Math.round(p[1] / t * 100) + '%' : ''}</i>` : '').join('')}</div>
-    <div class="seg-legend">${parts.map((p, i) => `<span><i class="${cls[i]}"></i>${esc(p[0])} <b>${nf(p[1])}</b></span>`).join('')}</div>`;
+/* a smooth curve through the points that never overshoots them (a count can't dip below zero between two days) */
+function smoothPath(pts) {
+  const n = pts.length, f = v => v.toFixed(2); if (!n) return ''; if (n === 1) return `M${f(pts[0][0])},${f(pts[0][1])}`;
+  const dx = [], m = []; for (let i = 0; i < n - 1; i++) { dx[i] = pts[i + 1][0] - pts[i][0]; m[i] = dx[i] ? (pts[i + 1][1] - pts[i][1]) / dx[i] : 0; }
+  const t = [m[0]]; for (let i = 1; i < n - 1; i++) t[i] = m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2; t[n - 1] = m[n - 2];
+  for (let i = 0; i < n - 1; i++) { if (!m[i]) { t[i] = 0; t[i + 1] = 0; continue; } const a = t[i] / m[i], b = t[i + 1] / m[i], h = a * a + b * b; if (h > 9) { const k = 3 / Math.sqrt(h); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i]; } }
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  for (let i = 0; i < n - 1; i++) { const h = dx[i] / 3; d += ` C${f(pts[i][0] + h)},${f(pts[i][1] + t[i] * h)} ${f(pts[i + 1][0] - h)},${f(pts[i + 1][1] - t[i + 1] * h)} ${f(pts[i + 1][0])},${f(pts[i + 1][1])}`; }
+  return d;
 }
-/* horizontal bars, one hue (the bars compare amounts; colour carries nothing extra) */
-const hbars = (rows, fmt) => { const max = Math.max(1, ...rows.map(r => r[1])); return `<div class="hbars">${rows.map(([k, v, sub]) => `<div class="hb"><div class="bh"><span>${k}${sub ? ` <span class="t3 muted">${esc(sub)}</span>` : ''}</span><b>${esc(fmt ? fmt(v) : nf(v))}</b></div><div class="tr">${v ? `<i style="width:${Math.max(1.5, v / max * 100)}%"></i>` : ''}</div></div>`).join('')}</div>`; };
-/* a sparkline in the quiet ink, the newest point in the accent */
+let svgN = 0;
+/* sparkline on the hero tiles: a soft fill under a smooth line, the newest point marked */
 function spark(vals) {
-  const n = vals.length; if (n < 2) return ''; const max = Math.max(1, ...vals), x = i => (i + .5) / n * 100, y = v => 92 - v / max * 84;
-  return `<div class="spark" aria-hidden="true"><svg viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="${vals.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(' ')}"/></svg><span class="end" style="left:${x(n - 1)}%;top:${y(vals[n - 1])}%"></span></div>`;
+  const n = vals.length; if (n < 2) return '';
+  const max = Math.max(1, ...vals), pts = vals.map((v, i) => [3 + i / (n - 1) * 94, 86 - v / max * 72]), d = smoothPath(pts), id = 'sg' + (++svgN), e = pts[n - 1];
+  return `<div class="spark" aria-hidden="true"><svg viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:#fff;stop-opacity:.38"/><stop offset="1" style="stop-color:#fff;stop-opacity:0"/></linearGradient></defs><path class="sa" d="${d} L97,100 L3,100 Z" fill="url(#${id})"/><path class="sl" d="${d}"/></svg><span class="end" style="left:${e[0]}%;top:${e[1]}%"></span></div>`;
 }
-/* line chart: points at the middle of each bucket, a hairline grid, a crosshair column per bucket and a readout under it */
+/* trend chart: smooth lines (the first one with a soft fill), a hairline grid, a crosshair column per step and a readout */
 function lineChart(rows, series, label) {
   const n = rows.length, max = niceMax(Math.max(0, ...rows.flatMap(r => series.map(([k]) => r[k])))), x = i => (i + .5) / n * 100, y = v => 100 - v / max * 100;
-  const names = series.map(s => s[1]), vals = r => series.map(([k]) => r[k]).join('|');
-  const step = n > 10 ? 3 : n > 7 ? 2 : 1;
-  const last = rows[n - 1];
+  const names = series.map(s => s[1]), vals = r => series.map(([k]) => r[k]).join('|'), last = rows[n - 1], id = 'lg' + (++svgN);
+  const major = Math.max(1, Math.ceil(n / 5)), minor = Math.max(1, Math.ceil(n / 10));
+  const paths = series.map(([k]) => smoothPath(rows.map((r, i) => [x(i), y(r[k])])));
   return `<div class="lc" role="group" aria-label="${esc(label)}" data-names="${esc(JSON.stringify(names))}">
     <div class="lc-legend">${series.map(([, l], i) => `<span><i class="key s${i + 1}"></i>${esc(l)}</span>`).join('')}</div>
     <div class="lc-plot"><div class="lc-y">${[max, max / 2, 0].map(v => `<span>${nf(v)}</span>`).join('')}</div>
-      <div class="lc-area"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line class="g" x1="0" x2="100" y1="0" y2="0"/><line class="g" x1="0" x2="100" y1="50" y2="50"/><line class="g base" x1="0" x2="100" y1="100" y2="100"/>
-        ${series.map(([k], si) => `<polyline class="ln s${si + 1}" points="${rows.map((r, i) => `${x(i).toFixed(2)},${y(r[k]).toFixed(2)}`).join(' ')}"/>`).join('')}</svg>
+      <div class="lc-area"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--s1);stop-opacity:.26"/><stop offset="1" style="stop-color:var(--s1);stop-opacity:0"/></linearGradient></defs>
+        <line class="g" x1="0" x2="100" y1="0" y2="0"/><line class="g" x1="0" x2="100" y1="50" y2="50"/><line class="g base" x1="0" x2="100" y1="100" y2="100"/>
+        <path class="lc-fill" d="${paths[0]} L${x(n - 1).toFixed(2)},100 L${x(0).toFixed(2)},100 Z" fill="url(#${id})"/>
+        ${paths.map((d, si) => `<path class="ln s${si + 1}" d="${d}"/>`).join('')}</svg>
         ${series.map(([k], si) => `<i class="lc-dot s${si + 1}" style="left:${x(n - 1)}%;top:${y(last[k])}%"></i>`).join('')}
         ${rows.map((r, i) => `<button type="button" class="lc-col${i === n - 1 ? ' on' : ''}" style="left:${(i / n * 100).toFixed(3)}%;width:${(100 / n).toFixed(3)}%" data-wk="${esc(bucketLabel(r.b))}" data-vals="${vals(r)}" aria-label="${esc(bucketLabel(r.b) + ': ' + series.map(([k, l]) => `${l} ${r[k]}`).join(', '))}"></button>`).join('')}</div>
-      <span></span><div class="lc-x">${rows.map((r, i) => `<span class="${(n - 1 - i) % step ? 'minor' : ''}" style="left:${x(i)}%">${esc(shortDay(r.b.s))}</span>`).join('')}</div></div>
+      <span></span><div class="lc-x">${rows.map((r, i) => (n - 1 - i) % minor ? '' : `<span class="${(n - 1 - i) % major ? 'minor' : ''}" style="left:${x(i)}%">${esc(bucketTick(r.b))}</span>`).join('')}</div></div>
     <div class="lc-tip" aria-live="polite"><span class="wk">${esc(bucketLabel(last.b))}</span>${series.map(([k, l], i) => `<span><i class="key s${i + 1}"></i><b>${nf(last[k])}</b> ${esc(l)}</span>`).join('')}</div></div>`;
+}
+/* requests in progress: the steps in order, numbered, each with its count */
+function pipeline(phases) {
+  const max = Math.max(1, ...phases.map(p => p[1]));
+  return `<ol class="pipe">${phases.map(([k, v], i) => `<li class="${v ? '' : 'zero'}"><span class="pp-n">${i + 1}</span><div class="pp-m"><div class="pp-h"><span>${esc(k)}</span><b>${nf(v)}</b></div><div class="pp-tr">${v ? `<i style="width:${Math.max(3, v / max * 100).toFixed(1)}%"></i>` : ''}</div></div></li>`).join('')}</ol>`;
+}
+/* most sent parts, ranked */
+function ranked(rows) {
+  const max = Math.max(1, ...rows.map(r => r[1]));
+  return `<ol class="rank">${rows.map(([pn, v], i) => { const nm = partName(pn); return `<li><span class="rk-n r${i + 1}">${i + 1}</span><div class="rk-m"><div class="rk-h"><span class="rk-t">${tag(pn)}${nm && normPN(nm) !== pn ? ` <span class="rk-nm">${esc(nm)}</span>` : ''}</span><b>${nf(v)}<span>${v === 1 ? ' unit' : ' units'}</span></b></div><div class="rk-tr"><i style="width:${Math.max(3, v / max * 100).toFixed(1)}%"></i></div></div></li>`; }).join('')}</ol>`;
+}
+/* a donut for a few parts of one whole: the total in the middle, every part named with its number and share */
+function donut(parts, label, unit) {
+  const t = sum(parts, p => p[1]); if (!t) return '<p class="note" style="padding:0">Nothing in this period.</p>';
+  const gap = parts.filter(p => p[1]).length > 1 ? 1 : 0; let off = 0;
+  const arcs = parts.map((p, i) => { if (!p[1]) return ''; const len = p[1] / t * 100, L = Math.max(.01, len - gap), a = `<circle class="dn-arc s${i + 1}" cx="21" cy="21" r="15.9155" style="stroke-dasharray:${L.toFixed(3)} ${(100 - L).toFixed(3)};stroke-dashoffset:${(25 - off).toFixed(3)}"></circle>`; off += len; return a; }).join('');
+  return `<div class="donut"><div class="dn-fig" role="img" aria-label="${esc(label + ': ' + parts.filter(p => p[1]).map(p => `${p[0]} ${p[1]} (${Math.round(p[1] / t * 100)}%)`).join(', '))}"><svg viewBox="0 0 42 42"><circle class="dn-track" cx="21" cy="21" r="15.9155"></circle>${arcs}</svg><div class="dn-c"><b>${nf(t)}</b><span>${esc(unit)}</span></div></div>
+    <ul class="dn-leg">${parts.map((p, i) => `<li class="${p[1] ? '' : 'zero'}"><i class="key s${i + 1}"></i><span>${esc(p[0])}</span><b>${nf(p[1])}</b><em>${Math.round(p[1] / t * 100)}%</em></li>`).join('')}</ul></div>`;
+}
+/* one share as a ring, the figure in the middle */
+function ring(pct, label) {
+  const p = Math.max(0, Math.min(100, pct));
+  return `<div class="ring" role="img" aria-label="${esc(label)}: ${Math.round(p)}%"><svg viewBox="0 0 42 42"><circle class="rg-track" cx="21" cy="21" r="15.9155"></circle><circle class="rg-arc" cx="21" cy="21" r="15.9155" style="stroke-dasharray:${p.toFixed(2)} ${(100 - p).toFixed(2)};stroke-dashoffset:25"></circle></svg><div class="rg-c"><b>${Math.round(p)}%</b><span>${esc(label)}</span></div></div>`;
 }
 /* the readout follows the pointer, a tap, or keyboard focus (text only, built with textContent) */
 function lcShow(c) {
@@ -4140,27 +4470,38 @@ function returnsCard(R, showEngineers) {
     ${!R.out.length ? '<p class="note" style="padding:0">Every removed or unused part is back at Stock.</p>' : ''}
   </div>`;
 }
+/* the band on top: the period (presets or any dates) and the four headline numbers, each against the period before */
+function dashHero(M, r) {
+  const days = rangeDays(r), prev = `previous ${nf(days)} day${days === 1 ? '' : 's'}`;
+  const tile = t => { const d = t.v - t.prev; return `<div class="dh-tile"><div class="dh-tk"><span class="dh-ic">${ic(t.icon, 'sm')}</span><span>${esc(t.label)}</span></div><div class="dh-vr"><span class="dh-v">${nf(t.v)}</span><span class="dh-chip">${d === 0 ? '=' : `${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d))}`}</span></div><div class="dh-d">${d === 0 ? 'same as the' : 'vs the'} ${prev}</div>${spark(t.trend)}</div>`; };
+  const today = ymd(Date.now());
+  return `<section class="dhero" aria-label="Overview"><img class="wm" src="${CNS_SWIRL}" alt="">
+    <div class="dh-top"><div><span class="dh-k">Overview · units of parts</span><h2 class="dh-t">${esc(rangeTitle(r))}</h2><span class="dh-s">${esc(rangeText(r))}</span></div></div>
+    <div class="dh-range" role="group" aria-label="Period">${DASH_PRESETS.map(([v, l]) => `<button type="button" class="${r.mode === v ? 'on' : ''}" aria-pressed="${r.mode === v}" data-a="dashMode" data-v="${v}">${v === 'custom' ? ic('clock', 'sm') : ''}${l}</button>`).join('')}</div>
+    ${r.mode === 'custom' ? `<div class="dh-dates"><label><span>From</span><input type="date" id="dash-from" data-dash="from" value="${ymd(r.start)}" max="${today}"></label><label><span>To</span><input type="date" id="dash-to" data-dash="to" value="${ymd(addDays(r.end, -1))}" max="${today}"></label></div>` : ''}
+    <div class="dh-kpis">${M.tiles.map(tile).join('')}</div></section>`;
+}
 function repDash() {
-  if (!ensureLedger()) return ledgerWait();
-  const days = dashDays(), M = dashModel(JOBS, UI.ledger.rows, days), R = returnsData(JOBS);
-  const any = M.series.some(r => r.taken || r.back || r.scrap), dec = sum(M.decisions, d => d[1]), ws = M.repaired + M.wsScrapped;
-  const tile = t => { const d = t.v - t.prev; return `<div class="kpi stat"><span class="k">${esc(t.label)}</span><span class="v">${nf(t.v)}</span><span class="delta">${d === 0 ? `same as the ${days} days before` : `${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d))} vs the ${days} days before`}</span>${spark(t.trend)}</div>`; };
-  return `<div class="dash">
-    <div class="dash-top"><div><h2 class="dash-h">Overview</h2><span class="t3 muted">${esc(shortDay(M.start))} – ${esc(shortDay(M.end - DAY))} · units of parts</span></div>
-      <div class="seg-sm" role="group" aria-label="Period">${DASH_RANGES.map(([d, l]) => `<button class="${d === days ? 'on' : ''}" aria-pressed="${d === days}" data-a="dashDays" data-v="${d}">${l}</button>`).join('')}</div></div>
+  const r = dashRange();
+  if (!ensureDashLog(r.start - (r.end - r.start))) return UI.ledgerErr ? `<div class="err">${esc(UI.ledgerErr)}</div>` : `<div class="infobox" role="status">Loading the inventory log…</div>`;
+  const M = dashModel(JOBS, dashLog.rows, r), R = returnsData(JOBS);
+  const any = M.series.some(x => x.taken || x.back || x.scrap), dec = sum(M.decisions, d => d[1]), ws = M.repaired + M.wsScrapped;
+  const key = `${r.mode}:${r.start}:${r.end}`, anim = UI._dashKey !== key; UI._dashKey = key;   /* the entrance animation plays when the period changes, not on every update */
+  const none = t => `<p class="note" style="padding:0">${t}</p>`;
+  return `<div class="dash${anim ? ' anim' : ''}">
+    ${dashHero(M, r)}
     ${returnsCard(R, 5)}
-    <div class="stats4">${M.tiles.map(tile).join('')}</div>
-    <div class="card">${cardH('Parts moving', days === 7 ? 'by day' : days === 30 ? 'every 3 days' : 'by week')}
-      ${any ? lineChart(M.series, DASH_SERIES, `Parts taken from stock, back in stock and scrapped, last ${days} days`) : '<p class="note" style="padding:0">No parts moved in this period.</p>'}
-      <details class="fold inset" data-fold="dash-weeks"><summary>${ic('list', 'sm')}The numbers</summary><div class="fold-b">${tbl(['Period', 'Taken from stock', 'Installed', 'Back in stock', 'Scrapped'], M.series.slice().reverse().map((r, i) => `<tr><td>${esc(bucketLabel(r.b))}</td><td class="r">${r.taken}</td><td class="r">${M.tiles[1].trend[M.series.length - 1 - i]}</td><td class="r">${r.back}</td><td class="r">${r.scrap}</td></tr>`))}</div></details></div>
+    <div class="card dcard">${cardH('Parts moving', STEP_WORD[M.kind])}
+      ${any ? lineChart(M.series, DASH_SERIES, `Parts taken from stock, back in stock and scrapped, ${rangeText(r)}`) : none('No parts moved in this period.')}
+      <details class="fold inset" data-fold="dash-weeks"><summary>${ic('list', 'sm')}The numbers</summary><div class="fold-b">${tbl([STEP_COL[M.kind], 'Taken from stock', 'Installed', 'Back in stock', 'Scrapped'], M.series.slice().reverse().map((x, i) => `<tr><td>${esc(bucketLabel(x.b))}</td><td class="r">${x.taken}</td><td class="r">${M.tiles[1].trend[M.series.length - 1 - i]}</td><td class="r">${x.back}</td><td class="r">${x.scrap}</td></tr>`))}</div></details></div>
     <div class="dgrid">
-      <div class="card">${cardH('Requests in progress', `${M.open} open now`)}${M.open ? hbars(M.phases.map(([k, v]) => [esc(k), v])) : '<p class="note" style="padding:0">No open requests.</p>'}</div>
-      <div class="card">${cardH('Most sent parts', `top ${M.top.length || 5}`)}${M.top.length ? hbars(M.top.map(([pn, v]) => { const nm = partName(pn); return [`${tag(pn)}${nm && normPN(nm) !== pn ? ' ' + esc(nm) : ''}`, v]; }), v => nf(v) + (v === 1 ? ' unit' : ' units')) : '<p class="note" style="padding:0">No parts sent in this period.</p>'}</div>
-      <div class="card">${cardH('Returned parts: what Stock decided', dec ? nf(dec) + ' units' : '')}${segTall(M.decisions, 'Returned parts')}</div>
-      <div class="card">${cardH('Workshop', ws ? `${ws} finished` : '')}${ws ? `<div class="split2"><div><div class="mini-n">${M.repaired}</div><span class="t3 muted">repaired</span></div><div><div class="mini-n">${M.wsScrapped}</div><span class="t3 muted">could not be repaired</span></div></div><div class="meter" role="img" aria-label="${Math.round(M.repaired / ws * 100)}% repaired"><i style="width:${pctOf(M.repaired, ws)}%"></i></div><span class="t3 muted">${Math.round(M.repaired / ws * 100)}% repaired · repair cost ${money(M.repairCost)}</span>` : '<p class="note" style="padding:0">No repairs finished in this period.</p>'}</div>
+      <div class="card dcard">${cardH('Requests in progress', `${M.open} open now`)}${M.open ? pipeline(M.phases) : none('No open requests.')}</div>
+      <div class="card dcard">${cardH('Most sent parts', M.top.length ? `top ${M.top.length}` : '')}${M.top.length ? ranked(M.top) : none('No parts sent in this period.')}</div>
+      <div class="card dcard">${cardH('Returned parts: what Stock decided', dec ? nf(dec) + ' units' : '')}${donut(M.decisions, 'Returned parts', dec === 1 ? 'unit' : 'units')}</div>
+      <div class="card dcard">${cardH('Workshop', ws ? `${ws} finished` : '')}${ws ? `<div class="ws-box">${ring(M.repaired / ws * 100, 'repaired')}<div class="ws-nums"><div><b>${nf(M.repaired)}</b><span>repaired</span></div><div><b>${nf(M.wsScrapped)}</b><span>could not be repaired</span></div><div><b>${money(M.repairCost)}</b><span>repair cost</span></div></div></div>` : none('No repairs finished in this period.')}</div>
     </div>
-    <div class="card"><div class="card-h"><h2>Excel workbook</h2><button class="btn sm" data-a="excel">${ic('download', 'sm')}Download</button></div><span class="hint">The first sheet, “Dashboard”, has the numbers with graphs. It counts every record, not only the newest ones loaded here.</span></div>
-    ${UI.ledger.more ? '<p class="note">Counted from the newest 1,000 inventory log entries. The Excel file counts all of them.</p>' : ''}
+    ${M.partial ? '<p class="note">Returned parts and Workshop count the requests loaded on this phone, which may not reach back to the start of this period. The Excel file counts every record.</p>' : ''}
+    <div class="card dcard xl-card"><span class="lead info">${ic('sheet')}</span><div class="main"><b>Excel workbook</b><span class="hint">The first sheet, “Dashboard”, has the numbers with graphs. It counts every record.</span></div><button class="btn sm" data-a="excel">${ic('download', 'sm')}Download</button></div>
   </div>`;
 }
 
@@ -4697,13 +5038,26 @@ SH.acct = (d, p) => {
       foot: `<button class="btn sec" data-a="close">Close</button>` };
   }
   if (!d._i) { Object.assign(d, { name: u.name, role: u.role, hub: u.hub || HUBS[0], title: u.title || '', active: u.active === false ? 'no' : 'yes' }); d._i = 1; }
+  const sid = u.sid || idFromEmail(u.email || u.id), bi = budgetInfo(sid);
+  if (!d._b) { d.bamt = bi.set ? String(bi.amount) : ''; d.bused = bi.set || bi.used ? bi.used.toFixed(3) : ''; d._bamt0 = d.bamt; d._bused0 = d.bused; d._b = 1; }
+  const budBox = d.role !== 'TECH' ? '' : `<div class="card"><div class="sec-h" style="padding:0"><h2>Budget ${bi.year}</h2>${bi.set ? `<span class="t3 muted">${Math.round(bi.pct * 100)}% used</span>` : ''}</div>
+      ${bi.set ? budBar(bi.used, bi.amount) : ''}
+      <div class="two">${inp(d, 'bamt', 'Yearly budget (OMR)', 'e.g. 5000', { type: 'text', num: true, mode: 'decimal' })}${inp(d, 'bused', 'Used so far (OMR)', '0', { type: 'text', num: true, mode: 'decimal' })}</div>
+      <span class="hint">Each request he sends is added to “used”. Rejected, cancelled, faulty or unused parts are given back, and van parts count when he uses them. Change “used so far” only to start from your own figure.</span></div>`;
   return {
     title: u.name, sub: esc(loginShow(u.email || u.id)) + (isUserLogin(u.email || u.id) ? ' · signs in with a username' : ''),
     body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
+      ${budBox}
       <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div>${isUserLogin(u.email || u.id) ? `<p class="note" style="padding:0">This person signs in with the username <b class="mono">${esc(loginShow(u.email || u.id))}</b> and has no email, so SPMS can’t send them a password link. If they forget their password, remove this account and add them again with a new username.</p>` : `<p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button>`}</div>
       <div class="card"><div class="sec-h" style="padding:0"><h2>Remove</h2></div><p class="note" style="padding:0">Wrong account? Remove it so they can no longer sign in. Their request history stays.</p><button class="btn sm danger" data-a="acctDelete" data-id="${esc(u.email || u.id)}">${ic('ban', 'sm')}Remove this account</button></div>`,
-    op: { label: 'Save', run: () => fbSaveAcct(u.email || u.id, d), after: () => { toast('Account saved'); openSheet('accounts', { }); } }
+    op: { label: 'Save', run: async () => {
+      const budChanged = d.role === 'TECH' && (String(d.bamt || '').trim() !== String(d._bamt0 || '').trim() || String(d.bused || '').trim() !== String(d._bused0 || '').trim());
+      if (budChanged && String(d.bamt || '').trim() === '') throw E('Enter the yearly budget (OMR), or put the old figures back.');
+      const r = await fbSaveAcct(u.email || u.id, d);
+      if (budChanged) await saveBudget(sid, d);
+      return r;
+    }, after: () => { toast('Account saved'); openSheet('accounts', { }); } }
   };
 };
 
@@ -5096,7 +5450,7 @@ async function fbSignIn(email, pw) {
   }
   throw mapAuthErr(first);
 }
-function resetData() { unsubAll(); JOBS = []; JOBS_OPEN = []; JOBS_RECENT = []; ARCHIVE = null; ALL_LOADED = false; LINES = []; PARTS = {}; ADJ = []; LEGACY = []; UI.loaded = false; UI.ledger = null; UI.traceRes = null; }
+function resetData() { unsubAll(); BUDGETS = {}; JOBS = []; JOBS_OPEN = []; JOBS_RECENT = []; ARCHIVE = null; ALL_LOADED = false; LINES = []; PARTS = {}; ADJ = []; LEGACY = []; UI.loaded = false; UI.ledger = null; UI.traceRes = null; }
 async function fbAuthChanged(user) {
   resetData(); UI.gate = null;
   const fail = msg => { UI.siErr = msg; UI.authReady = true; UI.profile = null; ACCOUNTS = TEST_ACCOUNTS.slice(); USERS = []; $('#scr').innerHTML = ''; render(); };
@@ -5182,7 +5536,10 @@ const A = {
   invLoc(ds) { UI.invLoc = ds.v; render(); },
   report(ds) { UI.report = ds.v; render(); },
   goReport(ds) { UI.tab = 'rep'; UI.report = ds.v; render(); $('#scr').scrollTop = 0; },
-  dashDays(ds) { UI.dashDays = +ds.v; const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; else render(); },
+  dashMode(ds) {
+    const v = String(ds.v); if (v === 'custom' && UI.dashMode !== 'custom') { const r = dashRange(); UI.dashFrom = ymd(r.start); UI.dashTo = ymd(addDays(r.end, -1)); }   /* Custom starts from the period on screen */
+    UI.dashMode = v; const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; else render();
+  },
   sheet(ds) { openSheet(ds.s, { id: ds.id }); },
   close() { closeSheet(); },
   set(ds) { const d = sd(); if (ds.k === 'mode' && d.mode !== ds.v) delete d.reason; if (ds.k === 'line' && d.line !== ds.v) d.uqty = 1; d[ds.k] = ds.v; (d._picked = d._picked || {})[ds.k] = 1; d._err = ''; d._confirm = null; renderSheet(); },
@@ -5305,6 +5662,7 @@ document.addEventListener('input', e => {
     if (el.dataset.auto && autoFill(el.dataset.auto, d)) { renderSheet(); return; }
     const lv = el.dataset.live; if (lv === 'rr') { renderSheet(); return; }
     if (lv && LIVE[lv]) { const c = $('#live-' + lv); if (c) c.innerHTML = LIVE[lv](d); }
+    if (k === 'pn' && UI.sheet.name === 'new') { const c = $('#live-budnew'); if (c) c.innerHTML = newBudget(d); }
     if (lv === 'gpsprev' && UI.sheet.name === 'new' && hubFromPlace(d)) renderSheet();
     return;
   }
@@ -5313,6 +5671,11 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const el = e.target;
   if (el.dataset && el.dataset.photo && el.files && el.files.length && UI.sheet) { addPhotos(el.dataset.photo, el.files); el.value = ''; return; }
+  if (el.dataset && el.dataset.dash) {   /* the dashboard's own From / To dates */
+    if (!el.value) return; const k = el.dataset.dash === 'from' ? 'dashFrom' : 'dashTo'; UI[k] = el.value; UI.dashMode = 'custom';
+    if (UI.dashFrom && UI.dashTo && UI.dashFrom > UI.dashTo) UI[k === 'dashFrom' ? 'dashTo' : 'dashFrom'] = el.value;
+    const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; return;
+  }
   if (el.id === 'f-file' && el.files && el.files[0]) { readImportFile(el.files[0]); el.value = ''; return; }
   if (el.id === 'f-accfile' && el.files && el.files[0]) { readAccountsFile(el.files[0]); return; }
   if (el.id === 'f-machfile' && el.files && el.files[0]) { readMachinesFile(el.files[0]); el.value = ''; return; }
