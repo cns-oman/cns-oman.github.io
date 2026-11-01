@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261101023706">
+<meta name="spms-build" content="20261101065605">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -918,7 +918,7 @@ const vanLoc = techId => 'VAN-' + techId;
 /* Stock lines are spread over BUCKETS groups so the app can follow up to 8 × 1,000 lines live. */
 const BUCKETS = 8;
 const bucketOf = id => { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % BUCKETS; };
-const setLine = (id, body) => api.set('lines', id, Object.assign({}, body, { b: bucketOf(id) }));
+const setLine = (id, body) => api.set('lines', id, api.packed ? body : Object.assign({}, body, { b: bucketOf(id) }));   /* the bucket is for the stores that read lines in 8 groups */
 const isVan = loc => String(loc || '').startsWith('VAN-');
 function techList() {
   const m = new Map(ACCOUNTS.filter(a => a.role === 'TECH').map(a => [a.id, a.name]));
@@ -1110,18 +1110,31 @@ function firestoreBackend(fs) {
   const R = async f => { try { return await f(); } catch (e) { throw mapErr(e); } };
   const docs = sn => sn.docs.map(d => Object.assign({}, d.data(), { id: d.id }));
   const lockRef = path => fs.collection('locks').doc(String(path).replace(/[^A-Za-z0-9_\-.:@+~]/g, '~'));
+  const P = {}; for (const [c, spec] of Object.entries(PACKED)) P[c] = packStore(fs, spec);
+  const subErr = e => { console.error(e); if (/permission-denied/.test(String(e && e.code))) return; UI.store = 'error'; changed(); };
   return {
-    kind: 'firebase', maxLimit: 1000,
-    sub(col, q, f) { return build(col, q || {}).onSnapshot(sn => f(docs(sn)), e => { console.error(e); if (/permission-denied/.test(String(e && e.code))) return; UI.store = 'error'; changed(); }); },
-    get: (col, id) => R(async () => { const s = await fs.collection(col).doc(id).get(); return s.exists ? Object.assign({}, s.data(), { id }) : null; }),
-    query: (col, q) => R(async () => docs(await build(col, q || {}).get())),
-    set: (col, id, body) => W(() => fs.collection(col).doc(id).set(Object.assign({}, clone(body), { id }))).then(r => { pushPing(col, id); return r; }),
-    update: (col, id, patch) => W(() => fs.runTransaction(async t => {
+    kind: 'firebase', maxLimit: 1000, packed: true,
+    sub(col, q, f, onErr) { if (P[col]) return P[col].sub(q, f, onErr || subErr); return build(col, q || {}).onSnapshot(sn => f(docs(sn)), onErr || subErr); },
+    get: (col, id) => P[col] ? R(() => P[col].get(id)) : R(async () => { const s = await fs.collection(col).doc(id).get(); return s.exists ? Object.assign({}, s.data(), { id }) : null; }),
+    query: (col, q) => P[col] ? R(() => P[col].query(q)) : R(async () => docs(await build(col, q || {}).get())),
+    set: (col, id, body) => P[col] ? W(() => P[col].mutate([{ id, set: body }])).then(() => undefined) : W(() => fs.collection(col).doc(id).set(Object.assign({}, clone(body), { id }))).then(r => { pushPing(col, id); return r; }),
+    update: (col, id, patch) => P[col] ? W(() => P[col].mutate([{ id, patch }])).then(() => undefined) : W(() => fs.runTransaction(async t => {
       const ref = fs.collection(col).doc(id), sn = await t.get(ref);
       if (!sn.exists) throw E('This record no longer exists. Close and reopen it.');
       t.set(ref, Object.assign(deepMerge(sn.data(), clone(patch)), { id }));
     })).then(r => { pushPing(col, id); return r; }),
-    del: (col, id) => W(() => fs.collection(col).doc(id).delete()),
+    del: (col, id) => P[col] ? W(() => P[col].mutate([{ id, del: true }])).then(() => undefined) : W(() => fs.collection(col).doc(id).delete()),
+    /* many changes at once (imports, removing many parts): a few transactions instead of one write per record */
+    async bulk(col, ops) {
+      const out = []; for (let i = 0; i < ops.length; i += 250) out.push(...await W(() => P[col].mutate(ops.slice(i, i + 250)))); return out;
+    },
+    isPacked: col => !!P[col],
+    clear: col => P[col] ? W(() => P[col].clear()) : Promise.resolve(0),
+    /* the collections as they were before packing (one document per record), for the one-time move */
+    raw: {
+      query: (col, q) => R(async () => docs(await build(col, q || {}).get())),
+      delMany: (col, ids) => W(async () => { for (let i = 0; i < ids.length; i += 400) { const b = fs.batch(); for (const id of ids.slice(i, i + 400)) b.delete(fs.collection(col).doc(id)); await b.commit(); } })
+    },
     async acquire(path, holder, ttl) {
       if (offline()) throw E('No internet connection. Connect and try again. Nothing was saved.');
       const ref = lockRef(path);
@@ -1137,6 +1150,146 @@ function firestoreBackend(fs) {
     async release(path, holder) { const ref = lockRef(path); try { await fs.runTransaction(async t => { const sn = await t.get(ref); if (sn.exists && sn.data().h === holder) t.delete(ref); }); } catch (e) { /* the lease runs out on its own */ } }
   };
 }
+/* ---------- packed collections (Firebase build) ----------
+   The free Firebase plan allows 50,000 document reads a day, and opening the app used to read every stock line and every
+   part as a document of its own (thousands each time). These collections are kept instead inside a few big documents
+   ("packs"), the records stored as text: opening the app reads one document per pack.
+   - Stock lines are packed by their place (a hub, a van, the scrap pool), at most `cap` lines a pack, so a technician only
+     ever writes the packs of their own van (the security rules check the pack name).
+   - Parts and the Excel import records sit in `k` packs, each record in the pack its id hashes to.
+   Every change is a transaction on the pack(s) it touches, so two people never overwrite each other's lines. */
+const PACKED = {
+  lines: { col: 'stockpacks', cap: 150, group: r => String(r.loc || ''), own: 'loc' },
+  parts: { col: 'partpacks', k: 4, group: () => 'P' },
+  stockrows: { col: 'importpacks', k: 8, group: () => 'R' }
+};
+const PACK_MAX = 900000;   /* characters of text in one pack (a Firestore document holds at most 1 MiB) */
+const strHash = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
+function packStore(fs, spec, h) {
+  const coll = () => fs.collection(spec.col), ref = id => coll().doc(id);
+  const packs = new Map(), where = new Map(), gone = new Map(), subs = new Set();
+  let unsub = null, live = false, lastFull = 0, fullP = null;
+  const pid = (g, n) => g + '~' + n, gOf = id => id.slice(0, id.lastIndexOf('~')), nOf = id => +id.slice(id.lastIndexOf('~') + 1) || 0;
+  const fixed = id => spec.k ? pid(spec.group({}), strHash(id) % spec.k) : null;
+  function parse(id, d) {
+    const arr = JSON.parse(typeof d.d === 'string' ? d.d : '[]'); if (!Array.isArray(arr)) throw new Error('pack ' + id + ' is not a list');
+    const rows = new Map(); for (const r of arr) if (r && r.id) { if (spec.own) r[spec.own] = d.g; rows.set(r.id, r); }
+    return { id, g: String(d.g || gOf(id)), n: +d.n || 0, v: +d.v || 0, rows };
+  }
+  function reindex() { where.clear(); for (const p of packs.values()) for (const k of p.rows.keys()) where.set(k, p.id); }
+  const list = () => { const out = []; for (const p of packs.values()) for (const r of p.rows.values()) out.push(Object.assign({}, r)); return out; };
+  function emit() { if (!live) return; const l = list(); for (const s of [...subs]) { try { s.f(applyQuery(l, s.q)); } catch (e) { console.error(e); } } }
+  /* a pack read from the database replaces the copy here unless this device already has a newer version of it */
+  function offer(id, d, now) {
+    const v = +d.v || 0, t = gone.get(id); if (t && now - t.at < 15000 && v <= t.v) return;
+    const cur = packs.get(id); if (cur) { cur.seen = true; if (cur.v >= v) return; }
+    try { const p = parse(id, d); p.seen = true; packs.set(id, p); } catch (e) { console.error(e); }
+  }
+  function absorb(docs) {
+    const now = Date.now(), seen = new Set();
+    for (const doc of docs) { seen.add(doc.id); offer(doc.id, doc.data(), now); }
+    for (const [id, p] of [...packs]) if (!seen.has(id) && (p.seen || !(p.localAt && now - p.localAt < 15000))) packs.delete(id);
+    reindex();
+  }
+  function start() {
+    if (unsub) return;
+    unsub = coll().onSnapshot(sn => { absorb(sn.docs); live = true; lastFull = Date.now(); emit(); },
+      e => { console.error(e); for (const s of [...subs]) if (s.err) s.err(e); });
+  }
+  function stop() { if (unsub) { try { unsub(); } catch (e) { /* closed */ } } unsub = null; live = false; packs.clear(); where.clear(); gone.clear(); lastFull = 0; }
+  /* read every pack from the database (once every few seconds at most) */
+  async function full(force) {
+    if (!force && (live || Date.now() - lastFull < 4000)) return;
+    if (!fullP) fullP = coll().get().then(sn => { absorb(sn.docs); lastFull = Date.now(); emit(); }).finally(() => { fullP = null; });
+    return fullP;
+  }
+  const locate = id => fixed(id) || where.get(id) || null;
+  /* apply changes inside one transaction: ops = [{ id, set }, { id, patch }, { id, del: true }, { id, fn: cur => next | null | undefined }] */
+  async function mutate(ops) {
+    if (!spec.k && ops.some(o => !where.has(o.id) && !o.set)) await full();   /* a line this device has not seen yet */
+    let out = [];
+    const res = await fs.runTransaction(async t => {
+      const loaded = new Map(); out = [];
+      const load = async id => {
+        if (loaded.has(id)) return loaded.get(id);
+        const sn = await t.get(ref(id));
+        const p = sn.exists ? Object.assign(parse(id, sn.data()), { exists: true }) : { id, g: gOf(id), n: nOf(id), v: 0, rows: new Map(), exists: false };
+        p.dirty = false; loaded.set(id, p); return p;
+      };
+      const room = p => p.rows.size < spec.cap;
+      async function place(g, row) {
+        if (spec.k) { const p = await load(fixed(row.id)); p.rows.set(row.id, row); p.dirty = true; return; }
+        const mine = new Map(); for (const p of packs.values()) if (p.g === g) mine.set(p.id, p.rows.size);
+        for (const p of loaded.values()) if (p.g === g) mine.set(p.id, p.rows.size);
+        for (const id of [...mine.keys()].sort((a, b) => mine.get(a) - mine.get(b))) { if (mine.get(id) >= spec.cap) break; const p = await load(id); if (room(p)) { p.rows.set(row.id, row); p.dirty = true; return; } }
+        for (let n = Math.max(-1, ...[...mine.keys()].map(nOf)) + 1; ; n++) { const p = await load(pid(g, n)); if (room(p)) { p.rows.set(row.id, row); p.dirty = true; return; } }
+      }
+      for (const op of ops) {
+        const at = locate(op.id), sp = at ? await load(at) : null, cur = sp ? sp.rows.get(op.id) : undefined;
+        let next;
+        if (op.set) next = Object.assign(clone(op.set), { id: op.id });
+        else if (op.patch) { if (!cur) throw E('This record no longer exists. Close and reopen it.'); next = Object.assign(deepMerge(cur, clone(op.patch)), { id: op.id }); }
+        else if (op.del) next = null;
+        else { const r = op.fn(cur ? clone(cur) : null); if (r === undefined) { out.push(cur ? clone(cur) : null); continue; } next = r === null ? null : Object.assign(clone(r), { id: op.id }); }
+        if (next === null) { if (cur) { sp.rows.delete(op.id); sp.dirty = true; } out.push(null); continue; }
+        const g = spec.group(next); if (!g || /[\/~]/.test(g)) throw E('This record has no valid place.');
+        if (spec.own) next[spec.own] = g;
+        if (cur && sp.g === g) { sp.rows.set(op.id, next); sp.dirty = true; }
+        else { if (cur) { sp.rows.delete(op.id); sp.dirty = true; } await place(g, next); }
+        out.push(clone(next));
+      }
+      const done = [], now = Date.now();
+      for (const p of loaded.values()) {
+        if (!p.dirty) continue;
+        if (!p.rows.size) { if (p.exists) t.delete(ref(p.id)); done.push({ id: p.id, gone: true, v: p.v }); continue; }
+        const d = JSON.stringify([...p.rows.values()]);
+        if (d.length > PACK_MAX) throw E(spec.k ? 'The list is full: too many records for the free database layout. Remove old ones first.' : `Too many stock lines in one place (${p.g}). Move or remove some first.`);
+        const v = p.exists ? p.v + 1 : Math.max(now, (gone.get(p.id) || {}).v + 1 || 0);
+        t.set(ref(p.id), { g: p.g, n: p.n, c: p.rows.size, v, at: now, d });
+        done.push({ id: p.id, g: p.g, n: p.n, v, rows: p.rows });
+      }
+      return done;
+    });
+    /* show the result straight away; the live listener confirms it a moment later */
+    const now = Date.now();
+    for (const r of res) { if (r.gone) { packs.delete(r.id); gone.set(r.id, { v: r.v, at: now }); } else { const old = packs.get(r.id); packs.set(r.id, { id: r.id, g: r.g, n: r.n, v: r.v, rows: r.rows, localAt: now, seen: !!(old && old.seen) }); gone.delete(r.id); } }
+    reindex(); emit();
+    return out;
+  }
+  return {
+    sub(q, f, err) { const s = { q: Object.assign({}, q || {}, { limit: 0 }), f, err }; subs.add(s); start(); if (live) setTimeout(() => { if (subs.has(s)) f(applyQuery(list(), s.q)); }, 0); return () => { subs.delete(s); if (!subs.size) stop(); }; },
+    async get(id) {
+      let at = locate(id); if (!at) { await full(); at = locate(id); } if (!at) return null;
+      const sn = await ref(at).get(); if (!sn.exists) return null;
+      offer(at, sn.data(), Date.now()); reindex(); const p = packs.get(at), r = p && p.rows.get(id);
+      return r ? clone(r) : null;
+    },
+    async query(q) { await full(); return applyQuery(list(), q || {}).map(clone); },
+    mutate,
+    /* delete every pack (the Team Leader clearing test data) */
+    async clear() {
+      const sn = await coll().get(); let n = 0;
+      for (const doc of sn.docs) { try { n += parse(doc.id, doc.data()).rows.size; } catch (e) { n++; } }
+      for (let i = 0; i < sn.docs.length; i += 400) { const b = fs.batch(); for (const doc of sn.docs.slice(i, i + 400)) b.delete(ref(doc.id)); await b.commit(); }
+      const now = Date.now(); for (const doc of sn.docs) gone.set(doc.id, { v: +doc.data().v || 0, at: now });
+      packs.clear(); reindex(); emit(); return n;
+    }
+  };
+}
+/* several changes to one collection at once: one transaction per pack on Firebase, one by one elsewhere */
+async function apiBulk(col, ops) {
+  if (!ops.length) return [];
+  if (api.isPacked && api.isPacked(col)) return api.bulk(col, ops);
+  const out = [];
+  for (const op of ops) {
+    if (op.set) { await api.set(col, op.id, op.set); out.push(Object.assign(clone(op.set), { id: op.id })); }
+    else if (op.patch) { await api.update(col, op.id, op.patch); out.push(await api.get(col, op.id)); }
+    else if (op.del) { await api.del(col, op.id); out.push(null); }
+    else { const cur = await api.get(col, op.id), r = op.fn(cur); if (r === undefined) out.push(cur); else if (r === null) { if (cur) await api.del(col, op.id); out.push(null); } else { await api.set(col, op.id, r); out.push(Object.assign(clone(r), { id: op.id })); } }
+  }
+  return out;
+}
+
 /* The free notification sender (a Google Apps Script, SPMS_PUSH_URL in firebase-config.js): after a request or a stock
    change is saved, it is told which one changed. It reads that record itself and works out who to notify,
    so a message from here can't make it send anything else. */
@@ -1153,11 +1306,12 @@ const inAppView = () => { const u = navigator.userAgent || ''; return /; wv\)/.t
 const savedToast = (r, msg) => r && r.status === 'webview' ? toast('If it isn’t in your Downloads, this app can’t save files. Open SPMS in Chrome or on a computer to download it.', 'bad') : toast(msg);
 
 /* Read a whole collection, newest first, a page of 1,000 at a time. */
-async function queryAll(col, field) {
-  if (api.maxLimit === Infinity) return api.query(col, { orderBy: [field, 'desc'] });
+async function queryAll(col, field, scope) {
+  scope = scope || [];
+  if (api.maxLimit === Infinity || (api.isPacked && api.isPacked(col))) return api.query(col, { orderBy: [field, 'desc'], where: scope });
   const out = []; let last = null;
   for (let guard = 0; guard < 200; guard++) {
-    const page = await api.query(col, { orderBy: [field, 'desc'], limit: 1000, where: last == null ? [] : [[field, '<', last]] });
+    const page = await api.query(col, { orderBy: [field, 'desc'], limit: 1000, where: scope.concat(last == null ? [] : [[field, '<', last]]) });
     out.push(...page); if (page.length < 1000) break; last = page[page.length - 1][field];
   }
   return out;
@@ -1187,18 +1341,29 @@ let ARCHIVE = null, SCHEMA = null;
 function unsubAll() { for (const k of Object.keys(unsubs)) { try { unsubs[k](); } catch (e) { /* closed */ } delete unsubs[k]; } }
 const userAcc = u => ({ id: u.sid || idFromEmail(u.email || u.id), role: u.role, name: u.name || u.email, title: u.title || ROLE[u.role], email: String(u.email || u.id).toLowerCase(), hub: u.hub || '' });
 function normJob(j) { if (!j.type) j.type = 'req'; if (j.open == null) j.open = isOpenStatus(j.status); return j; }
+/* A technician (by the role on their staff record) only needs their own requests: on Firebase they load just those,
+   which keeps each opening of the app to a few hundred document reads (the free plan allows 50,000 a day). */
+const techOnly = () => !!(api && api.kind === 'firebase' && UI.profile && UI.profile.baseRole === 'TECH');
+const jobScope = () => techOnly() ? [['techId', '==', UI.profile.id]] : [];
 function subscribeAll() {
   unsubAll(); for (const k of Object.keys(ready)) ready[k] = false;
-  unsubs.jobsOpen = api.sub('jobs', { where: [['open', '==', true]], limit: 1000 }, list => { JOBS_OPEN = list; ready.jobsOpen = true; mergeJobs(); });
+  unsubs.jobsOpen = api.sub('jobs', { where: jobScope().concat([['open', '==', true]]), limit: 1000 }, list => { JOBS_OPEN = list; ready.jobsOpen = true; mergeJobs(); });
   subRecent();
   unsubs.parts = api.sub('parts', { limit: 1000 }, list => { const m = {}; for (const p of list) if (p.pn) m[normPN(p.pn)] = p; PARTS = m; ready.parts = true; DATAV.inv++; afterLoad(); });
-  const groups = new Array(BUCKETS).fill(null);
-  for (let b = 0; b < BUCKETS; b++) unsubs['lines' + b] = api.sub('lines', { where: [['b', '==', b]], limit: 1000 }, list => {
-    groups[b] = list; if (!groups.every(Boolean)) return;
-    LINES = [].concat(...groups).filter(l => l.pn && l.loc).map(l => Object.assign(l, { key: l.id, pn: normPN(l.pn) })).sort((a, c) => cmpVal(a.pn, c.pn) || cmpVal(a.loc, c.loc) || cmpVal(a.sn, c.sn));
-    UI.linesCapped = groups.some(g => g.length >= 1000); ready.lines = true; DATAV.inv++; afterLoad();
-  });
-  unsubs.adj = api.sub('adj', { orderBy: ['at', 'desc'], limit: 500 }, list => {
+  const setLines = (all, capped) => {
+    LINES = all.filter(l => l.pn && l.loc).map(l => Object.assign(l, { key: l.id, pn: normPN(l.pn) })).sort((a, c) => cmpVal(a.pn, c.pn) || cmpVal(a.loc, c.loc) || cmpVal(a.sn, c.sn));
+    UI.linesCapped = capped; ready.lines = true; DATAV.inv++; afterLoad();
+  };
+  if (api.packed) unsubs.lines = api.sub('lines', {}, list => setLines(list, false));
+  else {
+    const groups = new Array(BUCKETS).fill(null);
+    for (let b = 0; b < BUCKETS; b++) unsubs['lines' + b] = api.sub('lines', { where: [['b', '==', b]], limit: 1000 }, list => {
+      groups[b] = list; if (!groups.every(Boolean)) return;
+      setLines([].concat(...groups), groups.some(g => g.length >= 1000));
+    });
+  }
+  if (techOnly()) { ADJ = []; ready.adj = true; }   /* stock changes are for Stock and the Team Leader */
+  else unsubs.adj = api.sub('adj', { orderBy: ['at', 'desc'], limit: 500 }, list => {
     const me = ME(), seen = new Set(ADJ.map(a => a.id)), next = list.filter(a => a.status && a.key);
     if (UI.loaded && me && me.role === 'TL') headsUp(next.filter(a => a.status === 'pending' && !seen.has(a.id) && inMyHub(adjHub(a), me) && Date.now() - (a.at || 0) < 120000).map(a => ({ s: 'adj', id: a.id, icon: 'edit', title: 'Stock change to approve', line: `${a.pn} · ${adjText(a)} · ${a.by}` })));
     ADJ = next; ready.adj = true; afterLoad();
@@ -1217,7 +1382,11 @@ function subscribeAll() {
     USERS = list; ACCOUNTS = list.filter(u => u.active !== false && ROLE[u.role]).map(userAcc);
     /* the Team Leader changed my account (hub, role, name): it applies straight away */
     const p = UI.profile, mine = p && list.find(u => String(u.email || u.id).toLowerCase() === p.email);
-    if (mine && mine.active !== false && ROLE[mine.role]) Object.assign(p, { role: mine.role, hub: mine.hub || '', name: mine.name || p.name, title: mine.title || ROLE[mine.role] });
+    if (mine && mine.active !== false && ROLE[mine.role]) {
+      const wasTech = p.baseRole === 'TECH';
+      Object.assign(p, { role: mine.role, baseRole: mine.role, hub: mine.hub || '', name: mine.name || p.name, title: mine.title || ROLE[mine.role] });
+      if (wasTech !== (mine.role === 'TECH')) setTimeout(subscribeAll, 0);   /* became or stopped being a technician: load the right data */
+    }
     DATAV.set++; changed();
   });
   let top = null;
@@ -1225,15 +1394,19 @@ function subscribeAll() {
 }
 function subRecent() {
   if (unsubs.jobsRecent) unsubs.jobsRecent();
-  const lim = Math.min(UI.jobLimit, api.maxLimit);
-  unsubs.jobsRecent = api.sub('jobs', { orderBy: ['createdAt', 'desc'], limit: lim }, list => { JOBS_RECENT = list; ALL_LOADED = list.length < lim || !!ARCHIVE; ready.jobsRecent = true; mergeJobs(); });
+  const lim = Math.min(UI.jobLimit, api.maxLimit), got = list => { JOBS_RECENT = list; ALL_LOADED = list.length < lim || !!ARCHIVE; ready.jobsRecent = true; mergeJobs(); };
+  /* a technician's newest requests need a database index (jobs: techId + createdAt). Until it exists, load their requests
+     without the order instead of showing an error. */
+  const plain = () => { unsubs.jobsRecent = api.sub('jobs', { where: jobScope(), limit: 1000 }, list => got(list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, lim))); };
+  unsubs.jobsRecent = api.sub('jobs', { where: jobScope(), orderBy: ['createdAt', 'desc'], limit: lim }, got,
+    e => { if (techOnly() && /failed-precondition/.test(String(e && e.code))) { console.warn('jobs index missing, loading without order', e); plain(); return; } console.error(e); if (/permission-denied/.test(String(e && e.code))) return; UI.store = 'error'; changed(); });
 }
 const allLoaded = () => ALL_LOADED;
 async function loadOlder() {
   if (UI.jobLimit + 500 <= api.maxLimit) { UI.jobLimit += 500; subRecent(); return; }
-  ARCHIVE = await queryAll('jobs', 'createdAt'); ALL_LOADED = true; mergeJobs();
+  ARCHIVE = await queryAll('jobs', 'createdAt', jobScope()); ALL_LOADED = true; mergeJobs();
 }
-async function allJobs() { if (ALL_LOADED) return JOBS.slice(); return (await queryAll('jobs', 'createdAt')).map(normJob); }
+async function allJobs() { if (ALL_LOADED) return JOBS.slice(); return (await queryAll('jobs', 'createdAt', jobScope())).map(normJob); }
 function mergeJobs() {
   const m = new Map();
   for (const j of (ARCHIVE || [])) m.set(j.id, j);
@@ -1269,16 +1442,20 @@ function afterLoad() {
 }
 
 /* ---------- carry over data from the earlier version ---------- */
-let migrating = false, migratedOnce = false;
+let migrating = false, migratedOnce = false, migrateWait = 0;
 async function runMigration() {
-  if (migrating || UI.canWrite === false) return;
-  const needStock = LEGACY.length > 0;
-  const needJobs = JOBS_RECENT.some(j => j.open == null && isOpenStatus(j.status));
-  const needBuckets = !!SCHEMA && !SCHEMA.lineBuckets;
-  if (!needStock && !needJobs && !needBuckets) return;
+  if (migrating || UI.canWrite === false || Date.now() < migrateWait) return;
+  /* on Firebase only Stock and the Team Leader move data (a technician's phone never reads the whole store for this) */
+  const r = UI.profile && (UI.profile.baseRole || UI.profile.role), office = !api.packed || ['TL', 'STOCK'].includes(r);
+  const needStock = LEGACY.length > 0 && office;
+  const needJobs = JOBS_RECENT.some(j => j.open == null && isOpenStatus(j.status)) && office;
+  const needBuckets = !api.packed && !!SCHEMA && !SCHEMA.lineBuckets;
+  const needPacks = !!api.packed && !!SCHEMA && !SCHEMA.packs && office;
+  if (!needStock && !needJobs && !needBuckets && !needPacks) return;
   migrating = true;
   try {
     await withLocks(['settings/migration'], async () => {
+      if (needPacks) await movePacks();
       const old = (await api.query('stock', {})).filter(it => it.pn || it.name);
       for (const it of old) {
         const pn = normPN(it.pn); if (!pn) { await api.del('stock', it.id); continue; }
@@ -1294,8 +1471,10 @@ async function runMigration() {
         }
         await api.del('stock', it.id);
       }
-      const recent = await api.query('jobs', { orderBy: ['createdAt', 'desc'], limit: Math.min(1000, api.maxLimit) });
-      for (const j of recent) if (j.open == null && isOpenStatus(j.status)) await api.update('jobs', j.id, { type: j.type || 'req', open: true });
+      if (needJobs) {
+        const recent = await api.query('jobs', { orderBy: ['createdAt', 'desc'], limit: Math.min(1000, api.maxLimit) });
+        for (const j of recent) if (j.open == null && isOpenStatus(j.status)) await api.update('jobs', j.id, { type: j.type || 'req', open: true });
+      }
       if (needBuckets) {
         for (const l of await queryAll('lines', 'addedAt')) if (l.b == null && l.pn) await api.update('lines', l.id, { b: bucketOf(l.id) });
         await api.set('settings', 'schema', { lineBuckets: true, at: Date.now() });
@@ -1303,8 +1482,22 @@ async function runMigration() {
       await flushLog();
     });
     migratedOnce = true;
-  } catch (e) { /* view-only or busy: tried again on the next load */ }
+  } catch (e) { console.warn('data move', e); migrateWait = Date.now() + 120000; }   /* view-only or busy: tried again in two minutes, not on every change */
   finally { migrating = false; }
+}
+/* One-time move to the packed layout (Firebase): copy the old one-document-per-record collections into packs, then delete
+   the old documents. Safe to run again after an interruption: records keep their ids. */
+async function movePacks() {
+  const ok = { parts: d => !!d.pn, stockrows: () => true, lines: d => !!(d.pn && d.loc && !/[\/~]/.test(String(d.loc))) };
+  for (const col of ['parts', 'stockrows', 'lines']) {
+    for (let guard = 0; guard < 200; guard++) {
+      const docs = await api.raw.query(col, { limit: 500 }); if (!docs.length) break;
+      const keep = docs.filter(ok[col]).map(d => { const o = Object.assign({}, d); delete o.b; return { id: d.id, set: o }; });
+      await api.bulk(col, keep);
+      await api.raw.delMany(col, docs.map(d => d.id));
+    }
+  }
+  await api.set('settings', 'schema', Object.assign({}, SCHEMA || {}, { packs: true, packsAt: Date.now() }));
 }
 
 /* ---------- re-render scheduler (keeps typing and focus intact) ---------- */
@@ -1374,12 +1567,12 @@ const ledgerAll = async () => flatLedger(await queryAll('ledger', 'at'));
 async function ledgerBySn(sn) { return flatLedger(await api.query('ledger', { where: [['sns', 'array-contains', sn]] })).filter(e => e.sn === sn).sort((a, b) => a.at - b.at); }
 
 /* ---------- parts master ---------- */
-async function savePart(pn, patch) {
-  pn = normPN(pn); const a = actor();
-  const cur = (await api.get('parts', docId(pn))) || { pn, name: '', price: 0, min: {}, max: {}, vanMin: 0, vanMax: 0, autoRep: false, restricted: false };
-  const doc = Object.assign({}, cur, patch, { pn, updatedAt: Date.now(), updatedBy: a.by }); delete doc.id;
-  await api.set('parts', docId(pn), doc); return doc;
+/* one change to a part on the parts list (read and written together, so two people can't overwrite each other) */
+function partOp(pn, patch, a) {
+  pn = normPN(pn); a = a || actor();
+  return { id: docId(pn), fn: cur => { const doc = Object.assign({}, cur || { pn, name: '', price: 0, min: {}, max: {}, vanMin: 0, vanMax: 0, autoRep: false, restricted: false }, patch, { pn, updatedAt: Date.now(), updatedBy: a.by }); delete doc.id; return doc; } };
 }
+async function savePart(pn, patch) { const [doc] = await apiBulk('parts', [partOp(pn, patch)]); if (doc) delete doc.id; return doc; }
 function lowStock() {
   const out = [];
   for (const p of Object.values(PARTS)) for (const hub of HUBS) {
@@ -1398,33 +1591,44 @@ const levelOf = (q, mn, mx) => mn && q < mn ? 'low' : mx && q > mx ? 'over' : mn
 
 /* ---------- stock lines ---------- */
 async function snInStock(sn) { sn = normSN(sn); if (!sn) return null; const r = await api.query('lines', { where: [['sn', '==', sn]], limit: 1 }); return r[0] || null; }
-async function putLine(loc, pn, o) {
-  pn = normPN(pn); const sn = normSN(o.sn); const a = actor();
-  const base = { loc, pn, name: o.name || partName(pn), cond: o.cond || 'New', bin: o.bin || '', note: o.note || '', source: o.source || '', addedAt: Date.now(), addedBy: a.by };
+function lineBase(loc, pn, o, a) {
+  const base = { loc, pn, name: o.name || partName(pn), cond: o.cond || 'New', bin: o.bin || '', note: o.note || '', source: o.source || '', addedAt: Date.now(), addedBy: (a || actor()).by };
   if (isVan(loc)) base.techName = techName(loc.slice(4));
+  return base;
+}
+const newLineOp = (id, body) => ({ id, set: api.packed ? body : Object.assign({}, body, { b: bucketOf(id) }) });
+async function putLine(loc, pn, o) {
+  pn = normPN(pn); const sn = normSN(o.sn);
+  const base = lineBase(loc, pn, o);
   if (sn) {
     const dup = await snInStock(sn); if (dup) throw E(`Serial number ${sn} is already in the inventory (${locName(dup.loc)}).`);
     const id = rid('LN'); await setLine(id, Object.assign(base, { sn, qty: 1 })); return id;
   }
   const n = Math.max(1, parseInt(o.qty, 10) || 1);
   const same = (await api.query('lines', { where: [['loc', '==', loc], ['pn', '==', pn]] })).find(l => !l.sn && (l.cond || 'New') === base.cond);
-  if (same) return withLocks(['lines/' + same.id], async () => {
-    const cur = await api.get('lines', same.id);
-    if (cur) { await api.update('lines', same.id, { qty: (+cur.qty || 0) + n, editedAt: Date.now() }); return same.id; }
-    const id = rid('LN'); await setLine(id, Object.assign(base, { sn: '', qty: n })); return id;
-  });
+  if (same) {
+    /* add to the line already there (read and written together); if it was emptied a moment ago, start a new line */
+    const add = async () => { const [r] = await apiBulk('lines', [{ id: same.id, fn: cur => cur && !cur.sn ? Object.assign(cur, { qty: (+cur.qty || 0) + n, editedAt: Date.now() }) : undefined }]); return r && !r.sn ? same.id : null; };
+    const got = api.packed ? await add() : await withLocks(['lines/' + same.id], add);
+    if (got) return got;
+  }
   const id = rid('LN'); await setLine(id, Object.assign(base, { sn: '', qty: n })); return id;
 }
 async function takeLine(key, n, expectLoc) {
-  return withLocks(['lines/' + key], async () => {
-    const l = await api.get('lines', key);
-    if (!l) throw E('One of the selected parts is no longer in stock. Pick again.');
-    if (expectLoc && l.loc !== expectLoc) throw E('That part has moved since you opened this. Pick again.');
-    const have = qtyOf(l); n = l.sn ? 1 : Math.max(1, parseInt(n, 10) || 1);
-    if (have < n) throw E(`Only ${have} × ${l.pn} left at ${locName(l.loc)}.`);
-    if (l.sn || have === n) await api.del('lines', key); else await api.update('lines', key, { qty: have - n, editedAt: Date.now() });
-    return { key, pn: normPN(l.pn), name: l.name || partName(l.pn), sn: normSN(l.sn), qty: n, from: l.loc, cond: l.cond || 'New', bin: l.bin || '', price: +part(l.pn).price || 0 };
-  });
+  /* read the line and take from it in one step, so two people can't take the same part */
+  const take = async () => {
+    let out = null;
+    await apiBulk('lines', [{ id: key, fn: l => {
+      if (!l) throw E('One of the selected parts is no longer in stock. Pick again.');
+      if (expectLoc && l.loc !== expectLoc) throw E('That part has moved since you opened this. Pick again.');
+      const have = qtyOf(l), k = l.sn ? 1 : Math.max(1, parseInt(n, 10) || 1);
+      if (have < k) throw E(`Only ${have} × ${l.pn} left at ${locName(l.loc)}.`);
+      out = { key, pn: normPN(l.pn), name: l.name || partName(l.pn), sn: normSN(l.sn), qty: k, from: l.loc, cond: l.cond || 'New', bin: l.bin || '', price: +part(l.pn).price || 0 };
+      return l.sn || have === k ? null : Object.assign(l, { qty: have - k, editedAt: Date.now() });
+    } }]);
+    return out;
+  };
+  return api.packed ? take() : withLocks(['lines/' + key], take);
 }
 async function takeMany(plan) {
   const taken = [];
@@ -1456,7 +1660,11 @@ async function receiveParts(d) {
   if (price != null && price !== +p.price) patch.price = price;
   if (!PARTS[pn] || Object.keys(patch).length) await savePart(pn, patch);
   const ref = (d.ref || '').trim(); const cond = d.cond || 'New';
-  if (sns.length) for (const sn of sns) { await putLine(loc, pn, { sn, cond, bin: d.bin, name, source: 'Received by Stock' + (ref ? ' · ' + ref : '') }); log({ t: 'Received', pn, sn, qty: 1, from: ref || 'Supplier', to: loc }); }
+  if (sns.length) {   /* all the serial numbers in a few writes, not one write each */
+    const a = actor(), src = 'Received by Stock' + (ref ? ' · ' + ref : '');
+    await apiBulk('lines', sns.map(sn => newLineOp(rid('LN'), Object.assign(lineBase(loc, pn, { cond, bin: d.bin, name, source: src }, a), { sn, qty: 1 }))));
+    for (const sn of sns) log({ t: 'Received', pn, sn, qty: 1, from: ref || 'Supplier', to: loc });
+  }
   else { await putLine(loc, pn, { qty, cond, bin: d.bin, name, source: 'Received by Stock' + (ref ? ' · ' + ref : '') }); log({ t: 'Received', pn, qty, from: ref || 'Supplier', to: loc }); }
   return { pn, qty, loc };
 }
@@ -1482,18 +1690,17 @@ async function savePartSettings(pn, d) {
   return ch.length;
 }
 async function fbDeletePart(pn) {
-  mustRole('STOCK', 'TL');
-  pn = normPN(pn); if (!pn) throw E('No part chosen.');
-  const lines = LINES.filter(l => l.pn === pn);   /* remove the part at any condition: take its stock out too, so nothing is left pointing at a part that is gone */
-  for (const l of lines) await api.del('lines', l.key);
-  await api.del('parts', docId(pn));   /* off the parts list; the inventory log keeps the history */
-  log({ t: 'Part removed', pn, qty: 0, note: lines.length ? `Removed with ${lines.length} stock line${lines.length === 1 ? '' : 's'}` : 'Removed' });
+  pn = normPN(pn); if (!pn) { mustRole('STOCK', 'TL'); throw E('No part chosen.'); }
+  await fbDeletePartsMany([pn]);
 }
 async function fbDeletePartsMany(pns) {
-  mustRole('STOCK', 'TL'); let n = 0;
-  for (const pn of pns) { try { await fbDeletePart(pn); n++; } catch (e) { /* skip one that is already gone */ } }
-  if (!n) throw E('Nothing to remove.');
-  return n;
+  mustRole('STOCK', 'TL');
+  const want = [...new Set((pns || []).map(normPN).filter(Boolean))]; if (!want.length) throw E('Nothing to remove.');
+  const set = new Set(want), lines = LINES.filter(l => set.has(l.pn));   /* remove each part at any condition: take its stock out too, so nothing is left pointing at a part that is gone */
+  await apiBulk('lines', lines.map(l => ({ id: l.key, del: true })));
+  await apiBulk('parts', want.map(pn => ({ id: docId(pn), del: true })));   /* off the parts list; the inventory log keeps the history */
+  for (const pn of want) { const k = lines.filter(l => l.pn === pn).length; log({ t: 'Part removed', pn, qty: 0, note: k ? `Removed with ${k} stock line${k === 1 ? '' : 's'}` : 'Removed' }); }
+  return want.length;
 }
 /* Stock sends hub parts to a technician's van: one restock per part number, the technician confirms receipt. */
 async function stockSendToVanMany(d) {
@@ -2125,6 +2332,11 @@ async function wipeData(keys, onProgress) {
   LOGQ = []; for (const k of Object.keys(ledgerPart)) delete ledgerPart[k];   /* drop log lines not written yet */
   let done = 0;
   for (const c of cols) {
+    if (api.isPacked && api.isPacked(c)) {   /* packed on Firebase: delete the packs, then anything left in the old layout */
+      done += await api.clear(c); if (onProgress) onProgress(done);
+      for (let guard = 0; guard < 500; guard++) { const page = await api.raw.query(c, { limit: 200 }); if (!page.length) break; await api.raw.delMany(c, page.map(x => x.id)); done += page.length; if (onProgress) onProgress(done); }
+      continue;
+    }
     for (let guard = 0; guard < 500; guard++) {
       const page = await api.query(c, { limit: 200 }); if (!page.length) break;
       for (let i = 0; i < page.length; i += 20) { const part = page.slice(i, i + 20); await Promise.all(part.map(x => api.del(c, x.id))); done += part.length; if (onProgress) onProgress(done); }
@@ -3416,46 +3628,56 @@ async function downloadTemplate() {
     savedToast(await DL.save({ filename: 'SPMS-parts-import-template.xlsx', data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Template saved');
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
 }
-/* write it: part names and prices first, then new lines, then changed lines */
+/* write it: part names and prices first, then changed lines, then new lines. Done in a few big writes (each pack of
+   records once), not one write per row. */
 async function importParts(v, fileName, onProgress) {
   mustRole('STOCK');
   const rows = v.add.concat(v.upd); if (!rows.length) throw E('There is nothing new to import.');
+  const a = actor(), res = { added: 0, updated: 0 }, total = rows.length;
+  const prog = n => { if (onProgress) onProgress(Math.min(total, n), total); };
   const byPn = new Map(); for (const o of rows) { const g = byPn.get(o.pn) || { name: o.name, price: null }; if (o.price != null) g.price = o.price; byPn.set(o.pn, g); }
-  for (const [pn, g] of byPn) { const p = PARTS[pn], patch = {}; if (!p || !p.name) patch.name = g.name; if (g.price != null && (!p || g.price !== +p.price)) patch.price = g.price; if (!p || Object.keys(patch).length) await savePart(pn, patch); }
-  const a = actor(), res = { added: 0, updated: 0 }; let done = 0;
+  const partOps = [];
+  for (const [pn, g] of byPn) { const p = PARTS[pn], patch = {}; if (!p || !p.name) patch.name = g.name; if (g.price != null && (!p || g.price !== +p.price)) patch.price = g.price; if (!p || Object.keys(patch).length) partOps.push(partOp(pn, patch, a)); }
+  await apiBulk('parts', partOps); prog(0);
   const src = o => 'Imported from Excel' + (o.ref ? ' · ' + o.ref : '');
   const rec = (o, lineKey) => ({ key: o.key, fp: o.fp, hub: o.hub, pn: o.pn, qty: o.qty, lineKey, file: fileName, at: Date.now(), by: a.by });
-  const one = async o => {
+  const lineOps = [], recOps = [], logs = [];
+  /* rows that change a line already in stock (a line with a serial number, or one that is gone, gets a new line instead) */
+  const upd = rows.filter(o => !o.sns && o.lineKey);
+  for (const o of upd) o._was = null;
+  await apiBulk('lines', upd.map(o => ({ id: o.lineKey, fn: cur => {
+    if (!cur || cur.sn) { o._was = null; return undefined; }
+    o._was = qtyOf(cur);
+    return o.qty === 0 ? null : Object.assign(cur, { name: o.name, qty: o.qty, editedAt: Date.now(), source: 'Updated from Excel' + (o.ref ? ' · ' + o.ref : '') });
+  } })));
+  for (const o of upd) {
+    if (o._was == null) continue;
+    recOps.push({ id: o.id, set: rec(o, o.qty === 0 ? '' : o.lineKey) });
+    if (o._was !== o.qty) logs.push({ t: 'Updated from Excel', pn: o.pn, qty: o.qty - o._was, from: o.hub, to: o.hub, note: `Quantity ${o._was} → ${o.qty} · ${fileName}` });
+    res.updated++;
+  }
+  prog(res.updated);
+  const inStock = new Set(LINES.filter(l => l.sn).map(l => normSN(l.sn)));
+  for (const o of rows) {
     if (o.sns) {
       for (const sn of o.sns) {
-        if (await snInStock(sn)) continue;
-        await setLine(rid('LN'), { loc: o.hub, pn: o.pn, name: o.name, sn, qty: 1, cond: o.cond, bin: o.bin, note: '', source: src(o), addedAt: Date.now(), addedBy: a.by });
-        log({ t: 'Received', pn: o.pn, sn, qty: 1, from: o.ref || 'Excel import', to: o.hub, note: 'Imported from ' + fileName });
+        if (inStock.has(sn)) continue; inStock.add(sn);
+        lineOps.push(newLineOp(rid('LN'), { loc: o.hub, pn: o.pn, name: o.name, sn, qty: 1, cond: o.cond, bin: o.bin, note: '', source: src(o), addedAt: Date.now(), addedBy: a.by }));
+        logs.push({ t: 'Received', pn: o.pn, sn, qty: 1, from: o.ref || 'Excel import', to: o.hub, note: 'Imported from ' + fileName });
       }
-      res.added++; return;
+      res.added++; continue;
     }
-    if (o.lineKey) {
-      const r = await withLocks(['lines/' + o.lineKey], async () => {
-        const cur = await api.get('lines', o.lineKey); if (!cur || cur.sn) return null;
-        const was = qtyOf(cur);
-        if (o.qty === 0) await api.del('lines', o.lineKey);
-        else await api.update('lines', o.lineKey, { name: o.name, qty: o.qty, editedAt: Date.now(), source: 'Updated from Excel' + (o.ref ? ' · ' + o.ref : '') });
-        return { was, key: o.qty === 0 ? '' : o.lineKey };
-      });
-      if (r) {
-        await api.set('stockrows', o.id, rec(o, r.key));
-        if (r.was !== o.qty) log({ t: 'Updated from Excel', pn: o.pn, qty: o.qty - r.was, from: o.hub, to: o.hub, note: `Quantity ${r.was} → ${o.qty} · ${fileName}` });
-        res.updated++; return;
-      }
-    }
-    if (o.qty === 0) { await api.set('stockrows', o.id, rec(o, '')); res.updated++; return; }
+    if (o.lineKey && o._was != null) continue;   /* updated above */
+    if (o.qty === 0) { recOps.push({ id: o.id, set: rec(o, '') }); res.updated++; continue; }
     const id = rid('LN');
-    await setLine(id, { loc: o.hub, pn: o.pn, name: o.name, sn: '', qty: o.qty, cond: o.cond, bin: o.bin, note: '', source: src(o), addedAt: Date.now(), addedBy: a.by });
-    await api.set('stockrows', o.id, rec(o, id));
-    log({ t: 'Received', pn: o.pn, qty: o.qty, from: o.ref || 'Excel import', to: o.hub, note: 'Imported from ' + fileName });
+    lineOps.push(newLineOp(id, { loc: o.hub, pn: o.pn, name: o.name, sn: '', qty: o.qty, cond: o.cond, bin: o.bin, note: '', source: src(o), addedAt: Date.now(), addedBy: a.by }));
+    recOps.push({ id: o.id, set: rec(o, id) });
+    logs.push({ t: 'Received', pn: o.pn, qty: o.qty, from: o.ref || 'Excel import', to: o.hub, note: 'Imported from ' + fileName });
     if (o.lineKey) res.updated++; else res.added++;
-  };
-  for (let i = 0; i < rows.length; i += 4) { await Promise.all(rows.slice(i, i + 4).map(one)); done = Math.min(rows.length, i + 4); if (onProgress) onProgress(done, rows.length); if (i % 40 === 0) await sleep(0); }
+  }
+  await apiBulk('lines', lineOps); prog(total - 1);
+  await apiBulk('stockrows', recOps); prog(total);
+  for (const e of logs) log(e);
   return res;
 }
 function impProgress(n, total) { const t = $('#imp-prog'); if (t) t.innerHTML = `<div class="prog-line"><i style="width:${Math.round(n / total * 100)}%"></i></div><span class="hint">Importing ${n} of ${total}…</span>`; }
