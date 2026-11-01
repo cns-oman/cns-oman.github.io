@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261031174315">
+<meta name="spms-build" content="20261101023706">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -41,7 +41,7 @@
   --warn: #C27400; --warn-soft: #FFF2DE;
   --bad: #E0453F; --bad-soft: #FDECEB;
   --info: #2F6BDE; --info-soft: #E9F0FD;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --grid: #e6e8ec;   /* chart series (validated for colour-blind readers) */
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --grid: #e6e8ec;   /* chart series (validated for colour-blind readers) */
   --hero: radial-gradient(120% 140% at 100% 0%, #D23C42 0%, rgba(210,60,66,0) 55%), linear-gradient(150deg, #B9292E 0%, #A02428 50%, #7E1B1F 100%);
   --e1: 0 1px 2px rgba(16,24,40,.04), 0 6px 20px -10px rgba(16,24,40,.14);
   --e2: 0 2px 6px rgba(16,24,40,.05), 0 20px 40px -18px rgba(16,24,40,.28);
@@ -56,7 +56,7 @@
   --bg: #0F1013; --surface: #1A1B1F; --surface-2: #202126; --fill: #26272D; --line: #33353B; --line-2: #26282D;
   --ink: #F1F2F4; --ink-2: #B4B7BE; --ink-3: #8A8E96; --brand: #DA4349; --brand-2: #E5585E; --brand-soft: #3A1B1E; --brand-on: #FF9EA2;
   --plate: #5A5C63; --ok: #4CCB8A; --ok-soft: #13301F; --warn: #F2AE4C; --warn-soft: #33260F; --bad: #FF7069; --bad-soft: #3B1A18; --info: #82AEFF; --info-soft: #172A4A;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --grid: #2e3036;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --grid: #2e3036;
   --hero: radial-gradient(120% 140% at 100% 0%, #B3343A 0%, rgba(179,52,58,0) 55%), linear-gradient(150deg, #8E2125 0%, #6E191D 55%, #4A1013 100%);
   --e1: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px -10px rgba(0,0,0,.6); --e2: 0 2px 6px rgba(0,0,0,.5), 0 22px 44px -16px rgba(0,0,0,.8); --e-brand: 0 10px 22px -10px rgba(0,0,0,.7);
   color-scheme: dark; } }
@@ -64,7 +64,7 @@
   --bg: #0F1013; --surface: #1A1B1F; --surface-2: #202126; --fill: #26272D; --line: #33353B; --line-2: #26282D;
   --ink: #F1F2F4; --ink-2: #B4B7BE; --ink-3: #8A8E96; --brand: #DA4349; --brand-2: #E5585E; --brand-soft: #3A1B1E; --brand-on: #FF9EA2;
   --plate: #5A5C63; --ok: #4CCB8A; --ok-soft: #13301F; --warn: #F2AE4C; --warn-soft: #33260F; --bad: #FF7069; --bad-soft: #3B1A18; --info: #82AEFF; --info-soft: #172A4A;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --grid: #2e3036;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --grid: #2e3036;
   --hero: radial-gradient(120% 140% at 100% 0%, #B3343A 0%, rgba(179,52,58,0) 55%), linear-gradient(150deg, #8E2125 0%, #6E191D 55%, #4A1013 100%);
   --e1: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px -10px rgba(0,0,0,.6); --e2: 0 2px 6px rgba(0,0,0,.5), 0 22px 44px -16px rgba(0,0,0,.8); --e-brand: 0 10px 22px -10px rgba(0,0,0,.7);
   color-scheme: dark; }
@@ -645,6 +645,117 @@ button.grp:hover h2 { color: var(--brand-on); }
   .si-head h1 { font-size: 58px; }
   .si-head p { font-size: 17px; }
 }
+
+/* ---------- tick boxes and photo thumbnails ---------- */
+.pickbox { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--line); flex: none; display: grid; place-items: center; color: #fff; background: var(--surface); }
+.pickbox.on { background: var(--brand); border-color: var(--brand); }
+.pickbox .ic { width: 15px; height: 15px; }
+.thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.thumb { position: relative; width: 76px; height: 76px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); display: block; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .x { position: absolute; top: 3px; right: 3px; background: rgba(0,0,0,.6); color: #fff; border: 0; border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; cursor: pointer; }
+.thumb .x .ic { width: 14px; height: 14px; }
+
+/* ---------- dashboard ---------- */
+.dash { display: flex; flex-direction: column; gap: 14px; }
+.dash-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px 12px; flex-wrap: wrap; }
+.dash-h { margin: 0; font-family: var(--font-display); font-size: 22px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; }
+.seg-sm { display: inline-flex; background: var(--fill); border-radius: 12px; padding: 3px; gap: 2px; }
+.seg-sm button { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink-2); padding: 7px 12px; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+.seg-sm button.on { background: var(--surface); color: var(--ink); box-shadow: var(--e1); }
+.dgrid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+.stats4 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 760px) { .dgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stats4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } .dgrid > .wide { grid-column: 1 / -1; } }
+.card-h { display: flex; align-items: baseline; justify-content: space-between; gap: 2px 10px; flex-wrap: wrap; }
+.card-h h2 { margin: 0; font-family: var(--font-display); font-size: 17px; font-weight: 700; }
+.card-h .t3 { white-space: nowrap; }
+.kpi.stat { gap: 4px; padding: 14px 14px 12px; }
+.kpi.stat .v { font-size: 30px; font-variant-numeric: lining-nums proportional-nums; }
+.kpi.stat .delta { font-size: 12px; color: var(--ink-2); }
+.spark { position: relative; height: 26px; margin-top: 4px; }
+.spark svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.spark polyline { fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: .75; }
+.spark .end { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 2px var(--surface); transform: translate(-50%, -50%); }
+/* returns from engineers */
+.ret-card.has-late { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--bad) 45%, transparent), var(--e1); }
+.rule-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.rule-chips .chip .ic { width: 13px; height: 13px; }
+.ret-top { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: center; }
+.ret-top > div:first-child { display: flex; align-items: baseline; gap: 10px; }
+@media (min-width: 560px) { .ret-top { grid-template-columns: auto minmax(0, 1fr); gap: 18px; } .ret-top > div:first-child { display: block; } }
+.hero-n { font-family: var(--font-display); font-weight: 700; font-size: 56px; line-height: .95; letter-spacing: -.03em; }
+.is-late .hero-n { color: var(--bad); }
+.hero-l { display: flex; align-items: center; gap: 5px; font-weight: 600; font-size: 13.5px; color: var(--ink-2); margin-top: 6px; white-space: nowrap; }
+.is-late .hero-l { color: var(--bad); }
+.hero-l .ic { width: 15px; height: 15px; }
+.ret-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ret-stats .kpi { background: var(--surface-2); box-shadow: none; padding: 10px; border-radius: var(--r-sm); }
+.ret-stats .kpi .v { font-size: 22px; }
+.segbar { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; }
+.segbar i { display: block; height: 100%; min-width: 0; }
+.segbar.tall { height: 28px; overflow: visible; border-radius: 0; }
+.segbar.tall i { border-radius: 4px; display: flex; align-items: center; padding: 0 8px; font-style: normal; font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap; overflow: visible; }
+.segbar.tall i.dk { color: #16171B; }
+.seg-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--ink-2); }
+.seg-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.seg-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.seg-legend b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.st-bad { background: var(--bad); } .st-warn { background: var(--warn); } .st-ok { background: var(--ok); } .st-mute { background: var(--ink-3); }
+.c1 { background: var(--s1); } .c2 { background: var(--s2); } .c3 { background: var(--s3); } .c4 { background: var(--s4); }
+.engs { display: flex; flex-direction: column; gap: 6px; }
+.eng { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 0; font: inherit; color: inherit; background: var(--surface-2); padding: 10px 12px; border-radius: 14px; cursor: pointer; }
+.eng:hover { background: var(--fill); }
+.eng.late { background: var(--bad-soft); box-shadow: inset 3px 0 0 var(--bad); }
+.eng .avatar.mini { width: 36px; height: 36px; font-size: 13px; }
+.eng.late .avatar { background: var(--bad); color: #fff; }
+.eng .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.eng .t1, .eng .t3 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eng .t1 { font-weight: 600; }
+.bad-t { color: var(--bad); font-weight: 700; }
+.eng-st { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; flex: none; }
+.eng-st .chip .ic { width: 13px; height: 13px; }
+.eng-st .chip::before, .rule-chips .chip::before { display: none; }
+.linkrow { display: flex; justify-content: flex-end; }
+/* line chart: one hairline grid, 2px lines, crosshair + readout */
+.lc { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.lc-legend span, .lc-tip span { display: inline-flex; align-items: center; gap: 6px; }
+.key { width: 14px; height: 3px; border-radius: 2px; display: inline-block; flex: none; }
+.key.s1 { background: var(--s1); } .key.s2 { background: var(--s2); } .key.s3 { background: var(--s3); }
+.lc-plot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; min-width: 0; }
+.lc-y { display: flex; flex-direction: column; justify-content: space-between; height: 170px; font-size: 11px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; margin: -7px 0; }
+.lc-area { position: relative; height: 170px; min-width: 0; }
+.lc-area svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.lc-area .g { stroke: var(--grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.lc-area .g.base { stroke: var(--line); }
+.lc-area .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.ln.s1 { stroke: var(--s1); } .ln.s2 { stroke: var(--s2); } .ln.s3 { stroke: var(--s3); }
+.lc-dot { position: absolute; width: 9px; height: 9px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--surface); pointer-events: none; }
+.lc-dot.s1 { background: var(--s1); } .lc-dot.s2 { background: var(--s2); } .lc-dot.s3 { background: var(--s3); }
+.lc-col { position: absolute; top: 0; bottom: 0; border: 0; background: none; padding: 0; margin: 0; cursor: pointer; z-index: 1; }
+.lc-col::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--ink-3); opacity: 0; }
+.lc-col:hover::before, .lc-col:focus-visible::before, .lc-col.on::before { opacity: .5; }
+.lc-col:focus-visible { outline: none; }
+.lc-x { position: relative; height: 15px; font-size: 11px; color: var(--ink-3); }
+.lc-x span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.lc-x span.minor { display: none; }
+@media (min-width: 700px) { .lc-x span.minor { display: inline; } .lc-y, .lc-area { height: 210px; } }
+.lc-tip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; color: var(--ink-2); min-height: 38px; padding: 8px 10px; background: var(--surface-2); border-radius: 12px; }
+.lc-tip .wk { width: 100%; font-size: 12px; color: var(--ink-3); }
+.lc-tip b { color: var(--ink); font-variant-numeric: tabular-nums; }
+/* horizontal bars, one hue, square at the baseline */
+.hbars { display: flex; flex-direction: column; gap: 12px; }
+.hb .bh { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13.5px; min-width: 0; }
+.hb .bh span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hb .bh b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hb .tr { height: 10px; margin-top: 6px; background: var(--fill); border-radius: 0 4px 4px 0; }
+.hb .tr i { display: block; height: 100%; background: var(--s1); border-radius: 0 4px 4px 0; }
+.meter { height: 10px; border-radius: 5px; background: var(--ok-soft); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--ok); border-radius: 5px; }
+.split2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.mini-n { font-family: var(--font-display); font-weight: 700; font-size: 24px; letter-spacing: -.02em; line-height: 1.1; }
+.row.is-late-row { background: color-mix(in srgb, var(--bad-soft) 75%, var(--surface)); box-shadow: inset 3px 0 0 var(--bad); }
+.sub-h { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 2px 0 -2px; }
 </style>
 
 </head>
@@ -838,14 +949,20 @@ const fmtD = ts => { if (!ts) return ''; const d = new Date(ts); return `${p2(d.
 const isoDT = ts => { if (!ts) return ''; const d = new Date(ts); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
 function rel(ts) { if (!ts) return ''; const s = (Date.now() - ts) / 1000; if (s < 90) return 'just now'; if (s < 3600) return Math.round(s / 60) + ' min ago'; if (s < 86400) return Math.round(s / 3600) + ' h ago'; const d = Math.round(s / 86400); return d === 1 ? 'yesterday' : d + ' days ago'; }
 const money = v => 'OMR ' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-function dueText(due) { const ms = due - Date.now(), h = Math.round(Math.abs(ms) / HOUR); return ms < 0 ? `Overdue by ${Math.max(1, h)} h` : `Due in ${h} h · by ${fmtDT(due)}`; }
+/* how long an engineer has to send the removed / unused part back, counted from when they recorded the install:
+   2 days at the Muscat Main Hub, 4 days at every other hub. Worked out from the install time, so the rule applies to every open return. */
+const RETURN_DAYS = { MMH: 2 }, RETURN_DAYS_OTHER = 4;
+const returnDays = hub => RETURN_DAYS[hub] || RETURN_DAYS_OTHER;
+const retDue = j => { if (!j || !j.ret) return 0; const at = j.use && j.use.at; return at ? at + returnDays(jobHub(j)) * DAY : (j.ret.due || 0); };
+const durDH = ms => { const h = Math.max(1, Math.round(ms / HOUR)), d = Math.floor(h / 24), r = h % 24; return d ? `${d} day${d === 1 ? '' : 's'}${r ? ' ' + r + ' h' : ''}` : `${h} h`; };
+function dueText(due) { const ms = due - Date.now(); return ms < 0 ? `Overdue by ${durDH(-ms)}` : `Due in ${durDH(ms)} · by ${fmtDT(due)}`; }
 function newId(prefix) { const d = new Date(); const r = Math.random().toString(36).slice(2, 5).toUpperCase(); return `${prefix || 'REQ'}-${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${r}`; }
 /* Google's official map link: opens the Maps app on phones, maps.google.com elsewhere */
 const mapsUrl = g => `https://www.google.com/maps/search/?api=1&query=${(+g.lat).toFixed(6)}%2C${(+g.lng).toFixed(6)}`;
 const repairMs = j => { const t = j.ws && j.ws.tm; return t ? (t.acc || 0) + (t.since ? Date.now() - t.since : 0) : 0; };
 const fmtDur = ms => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60); return `${h} h ${p2(m % 60)} min`; };
 const tmState = j => { const t = j.ws && j.ws.tm; return !t || !t.startedAt ? 'new' : t.since ? 'running' : 'paused'; };
-const isLate = j => j.status === 'RETURN' && j.ret && j.ret.due < Date.now();
+const isLate = j => j.status === 'RETURN' && !!j.ret && retDue(j) < Date.now();
 const jobQty = j => j.dispatch && j.dispatch.items ? sum(j.dispatch.items, t => t.sn ? 1 : t.qty) : (j.qtyApproved || j.qty);
 
 /* ---------- icons ---------- */
@@ -1735,7 +1852,7 @@ function logUseInstalls(j, useUnits, me) {
 }
 async function techUse(id, d) {
   return jobStep(id, 'RECEIVED', 'TECH', async (j, me) => {
-    const { rets, useUnits, us, vanAdds } = planUse(j, d); const now = Date.now(), due = now + RETURN_HOURS * HOUR, note = (d.note || '').trim();
+    const { rets, useUnits, us, vanAdds } = planUse(j, d); const now = Date.now(), due = now + returnDays(jobHub(j)) * DAY, note = (d.note || '').trim();
     const firstUsed = useUnits.find(u => u.used && u.removedSn);
     const use = { at: now, replaced: useUnits.some(u => u.used), units: useUnits, note, removedPn: firstUsed ? firstUsed.removedPn : '', removedSn: firstUsed ? firstUsed.removedSn : '', vanKept: vanAdds.length };
     /* parts the technician keeps: add them to their van stock now */
@@ -1789,7 +1906,7 @@ async function remindReturn(id) {
   const me = mustRole('TL'); const j = JOB(id); if (!j || j.status !== 'RETURN') throw E('This return is no longer outstanding.');
   return withLocks(['jobs/' + id], async () => {
     const f = await api.get('jobs', id); if (!f || f.status !== 'RETURN') throw E('This return is no longer outstanding.');
-    const now = Date.now(); const doc = Object.assign({}, f, { reminders: (f.reminders || []).concat([{ at: now, by: me.name }]), updatedAt: now, updatedBy: me.name, history: (f.history || []).concat([{ at: now, by: me.name, role: 'Team Leader', action: 'Reminder sent', note: dueText(f.ret.due) }]) });
+    const now = Date.now(); const doc = Object.assign({}, f, { reminders: (f.reminders || []).concat([{ at: now, by: me.name }]), updatedAt: now, updatedBy: me.name, history: (f.history || []).concat([{ at: now, by: me.name, role: 'Team Leader', action: 'Reminder sent', note: dueText(retDue(f)) }]) });
     return saveJob(doc);
   });
 }
@@ -1970,7 +2087,7 @@ async function vanUse(d) {
     techId: me.id, techName: me.name, hub: myHub(), status: 'RETURN', open: true, createdAt: now, updatedAt: now, updatedBy: me.name, receivedAt: now,
     dispatch: { by: me.name, at: now, items: [t], sn: t.sn || 'bulk × ' + n, from: vanLoc(me.id), courier: '', ref: '' },
     use: { at: now, replaced: true, units: t.sn ? [{ sn: t.sn, used: true, removedPn: rpn, removedSn: rsn }] : [{ bulk: true, qty: n, used: n }], removedPn: rpn, removedSn: rsn, note: (d.note || '').trim() },
-    ret: { type: 'defective', pn: rpn, sn: rsn, qty: n, name: t.name, due: now + RETURN_HOURS * HOUR },
+    ret: { type: 'defective', pn: rpn, sn: rsn, qty: n, name: t.name, due: now + returnDays(myHub()) * DAY },
     history: [{ at: now, by: me.name, role: 'Technician', action: 'Used from van stock', note: `${t.pn} ${t.sn ? 'SN ' + t.sn : '× ' + n} on ${scn} · ${machine}${rsn ? ' · removed SN ' + rsn : ''}` }] };
   try { await saveJob(job); } catch (e) { await putBack([t]); throw e; }
   log({ t: 'Installed from van stock', pn: t.pn, sn: t.sn, qty: n, from: vanLoc(me.id), to: machine, ref: id });
@@ -2191,7 +2308,7 @@ function jobRow(j, me) {
   const mine = myTurn(j, me), late = isLate(j);
   const tone = late ? 'bad' : !isOpenStatus(j.status) ? (j.status === 'CLOSED' ? 'ok' : j.status === 'REJECTED' ? 'bad' : '') : (ST[j.status] || {}).tone || '';
   let extra = '';
-  if (j.status === 'RETURN') extra = esc(dueText(j.ret.due));
+  if (j.status === 'RETURN') extra = esc(dueText(retDue(j)));
   else if (j.status === 'REPAIRING') extra = `${tmState(j) === 'running' ? 'Running' : tmState(j) === 'paused' ? 'Paused' : 'Not started'} · <span data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</span>`;
   const rem = j.status === 'RETURN' && (j.reminders || []).length ? `<span class="remline">${ic('bell', 'sm')}Team Leader reminder · ${esc(rel(j.reminders[j.reminders.length - 1].at))}</span>` : '';
   const who = j.type === 'rep' ? `${esc(j.techName)}’s van` : me.role !== 'TECH' ? esc(j.techName) : j.scn ? `<span class="mono">${esc(j.scn)}</span>` : '';
@@ -2507,7 +2624,7 @@ SH.job = (d, p) => {
       j.dispatch && ['Sent', `${esc((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn)} · ${esc(isVan(j.dispatch.from) ? 'van stock' : j.dispatch.from)}${j.dispatch.courier ? ' · ' + esc(j.dispatch.courier) : ''}${j.dispatch.ref ? ' · ' + esc(j.dispatch.ref) : ''}`],
       (j.backorders || []).length && ['Back-orders', j.backorders.map(jobLink).join(' ')], (j.splits || []).length && ['Separate returns', j.splits.map(jobLink).join(' ')],
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
-      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(r.due)) : ''}`],
+      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}`],
       (j.reminders || []).length && ['Reminders', j.reminders.map(x => `${fmtDT(x.at)} · ${esc(x.by)}`).join('<br>')],
       w.total != null && w.doneAt && ['Repair', `${esc(w.outcome)} · ${money(w.total)}`], j.outcome && ['Outcome', esc(j.outcome)]])}</div></details>`;
   const altRow = !d.alt && alts.length ? `<div class="alts">${alts.map(([v, l, x]) => x === 'remind' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}${esc(l)}</button>` : `<button class="btn sm sec" data-a="alt" data-v="${v}">${esc(l)}</button>`).join('')}</div>` : '';
@@ -2615,11 +2732,11 @@ function actionForm(j, me, d) {
         const rest = u.qty - d[k], rk = 'u' + i + '_rest'; if (!d[rk]) d[rk] = 'return';
         return `<div class="unit"><div class="uh">${h}${tag(u.pn)} bulk × ${u.qty}</div>${fld('How many did you use?', stepper(d, k, 0, u.qty, 'Used'), `${d[k]} used${rest ? ` · ${rest} left over` : ''}`)}${rest > 0 ? fld('The ones you didn’t use', segBtns(d, rk, [['return', 'Back to Stock'], ['van', 'Keep in van']])) : ''}</div>`;
       }).join('');
-      return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', true)}<span class="hint">Return removed and faulty parts within ${RETURN_HOURS} h</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (!(d.photos && d.photos.length)) throw E('Add a photo of the part before you save.'); return null; }, run: () => techUse(j.id, d) } };
+      return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', true)}<span class="hint">Return removed and faulty parts within ${returnDays(jobHub(j))} days</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (!(d.photos && d.photos.length)) throw E('Add a photo of the part before you save.'); return null; }, run: () => techUse(j.id, d) } };
     }
     case 'RETURN': {
       if (!d.courier) d.courier = COURIERS[0];
-      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to Stock. ${esc(dueText(r.due))}.</p>${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', run: () => techShip(j.id, d) } };
+      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to Stock. ${esc(dueText(retDue(j)))}.</p>${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', run: () => techShip(j.id, d) } };
     }
     case 'RETURNING': {
       if (!d.diff) d.diff = 'no';
@@ -2895,8 +3012,8 @@ SH.vanuse = d => {
       ${inp(d, 'scn', 'Service Call Number *', 'e.g. SCN-26-04831', { mono: true, auto: 'scn' })}${machineField(d)}${autoHint(d, 'scn', 'machine')}
       <div class="two">${inp(d, 'model', 'Machine model', '')}${inp(d, 'customer', 'Customer / bank', '')}</div>${inp(d, 'site', 'Site', 'Branch or address')}
       ${l.sn ? `<div class="two">${inp(d, 'rpn', 'Removed PN', l.pn, { mono: true })}${inp(d, 'rsn', 'Removed SN *', 'Defective part SN', { mono: true })}</div>` : ''}
-      <span class="hint">Return the old part${l.sn ? '' : 's'} within ${RETURN_HOURS} h</span>${area(d, 'note', 'Note', 'What you found and fixed')}`,
-    op: { label: 'Save', check: () => { checkVanUse(d); return null; }, run: () => vanUse(d), ok: res => `Recorded. Return due in ${RETURN_HOURS} h.${res.rep ? res.rep.status === 'STOCK' ? ' Auto-Rep asked Stock for ' + res.rep.qty + ' more.' : ' Auto-Rep restock sent to the Team Leader.' : ''}` }
+      <span class="hint">Return the old part${l.sn ? '' : 's'} within ${returnDays(myHub())} days</span>${area(d, 'note', 'Note', 'What you found and fixed')}`,
+    op: { label: 'Save', check: () => { checkVanUse(d); return null; }, run: () => vanUse(d), ok: res => `Recorded. Return due in ${returnDays(myHub())} days.${res.rep ? res.rep.status === 'STOCK' ? ' Auto-Rep asked Stock for ' + res.rep.qty + ' more.' : ' Auto-Rep restock sent to the Team Leader.' : ''}` }
   };
 };
 
@@ -3694,45 +3811,150 @@ function dashData(jobs, led, now) {
   return { since, kpis, weekly, steps, decisions, workshop, events };
 }
 const niceMax = m => { if (m <= 4) return 4; const p = Math.pow(10, Math.floor(Math.log10(m))); for (const k of [1, 2, 2.5, 5, 10]) if (k * p >= m) return k * p; return 10 * p; };
-/* grouped columns: one group per week, one column per series; tap or hover a week for its numbers */
-function colChart(rows, series, label) {
-  const max = niceMax(Math.max(0, ...rows.flatMap(r => series.map(([k]) => r[k])))), pct = v => Math.round(v / max * 1000) / 10;
-  const tip = r => `Week of ${shortDay(r.w)}: ${series.map(([k, l]) => `${l} ${r[k]}`).join(' · ')}`;
-  return `<div class="chart" role="group" aria-label="${esc(label)}">
-    <div class="ch-legend">${series.map(([, l], i) => `<span><i class="sw s${i + 1}"></i>${esc(l)}</span>`).join('')}</div>
-    <div class="ch-plot"><div class="ch-y">${[max, max / 2, 0].map(v => `<span>${v.toLocaleString('en-GB')}</span>`).join('')}</div>
-      <div class="ch-area"><i class="ch-g" style="bottom:100%"></i><i class="ch-g" style="bottom:50%"></i><i class="ch-g base" style="bottom:0"></i>
-        ${rows.map(r => `<button type="button" class="ch-col" data-tip="${esc(tip(r))}" aria-label="${esc(tip(r))}">${series.map(([k], i) => `<i class="s${i + 1}" style="height:${pct(r[k])}%"></i>`).join('')}</button>`).join('')}</div>
-      <span></span><div class="ch-x">${rows.map((r, i) => `<span class="${i % 3 && i !== rows.length - 1 ? 'minor' : ''}">${esc(shortDay(r.w))}</span>`).join('')}</div></div>
-    <div class="ch-tip" aria-live="polite">${esc(tip(rows[rows.length - 1]))}</div></div>`;
+/* ---------- the dashboard (on screen): one period filter on top scopes everything below it ---------- */
+const DASH_RANGES = [[7, '7 days'], [30, '30 days'], [90, '90 days']];
+const dashDays = () => [7, 30, 90].includes(+UI.dashDays) ? +UI.dashDays : 30;
+/* the period cut into buckets for the trend: 7 days by day, 30 days in 3-day steps, 90 days by week */
+function dashBuckets(days, now) {
+  const d0 = new Date(now); d0.setHours(0, 0, 0, 0); const end = d0.getTime() + DAY, size = days === 7 ? 1 : days === 30 ? 3 : 7, n = Math.ceil(days / size), out = [];
+  for (let i = n - 1; i >= 0; i--) { const e = end - i * size * DAY, s = e - size * DAY; out.push({ s, e, size }); }
+  return out;
 }
-document.addEventListener('pointerover', e => { const c = e.target && e.target.closest && e.target.closest('.ch-col'); if (!c) return; const t = c.closest('.chart').querySelector('.ch-tip'); if (t) t.textContent = c.dataset.tip; });
-document.addEventListener('click', e => { const c = e.target && e.target.closest && e.target.closest('.ch-col'); if (!c) return; const t = c.closest('.chart').querySelector('.ch-tip'); if (t) t.textContent = c.dataset.tip; });
+const bucketLabel = b => b.size === 1 ? shortDay(b.s) : `${shortDay(b.s)} – ${shortDay(b.e - DAY)}`;
+const DASH_PHASES = [['Waiting for your approval', ['TL']], ['Approved · Stock to send', ['STOCK', 'REPL', 'REPL_GO', 'DRV_PICK', 'DRV_GO']], ['With the technician', ['DISPATCHED', 'RECEIVED', 'USE_OK', 'REPL_CONF']], ['Return on its way back', ['RETURN', 'RETURNING', 'DRV_RET_PICK', 'DRV_RET_GO']], ['At Stock · to decide', ['ATHUB']], ['In the Workshop', ['WORKSHOP', 'REPAIRING', 'REPAIRED']]];
+function dashModel(jobs, led, days, now) {
+  now = now || Date.now();
+  const units = e => Math.abs(+e.qty || 0) || 1, B = dashBuckets(days, now), start = B[0].s, end = B[B.length - 1].e, pStart = start - (end - start);
+  const cnt = (k, s, t) => sum(led.filter(e => e.at >= s && e.at < t && DASH_EV[k].includes(e.t)), units);
+  const tiles = [['taken', 'Taken from stock'], ['inst', 'Installed'], ['back', 'Back in stock'], ['scrap', 'Scrapped']].map(([k, label]) => ({ k, label, v: cnt(k, start, end), prev: cnt(k, pStart, start), trend: B.map(b => cnt(k, b.s, b.e)) }));
+  const series = B.map(b => ({ b, taken: cnt('taken', b.s, b.e), back: cnt('back', b.s, b.e), scrap: cnt('scrap', b.s, b.e) }));
+  const open = jobs.filter(j => isOpenStatus(j.status));
+  const phases = DASH_PHASES.map(([label, sts]) => [label, open.filter(j => sts.includes(j.status)).length]);
+  const rest = open.length - sum(phases, p => p[1]); if (rest > 0) phases.push(['Other steps', rest]);
+  const inP = t => (t || 0) >= start && (t || 0) < end;
+  const routed = jobs.filter(j => j.ret && j.ret.route && inP(j.ret.routedAt || j.updatedAt));
+  const decisions = [['Back to stock', 'stock'], ['Sent to Workshop', 'repair'], ['Scrapped by Stock', 'scrap'], ['Consumed', 'consume']].map(([l, r]) => [l, sum(routed.filter(j => j.ret.route === r), j => j.ret.qty || 1)]);
+  const wsDone = jobs.filter(j => j.ws && j.ws.doneAt && inP(j.ws.doneAt)), wsScrap = wsDone.filter(j => /^Scrapped/.test(j.outcome || '') || /Beyond/.test(j.ws.outcome || ''));
+  const top = groupSum(led.filter(e => e.at >= start && e.at < end && DASH_EV.taken.includes(e.t) && e.pn), e => e.pn, units).slice(0, 5);
+  return { days, start, end, tiles, series, open: open.length, phases, decisions, repaired: wsDone.length - wsScrap.length, wsScrapped: wsScrap.length, repairCost: sum(wsDone, j => +j.ws.total || 0), top };
+}
+/* returns from engineers: due 2 days after the install at the Muscat Main Hub, 4 days at the other hubs */
+function returnsData(jobs, now) {
+  now = now || Date.now();
+  const out = jobs.filter(j => ['RETURN', 'RETURNING'].includes(j.status) && j.ret);
+  const waiting = out.filter(j => j.status === 'RETURN'), transit = out.filter(j => j.status === 'RETURNING');
+  const late = waiting.filter(j => retDue(j) < now), soon = waiting.filter(j => { const t = retDue(j) - now; return t >= 0 && t < DAY; }), fine = waiting.filter(j => retDue(j) - now >= DAY);
+  const eng = new Map();
+  for (const j of waiting) {
+    const k = j.techId || j.techName, due = retDue(j), e = eng.get(k) || { name: j.techName || '(unknown)', hub: jobHub(j), n: 0, late: 0, worst: 0, next: Infinity };
+    e.n++; if (due < now) { e.late++; e.worst = Math.max(e.worst, now - due); } else e.next = Math.min(e.next, due);
+    eng.set(k, e);
+  }
+  const engineers = [...eng.values()].sort((a, b) => (b.late - a.late) || (b.worst - a.worst) || (a.next - b.next));
+  const done = jobs.filter(j => j.ret && j.ret.shippedAt && j.use && j.use.at);
+  const avg = done.length ? sum(done, j => j.ret.shippedAt - j.use.at) / done.length : null;
+  const onTime = done.length ? done.filter(j => j.ret.shippedAt <= j.use.at + returnDays(jobHub(j)) * DAY).length / done.length : null;
+  return { now, out, waiting, transit, late, soon, fine, engineers, avg, onTime, notBack: sum(out, j => j.ret.qty || 1) };
+}
+const nf = v => (+v || 0).toLocaleString('en-GB');
+const pctOf = (v, t) => t ? Math.round(v / t * 1000) / 10 : 0;
+const cardH = (title, right) => `<div class="card-h"><h2>${esc(title)}</h2>${right ? `<span class="t3 muted">${right}</span>` : ''}</div>`;
+/* a thin bar split into parts, no text (the figures sit beside it) */
+const segThin = parts => { const t = sum(parts, p => p[1]); return t ? `<div class="segbar" role="img" aria-label="${esc(parts.filter(p => p[1]).map(p => `${p[0]} ${p[1]}`).join(', '))}">${parts.filter(p => p[1]).map(p => `<i class="${p[2]}" style="width:${pctOf(p[1], t)}%"></i>`).join('')}</div>` : ''; };
+/* the tall bar: its share printed inside each block that is wide enough, names in the legend below */
+function segTall(parts, label) {
+  const t = sum(parts, p => p[1]); if (!t) return '<p class="note" style="padding:0">Nothing in this period.</p>';
+  const cls = ['c1', 'c2', 'c3', 'c4'];
+  return `<div class="segbar tall" role="img" aria-label="${esc(label + ': ' + parts.filter(p => p[1]).map(p => `${p[0]} ${p[1]} (${Math.round(p[1] / t * 100)}%)`).join(', '))}">${parts.map((p, i) => p[1] ? `<i class="${cls[i]}${i === 3 ? ' dk' : ''}" style="width:${pctOf(p[1], t)}%" title="${esc(`${p[0]}: ${p[1]}`)}">${p[1] / t >= .14 ? Math.round(p[1] / t * 100) + '%' : ''}</i>` : '').join('')}</div>
+    <div class="seg-legend">${parts.map((p, i) => `<span><i class="${cls[i]}"></i>${esc(p[0])} <b>${nf(p[1])}</b></span>`).join('')}</div>`;
+}
+/* horizontal bars, one hue (the bars compare amounts; colour carries nothing extra) */
+const hbars = (rows, fmt) => { const max = Math.max(1, ...rows.map(r => r[1])); return `<div class="hbars">${rows.map(([k, v, sub]) => `<div class="hb"><div class="bh"><span>${k}${sub ? ` <span class="t3 muted">${esc(sub)}</span>` : ''}</span><b>${esc(fmt ? fmt(v) : nf(v))}</b></div><div class="tr">${v ? `<i style="width:${Math.max(1.5, v / max * 100)}%"></i>` : ''}</div></div>`).join('')}</div>`; };
+/* a sparkline in the quiet ink, the newest point in the accent */
+function spark(vals) {
+  const n = vals.length; if (n < 2) return ''; const max = Math.max(1, ...vals), x = i => (i + .5) / n * 100, y = v => 92 - v / max * 84;
+  return `<div class="spark" aria-hidden="true"><svg viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="${vals.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(' ')}"/></svg><span class="end" style="left:${x(n - 1)}%;top:${y(vals[n - 1])}%"></span></div>`;
+}
+/* line chart: points at the middle of each bucket, a hairline grid, a crosshair column per bucket and a readout under it */
+function lineChart(rows, series, label) {
+  const n = rows.length, max = niceMax(Math.max(0, ...rows.flatMap(r => series.map(([k]) => r[k])))), x = i => (i + .5) / n * 100, y = v => 100 - v / max * 100;
+  const names = series.map(s => s[1]), vals = r => series.map(([k]) => r[k]).join('|');
+  const step = n > 10 ? 3 : n > 7 ? 2 : 1;
+  const last = rows[n - 1];
+  return `<div class="lc" role="group" aria-label="${esc(label)}" data-names="${esc(JSON.stringify(names))}">
+    <div class="lc-legend">${series.map(([, l], i) => `<span><i class="key s${i + 1}"></i>${esc(l)}</span>`).join('')}</div>
+    <div class="lc-plot"><div class="lc-y">${[max, max / 2, 0].map(v => `<span>${nf(v)}</span>`).join('')}</div>
+      <div class="lc-area"><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line class="g" x1="0" x2="100" y1="0" y2="0"/><line class="g" x1="0" x2="100" y1="50" y2="50"/><line class="g base" x1="0" x2="100" y1="100" y2="100"/>
+        ${series.map(([k], si) => `<polyline class="ln s${si + 1}" points="${rows.map((r, i) => `${x(i).toFixed(2)},${y(r[k]).toFixed(2)}`).join(' ')}"/>`).join('')}</svg>
+        ${series.map(([k], si) => `<i class="lc-dot s${si + 1}" style="left:${x(n - 1)}%;top:${y(last[k])}%"></i>`).join('')}
+        ${rows.map((r, i) => `<button type="button" class="lc-col${i === n - 1 ? ' on' : ''}" style="left:${(i / n * 100).toFixed(3)}%;width:${(100 / n).toFixed(3)}%" data-wk="${esc(bucketLabel(r.b))}" data-vals="${vals(r)}" aria-label="${esc(bucketLabel(r.b) + ': ' + series.map(([k, l]) => `${l} ${r[k]}`).join(', '))}"></button>`).join('')}</div>
+      <span></span><div class="lc-x">${rows.map((r, i) => `<span class="${(n - 1 - i) % step ? 'minor' : ''}" style="left:${x(i)}%">${esc(shortDay(r.b.s))}</span>`).join('')}</div></div>
+    <div class="lc-tip" aria-live="polite"><span class="wk">${esc(bucketLabel(last.b))}</span>${series.map(([k, l], i) => `<span><i class="key s${i + 1}"></i><b>${nf(last[k])}</b> ${esc(l)}</span>`).join('')}</div></div>`;
+}
+/* the readout follows the pointer, a tap, or keyboard focus (text only, built with textContent) */
+function lcShow(c) {
+  const ch = c.closest('.lc'), t = ch && ch.querySelector('.lc-tip'); if (!t) return;
+  ch.querySelectorAll('.lc-col.on').forEach(x => x.classList.remove('on')); c.classList.add('on');
+  let names = []; try { names = JSON.parse(ch.dataset.names || '[]'); } catch (e) { /* none */ }
+  const vals = String(c.dataset.vals || '').split('|'); t.textContent = '';
+  const w = document.createElement('span'); w.className = 'wk'; w.textContent = c.dataset.wk || ''; t.appendChild(w);
+  names.forEach((nm, i) => { const s = document.createElement('span'), k = document.createElement('i'), b = document.createElement('b'); k.className = 'key s' + (i + 1); b.textContent = vals[i] || '0'; s.append(k, b, ' ' + nm); t.appendChild(s); });
+}
+for (const ev of ['pointerover', 'click', 'focusin']) document.addEventListener(ev, e => { const c = e.target && e.target.closest && e.target.closest('.lc-col'); if (c) lcShow(c); });
+
+/* the returns card: the one number that needs action, the split, and who is late */
+function returnsCard(R, showEngineers) {
+  const late = R.late.length, now = R.now;
+  const engs = R.engineers.slice(0, showEngineers || 0);
+  return `<div class="card ret-card${late ? ' has-late' : ''}">
+    ${cardH('Returns from engineers', R.waiting.length ? `${R.waiting.length} part${R.waiting.length === 1 ? '' : 's'} to come back` : '')}
+    <div class="rule-chips"><span class="chip plain">${ic('clock', 'sm')}Muscat Main Hub · ${returnDays('MMH')} days</span><span class="chip plain">${ic('clock', 'sm')}Other hubs · ${RETURN_DAYS_OTHER} days</span><span class="t3 muted">counted from the install</span></div>
+    <div class="ret-top"><div class="${late ? 'is-late' : ''}"><div class="hero-n">${late}</div><div class="hero-l">${late ? ic('alert', 'sm') + 'overdue' : ic('check', 'sm') + 'none overdue'}</div></div>
+      <div class="ret-stats"><div class="kpi"><span class="k">Not back yet</span><span class="v">${nf(R.notBack)}</span></div><div class="kpi ${R.soon.length ? 'warn' : ''}"><span class="k">Due in 24 h</span><span class="v">${R.soon.length}</span></div><div class="kpi"><span class="k">On the way</span><span class="v">${R.transit.length}</span></div></div></div>
+    ${segThin([['Overdue', late, 'st-bad'], ['Due within 24 h', R.soon.length, 'st-warn'], ['On time', R.fine.length, 'st-ok'], ['On the way to Stock', R.transit.length, 'st-mute']])}
+    ${R.out.length ? `<div class="seg-legend"><span><i class="st-bad"></i>Overdue <b>${late}</b></span><span><i class="st-warn"></i>Due within 24 h <b>${R.soon.length}</b></span><span><i class="st-ok"></i>On time <b>${R.fine.length}</b></span><span><i class="st-mute"></i>On the way <b>${R.transit.length}</b></span></div>` : ''}
+    ${engs.length ? `<div class="sub-h">${late ? 'Engineers past the deadline first' : 'Engineers with a return waiting'}</div><div class="engs">${engs.map(e => `<button class="eng${e.late ? ' late' : ''}" data-a="goReport" data-v="returns"><span class="avatar mini">${esc(initials(e.name))}</span><span class="main"><span class="t1">${esc(e.name)}</span><span class="t3">${e.late ? `<b class="bad-t">${e.late} overdue</b> of ${e.n}` : `${e.n} waiting`} · ${esc(HUB_NAME[e.hub] || e.hub)}</span></span><span class="eng-st">${e.late ? `<span class="chip bad">${ic('alert', 'sm')}${esc(durDH(e.worst))} late</span>` : `<span class="chip ok">due in ${esc(durDH(e.next - now))}</span>`}</span></button>`).join('')}</div>` : ''}
+    ${R.engineers.length > engs.length && showEngineers ? `<div class="linkrow"><button class="btn sm sec" data-a="goReport" data-v="returns">All ${R.engineers.length} engineers · returns report</button></div>` : ''}
+    ${!R.out.length ? '<p class="note" style="padding:0">Every removed or unused part is back at Stock.</p>' : ''}
+  </div>`;
+}
 function repDash() {
   if (!ensureLedger()) return ledgerWait();
-  const D = dashData(JOBS, UI.ledger.rows), units = v => v + (v === 1 ? ' unit' : ' units');
-  const any = D.weekly.some(r => r.taken || r.back || r.scrap);
-  return `<div class="sec-h"><h2>Last 30 days</h2><span class="t3 muted">Since ${esc(shortDay(D.since))}</span></div>
-    <div class="kpis k3">${D.kpis.map(([k, v, sub, cls]) => `<div class="kpi ${cls || ''}"><span class="k">${esc(k)}</span><span class="v">${v.toLocaleString('en-GB')}</span><span class="t3 muted" style="font-size:12px">${esc(sub)}</span></div>`).join('')}</div>
-    <div class="card"><div class="sec-h" style="padding:0"><h2>Parts each week</h2><span class="t3 muted">Last 12 weeks · units</span></div>
-      ${any ? colChart(D.weekly, DASH_SERIES, 'Parts taken from stock, back in stock and scrapped, each week') : '<p class="note" style="padding:0">Nothing moved in the last 12 weeks yet.</p>'}
-      <details class="fold inset" data-fold="dash-weeks"><summary>${ic('list', 'sm')}Numbers by week</summary><div class="fold-b">${tbl(['Week of', 'Taken from stock', 'Installed', 'Back in stock', 'Scrapped'], D.weekly.slice().reverse().map(r => `<tr><td>${esc(shortDay(r.w))}</td><td class="r">${r.taken}</td><td class="r">${r.inst}</td><td class="r">${r.back}</td><td class="r">${r.scrap}</td></tr>`))}</div></details></div>
-    <div class="bars cols">${bars('Requests now, by step', D.steps, v => v + (v === 1 ? ' request' : ' requests'), 'open only')}${bars('Returned parts: what Stock decided', D.decisions, units)}${bars('Workshop results', D.workshop, v => v + (v === 1 ? ' repair' : ' repairs'))}${bars('Everything that happened, last 30 days', D.events, units)}</div>
-    <div class="card"><div class="sec-h" style="padding:0"><h2>The same graphs in Excel</h2><button class="btn sm" data-a="excel">${ic('download', 'sm')}Download Excel</button></div><span class="hint">The first sheet, “Dashboard”, has these numbers with a graph beside each table. It counts every record, not only the newest ones loaded here.</span></div>
-    ${UI.ledger.more ? '<p class="note">Counted from the newest 1,000 inventory log entries. The Excel file counts all of them.</p>' : ''}`;
+  const days = dashDays(), M = dashModel(JOBS, UI.ledger.rows, days), R = returnsData(JOBS);
+  const any = M.series.some(r => r.taken || r.back || r.scrap), dec = sum(M.decisions, d => d[1]), ws = M.repaired + M.wsScrapped;
+  const tile = t => { const d = t.v - t.prev; return `<div class="kpi stat"><span class="k">${esc(t.label)}</span><span class="v">${nf(t.v)}</span><span class="delta">${d === 0 ? `same as the ${days} days before` : `${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d))} vs the ${days} days before`}</span>${spark(t.trend)}</div>`; };
+  return `<div class="dash">
+    <div class="dash-top"><div><h2 class="dash-h">Overview</h2><span class="t3 muted">${esc(shortDay(M.start))} – ${esc(shortDay(M.end - DAY))} · units of parts</span></div>
+      <div class="seg-sm" role="group" aria-label="Period">${DASH_RANGES.map(([d, l]) => `<button class="${d === days ? 'on' : ''}" aria-pressed="${d === days}" data-a="dashDays" data-v="${d}">${l}</button>`).join('')}</div></div>
+    ${returnsCard(R, 5)}
+    <div class="stats4">${M.tiles.map(tile).join('')}</div>
+    <div class="card">${cardH('Parts moving', days === 7 ? 'by day' : days === 30 ? 'every 3 days' : 'by week')}
+      ${any ? lineChart(M.series, DASH_SERIES, `Parts taken from stock, back in stock and scrapped, last ${days} days`) : '<p class="note" style="padding:0">No parts moved in this period.</p>'}
+      <details class="fold inset" data-fold="dash-weeks"><summary>${ic('list', 'sm')}The numbers</summary><div class="fold-b">${tbl(['Period', 'Taken from stock', 'Installed', 'Back in stock', 'Scrapped'], M.series.slice().reverse().map((r, i) => `<tr><td>${esc(bucketLabel(r.b))}</td><td class="r">${r.taken}</td><td class="r">${M.tiles[1].trend[M.series.length - 1 - i]}</td><td class="r">${r.back}</td><td class="r">${r.scrap}</td></tr>`))}</div></details></div>
+    <div class="dgrid">
+      <div class="card">${cardH('Requests in progress', `${M.open} open now`)}${M.open ? hbars(M.phases.map(([k, v]) => [esc(k), v])) : '<p class="note" style="padding:0">No open requests.</p>'}</div>
+      <div class="card">${cardH('Most sent parts', `top ${M.top.length || 5}`)}${M.top.length ? hbars(M.top.map(([pn, v]) => { const nm = partName(pn); return [`${tag(pn)}${nm && normPN(nm) !== pn ? ' ' + esc(nm) : ''}`, v]; }), v => nf(v) + (v === 1 ? ' unit' : ' units')) : '<p class="note" style="padding:0">No parts sent in this period.</p>'}</div>
+      <div class="card">${cardH('Returned parts: what Stock decided', dec ? nf(dec) + ' units' : '')}${segTall(M.decisions, 'Returned parts')}</div>
+      <div class="card">${cardH('Workshop', ws ? `${ws} finished` : '')}${ws ? `<div class="split2"><div><div class="mini-n">${M.repaired}</div><span class="t3 muted">repaired</span></div><div><div class="mini-n">${M.wsScrapped}</div><span class="t3 muted">could not be repaired</span></div></div><div class="meter" role="img" aria-label="${Math.round(M.repaired / ws * 100)}% repaired"><i style="width:${pctOf(M.repaired, ws)}%"></i></div><span class="t3 muted">${Math.round(M.repaired / ws * 100)}% repaired · repair cost ${money(M.repairCost)}</span>` : '<p class="note" style="padding:0">No repairs finished in this period.</p>'}</div>
+    </div>
+    <div class="card"><div class="card-h"><h2>Excel workbook</h2><button class="btn sm" data-a="excel">${ic('download', 'sm')}Download</button></div><span class="hint">The first sheet, “Dashboard”, has the numbers with graphs. It counts every record, not only the newest ones loaded here.</span></div>
+    ${UI.ledger.more ? '<p class="note">Counted from the newest 1,000 inventory log entries. The Excel file counts all of them.</p>' : ''}
+  </div>`;
 }
 
-/* returns: outstanding, overdue, reminders */
+/* returns: the deadline, who is late, every return still to come back */
 function repReturns() {
-  const out = JOBS.filter(j => ['RETURN', 'RETURNING'].includes(j.status) && j.ret).sort((a, b) => (a.ret.due || 0) - (b.ret.due || 0));
-  const late = out.filter(isLate), transit = out.filter(j => j.status === 'RETURNING');
-  const done = JOBS.filter(j => j.ret && j.ret.shippedAt && j.use && j.use.at), avg = done.length ? sum(done, j => j.ret.shippedAt - j.use.at) / done.length : null;
-  const byTech = groupSum(late, j => j.techName, () => 1);
-  const rows = out.map(j => `<div class="row"><span class="lead ${isLate(j) ? 'bad' : j.status === 'RETURNING' ? 'info' : 'warn'}">${ic(j.status === 'RETURNING' ? 'truck' : 'ret', 'sm')}</span><button class="main rowbtn" data-a="sheet" data-s="job" data-id="${esc(j.id)}"><span class="t1">${tag(j.ret.pn)} ${j.ret.sn ? `<span class="mono">SN ${esc(j.ret.sn)}</span>` : '× ' + (j.ret.qty || 1)} ${lateChip(j)}</span><span class="t2">${esc(j.techName)} · ${j.ret.type === 'defective' ? 'defective' : 'unused'} · ${esc(j.id)}</span><span class="t3">${j.status === 'RETURNING' ? `On the way · sent ${rel(j.ret.shippedAt)}` : esc(dueText(j.ret.due))}${(j.reminders || []).length ? ` · reminded ${j.reminders.length}×, last ${rel(j.reminders[j.reminders.length - 1].at)}` : ''}</span></button>${j.status === 'RETURN' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}Remind</button>` : ''}</div>`);
-  return `<div class="kpis">${kpi('Outstanding', out.length)}${kpi('Overdue', late.length, late.length ? 'bad' : '')}${kpi('On the way', transit.length)}${kpi('Average time to return', avg == null ? '–' : hrs(avg))}</div>
-    ${late.length ? bars('Overdue by technician', byTech.map(([k, v]) => [k, v])) : ''}
-    <section class="blk"><div class="sec-h"><h2>Returns not yet at Stock</h2><span class="t3 muted">Due first</span></div>${rows.length ? `<div class="list">${rows.join('')}</div>` : emptyBox('No returns outstanding', 'Every removed or unused part is back at Stock.')}</section>
-    <p class="note">A reminder appears on the technician’s screen with the return. Parts must come back within ${RETURN_HOURS} hours of the replacement.</p>`;
+  const R = returnsData(JOBS), now = R.now;
+  const list = R.out.slice().sort((a, b) => ((a.status === 'RETURNING') - (b.status === 'RETURNING')) || (retDue(a) - retDue(b)));
+  const row = j => { const late = isLate(j), due = retDue(j); return `<div class="row${late ? ' is-late-row' : ''}"><span class="lead ${late ? 'bad' : j.status === 'RETURNING' ? 'info' : due - now < DAY ? 'warn' : 'ok'}">${ic(j.status === 'RETURNING' ? 'truck' : late ? 'alert' : 'ret', 'sm')}</span><button class="main rowbtn" data-a="sheet" data-s="job" data-id="${esc(j.id)}"><span class="t1">${tag(j.ret.pn)} ${j.ret.sn ? `<span class="mono">SN ${esc(j.ret.sn)}</span>` : '× ' + (j.ret.qty || 1)} ${lateChip(j)}</span><span class="t2">${esc(j.techName)} · ${esc(HUB_NAME[jobHub(j)] || jobHub(j))} · ${j.ret.type === 'defective' ? 'defective' : 'unused'}</span><span class="t3">${j.status === 'RETURNING' ? `On the way · sent ${rel(j.ret.shippedAt)}` : esc(dueText(due))}${(j.reminders || []).length ? ` · reminded ${j.reminders.length}×, last ${rel(j.reminders[j.reminders.length - 1].at)}` : ''}</span></button>${j.status === 'RETURN' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}Remind</button>` : ''}</div>`; };
+  return `<div class="dash">
+    ${returnsCard(R, 0)}
+    <div class="card">${cardH('Engineers with a return waiting', R.engineers.length ? `${R.engineers.filter(e => e.late).length} late` : '')}
+      ${tbl(['Engineer', 'Hub', 'Waiting', 'Overdue', 'Most late'], R.engineers.map(e => `<tr class="${e.late ? 'flag' : ''}"><td>${e.late ? '<b>' + esc(e.name) + '</b>' : esc(e.name)}</td><td>${esc(e.hub)}</td><td class="r">${e.n}</td><td class="r">${e.late ? `<b>${e.late}</b>` : '–'}</td><td>${e.late ? esc(durDH(e.worst)) : 'on time'}</td></tr>`), 'No returns waiting.')}</div>
+    <div class="stats4"><div class="kpi stat"><span class="k">Average time to return</span><span class="v">${R.avg == null ? '–' : esc(durDH(R.avg))}</span><span class="delta">from the install to sending it</span></div><div class="kpi stat"><span class="k">Sent back on time</span><span class="v">${R.onTime == null ? '–' : Math.round(R.onTime * 100) + '%'}</span><span class="delta">of returns already sent</span></div></div>
+    <section class="blk"><div class="sec-h"><h2>Returns not yet at Stock</h2><span class="t3 muted">Most urgent first</span></div>${list.length ? `<div class="list">${list.map(row).join('')}</div>` : emptyBox('No returns outstanding', 'Every removed or unused part is back at Stock.')}</section>
+    <p class="note">The deadline counts from when the engineer recorded the install: ${returnDays('MMH')} days at the Muscat Main Hub, ${RETURN_DAYS_OTHER} days at every other hub. A reminder appears on the engineer’s screen with the return.</p>
+  </div>`;
 }
 
 /* stock levels against min/max, hubs and vans */
@@ -3865,7 +4087,7 @@ function buildSheets(jobs, led, adj) {
   S.push(['Repairs', ['Request', 'Part number', 'Part name', 'Serial number', 'Machine', 'Model', 'Customer', 'Workshop in', 'Repair started', 'Done', 'Workshop time', 'Hours', 'Rate OMR/h', 'Labour OMR', 'Parts used', 'Materials OMR', 'Total OMR', 'What was wrong', 'How fixed', 'Time corrected', 'Notes', 'Outcome', 'By'],
     jobs.filter(j => j.ws && j.ws.doneAt).map(j => [j.id, (j.ret || {}).pn || j.pn, j.ws.partName || '', j.ws.partSn || (j.ret || {}).sn || '', j.machine || '', j.model || '', j.customer || '', isoDT(j.ws.inAt), isoDT(j.ws.tm && j.ws.tm.startedAt), isoDT(j.ws.doneAt), fmtDur((j.ws.tm && j.ws.tm.acc) || 0), j.ws.hours, j.ws.rate, j.ws.labour, j.ws.materials || '', j.ws.matCost, j.ws.total, j.ws.diagnosis || '', j.ws.fix || '', (j.ws.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${x.why}`).join('; '), j.ws.notes || '', j.ws.outcome, j.ws.doneBy || j.ws.by])]);
   S.push(['Returns', ['Request', 'Technician', 'Return type', 'Part number', 'Serial number', 'Qty', 'Replacement recorded', 'Due', 'Sent', 'Hours to return', 'Overdue', 'Reminders', 'Courier', 'Reference', 'At Stock', 'Serial corrected from', 'Arrived with different SN (expected)', 'Stock decision', 'Status'],
-    jobs.filter(j => j.ret).map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, isoDT(j.use && j.use.at), isoDT(j.ret.due), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.route || '', stLabel(j)])]);
+    jobs.filter(j => j.ret).map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, isoDT(j.use && j.use.at), isoDT(retDue(j)), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.route || '', stLabel(j)])]);
   const rep = []; for (const j of jobs) { if (!j.use || j.type === 'rep') continue; const units = Array.isArray(j.use.units) ? j.use.units : [{ sn: (j.dispatch && j.dispatch.sn) || '', used: j.use.replaced, removedPn: j.use.removedPn, removedSn: j.use.removedSn }];
     for (const u of units) { const n = u.bulk ? u.used : u.used ? 1 : 0; if (!n) continue; rep.push([j.id, isoDT(j.use.at), j.techName, j.customer || '', j.model || '', j.scn || '', j.machine || '', j.pn, u.bulk ? '' : u.sn || '', n, u.bulk ? j.pn : u.removedPn || '', u.bulk ? '' : u.removedSn || '', j.type === 'van' ? 'Van stock' : 'Request']); } }
   S.push(['Parts replaced', ['Request', 'Date', 'Technician', 'Customer', 'Model', 'SCN', 'Machine', 'Installed PN', 'Installed SN', 'Qty', 'Removed PN', 'Removed SN', 'Source'], rep]);
@@ -4738,6 +4960,7 @@ const A = {
   invLoc(ds) { UI.invLoc = ds.v; render(); },
   report(ds) { UI.report = ds.v; render(); },
   goReport(ds) { UI.tab = 'rep'; UI.report = ds.v; render(); $('#scr').scrollTop = 0; },
+  dashDays(ds) { UI.dashDays = +ds.v; const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; else render(); },
   sheet(ds) { openSheet(ds.s, { id: ds.id }); },
   close() { closeSheet(); },
   set(ds) { const d = sd(); if (ds.k === 'mode' && d.mode !== ds.v) delete d.reason; if (ds.k === 'line' && d.line !== ds.v) d.uqty = 1; d[ds.k] = ds.v; (d._picked = d._picked || {})[ds.k] = 1; d._err = ''; d._confirm = null; renderSheet(); },
