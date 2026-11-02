@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261102033157">
+<meta name="spms-build" content="20261102080338">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -916,12 +916,12 @@ let ACCOUNTS = TEST_ACCOUNTS.concat(FIREBASE_BUILD ? [] : STAFF);
 let USERS = [];   /* Firebase build: everyone in the users collection, active or not (the Team Leader's Accounts screen) */
 const idFromEmail = e => String(e || '').trim().toLowerCase().split('@')[0].replace(/[^a-z0-9.]/g, '');
 const ROLE = { TECH: 'Technician', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver' };
-/* what the person is called on screen: the full-access manager (Mohamed Said) shows his title, "Team Leader" */
-const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || 'Team Leader') : (me ? ROLE[me.role] || '' : '');
-/* Mohamed Said's built-in, locked account. His title is "Team Leader" (earlier versions saved "Technical Manager" in his
-   staff record, which nobody can edit from the app) */
-const SAID_EMAIL = 'mohamed.said@cns-me.com';
-const fixTitle = u => { if (u && String(u.email || u.id || '').toLowerCase() === SAID_EMAIL && /^technical manager$/i.test(String(u.title || '').trim())) u.title = 'Team Leader'; return u; };
+/* what the person is called on screen: the full-access manager (Mohamed Said) shows his title, "Technical Manager - BFSI" */
+const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || SAID_TITLE) : (me ? ROLE[me.role] || '' : '');
+/* Mohamed Said's built-in, locked account (role Team Leader). His title is always "Technical Manager - BFSI", whatever
+   his staff record says (nobody can edit that record from the app) */
+const SAID_EMAIL = 'mohamed.said@cns-me.com', SAID_TITLE = 'Technical Manager - BFSI';
+const fixTitle = u => { if (u && String(u.email || u.id || '').toLowerCase() === SAID_EMAIL) u.title = SAID_TITLE; return u; };
 const TEST_PW = 'Test#2026';
 const RETURN_HOURS = 48, DEFAULT_RATE = 5, PAGE = 300;
 /* Hubs come from settings/hubs (Stock or the Team Leader add them); these two are the starting set. */
@@ -4908,7 +4908,7 @@ async function fbSecondaryAuth() {
    page), sign in, and add everyone else. Mohamed Said is shown as Team Leader and has full access: he can work as
    any role, in every hub. */
 const BUILTIN_TL = [
-  { email: 'mohamed.said@cns-me.com', name: 'Mohamed Said', title: 'Team Leader', hub: 'MMH', full: true },
+  { email: 'mohamed.said@cns-me.com', name: 'Mohamed Said', title: 'Technical Manager - BFSI', hub: 'MMH', full: true },
   { email: 'madhu.kuriakose@cns-me.com', name: 'Madhu Kuriakose', title: 'Team Leader · Oman', hub: 'MMH' },
   { email: 'mohamed.fawzy@cns-me.com', name: 'Mohamed Fawzy', title: 'Team Leader · Oman', hub: 'MMH' },
   { email: 'asim.butt@cns-me.com', name: 'Asim Butt', title: 'Team Leader · UAE', hub: 'DMH' },
