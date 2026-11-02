@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261101151747">
+<meta name="spms-build" content="20261102033157">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -916,8 +916,12 @@ let ACCOUNTS = TEST_ACCOUNTS.concat(FIREBASE_BUILD ? [] : STAFF);
 let USERS = [];   /* Firebase build: everyone in the users collection, active or not (the Team Leader's Accounts screen) */
 const idFromEmail = e => String(e || '').trim().toLowerCase().split('@')[0].replace(/[^a-z0-9.]/g, '');
 const ROLE = { TECH: 'Technician', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver' };
-/* what the person is called on screen: the full-access manager (Mohamed Said) shows as his title, "Technical Manager", not "Team Leader" */
-const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || 'Technical Manager') : (me ? ROLE[me.role] || '' : '');
+/* what the person is called on screen: the full-access manager (Mohamed Said) shows his title, "Team Leader" */
+const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || 'Team Leader') : (me ? ROLE[me.role] || '' : '');
+/* Mohamed Said's built-in, locked account. His title is "Team Leader" (earlier versions saved "Technical Manager" in his
+   staff record, which nobody can edit from the app) */
+const SAID_EMAIL = 'mohamed.said@cns-me.com';
+const fixTitle = u => { if (u && String(u.email || u.id || '').toLowerCase() === SAID_EMAIL && /^technical manager$/i.test(String(u.title || '').trim())) u.title = 'Team Leader'; return u; };
 const TEST_PW = 'Test#2026';
 const RETURN_HOURS = 48, DEFAULT_RATE = 5, PAGE = 300;
 /* Hubs come from settings/hubs (Stock or the Team Leader add them); these two are the starting set. */
@@ -1504,7 +1508,7 @@ function subscribeAll() {
   /* Firebase build: the staff list lives in the database (the Team Leader adds people), so every screen that lists
      technicians reads it from there */
   if (api.kind === 'firebase') unsubs.users = api.sub('users', { limit: 1000 }, list => {
-    USERS = list; ACCOUNTS = list.filter(u => u.active !== false && ROLE[u.role]).map(userAcc);
+    USERS = list.map(fixTitle); ACCOUNTS = USERS.filter(u => u.active !== false && ROLE[u.role]).map(userAcc);
     /* the Team Leader changed my account (hub, role, name): it applies straight away */
     const p = UI.profile, mine = p && list.find(u => String(u.email || u.id).toLowerCase() === p.email);
     if (mine && mine.active !== false && ROLE[mine.role]) {
@@ -3286,7 +3290,8 @@ function actionForm(j, me, d) {
         const rest = u.qty - d[k], rk = 'u' + i + '_rest'; if (!d[rk]) d[rk] = 'return';
         return `<div class="unit"><div class="uh">${h}${tag(u.pn)} bulk × ${u.qty}</div>${fld('How many did you use?', stepper(d, k, 0, u.qty, 'Used'), `${d[k]} used${rest ? ` · ${rest} left over` : ''}`)}${rest > 0 ? (fromHub(j) ? `<span class="hint">The ${rest} you didn’t use go back on the ${esc(HUB_NAME[j.hub] || j.hub)} shelf.</span>` : fld('The ones you didn’t use', segBtns(d, rk, [['return', 'Back to Stock'], ['van', 'Keep in van']]))) : ''}</div>`;
       }).join('');
-      return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', true)}<span class="hint">Return removed and faulty parts within ${returnDays(jobHub(j))} days</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (!(d.photos && d.photos.length)) throw E('Add a photo of the part before you save.'); return null; }, run: () => techUse(j.id, d) } };
+      const needPhoto = usePhotoNeeded(j, d);
+      return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', needPhoto)}<span class="hint">Return removed and faulty parts within ${returnDays(jobHub(j))} days</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (usePhotoNeeded(j, d) && !(d.photos && d.photos.length)) throw E('Add a photo of the part before you save (needed when a part arrived faulty or a used part goes back).'); return null; }, run: () => techUse(j.id, d) } };
     }
     case 'RETURN': {
       if (!d.courier) d.courier = COURIERS[0];
@@ -3508,11 +3513,16 @@ async function addPhotos(key, files) {
   }
   d._err = ''; if (UI.sheet === s) renderSheet();
 }
+/* a photo is needed only when a part arrived faulty, or when a used part (the one removed from the machine) goes back;
+   everywhere else photos are optional */
+function usePhotoNeeded(j, d) {
+  return unitsOf(j).some((u, i) => u.kind === 'sn' ? ['used', 'doa'].includes(d['u' + i + '_out'] || 'used') : (d['u' + i + '_n'] == null ? u.qty : parseInt(d['u' + i + '_n'], 10)) > 0);
+}
 function photoField(d, key, label, need) {
   const ph = d[key] || [];
   const thumbs = ph.length ? `<div class="thumbs">${ph.map((src, i) => `<div class="thumb"><img src="${src}" alt="photo ${i + 1}"><button type="button" class="x" data-a="photoDel" data-k="${esc(key)}" data-i="${i}" aria-label="Remove photo">${ic('x', 'sm')}</button></div>`).join('')}</div>` : '';
   const add = ph.length < PHOTO_MAX ? `<label class="btn sec" style="cursor:pointer;display:inline-flex">${ic('plus', 'sm')}${ph.length ? 'Add another photo' : 'Take or choose a photo'}<input class="vh" type="file" accept="image/*" capture="environment" data-photo="${esc(key)}" multiple></label>` : '';
-  return fld(label + (need ? ' *' : ''), `${thumbs}${add}`, need && !ph.length ? 'A photo of the part is required.' : 'The Team Leader and Stock can see these.');
+  return fld(label + (need ? ' *' : ''), `${thumbs}${add}`, need && !ph.length ? 'A photo of the part is required.' : need ? 'The Team Leader and Stock can see these.' : 'Optional. The Team Leader and Stock can see these.');
 }
 function photoStrip(list, label) {
   if (!list || !list.length) return '';
@@ -4846,10 +4856,25 @@ async function exportExcel() {
    Firebase build (Google AI Studio or any web host): passwords, built-in Team Leaders, staff accounts,
    change password, install as an app. Nothing here runs inside Claude.
    ========================================================================== */
-/* Firebase needs passwords of 6+ characters, but staff sign in with their 4–5 digit employee ID, so the app puts a fixed
-   prefix in front before sending it. A password set outside the app (a Firebase reset email) still works: sign-in falls
-   back to the plain text. */
+/* The app puts a fixed prefix in front of every password before sending it to Firebase (older passwords were short
+   employee IDs, and Firebase needs 6+ characters). A password set outside the app (a Firebase reset email) still works:
+   sign-in falls back to the plain text. */
 const fbPw = p => 'spms:' + String(p);
+/* the password rules (the sender checks the same): 8+ characters with a capital letter, a small letter, a number and a
+   special character, no spaces. Returns what is missing, or '' when the password is strong enough. */
+const PW_MIN = 8, PW_RULE = `At least ${PW_MIN} characters, with a capital letter, a small letter, a number and a special character (like ! @ # $).`;
+function pwProblem(pw) {
+  pw = String(pw == null ? '' : pw);
+  if (!pw) return 'Enter a password';
+  if (/\s/.test(pw)) return 'The password can’t have spaces';
+  const miss = [];
+  if (pw.length < PW_MIN) miss.push(`at least ${PW_MIN} characters`);
+  if (!/[A-Z]/.test(pw)) miss.push('a capital letter');
+  if (!/[a-z]/.test(pw)) miss.push('a small letter');
+  if (!/[0-9]/.test(pw)) miss.push('a number');
+  if (!/[^A-Za-z0-9]/.test(pw)) miss.push('a special character (like ! @ # $)');
+  return miss.length ? 'The password needs ' + (miss.length > 1 ? miss.slice(0, -1).join(', ') + ' and ' + miss[miss.length - 1] : miss[0]) : '';
+}
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 /* people with no work email sign in with a username: SPMS logs them in as username@spms.invalid. ".invalid" is reserved,
    so no real mailbox can ever exist there; such accounts get no emails (no login code, no reset email). */
@@ -4883,7 +4908,7 @@ async function fbSecondaryAuth() {
    page), sign in, and add everyone else. Mohamed Said is shown as Team Leader and has full access: he can work as
    any role, in every hub. */
 const BUILTIN_TL = [
-  { email: 'mohamed.said@cns-me.com', name: 'Mohamed Said', title: 'Technical Manager', hub: 'MMH', full: true },
+  { email: 'mohamed.said@cns-me.com', name: 'Mohamed Said', title: 'Team Leader', hub: 'MMH', full: true },
   { email: 'madhu.kuriakose@cns-me.com', name: 'Madhu Kuriakose', title: 'Team Leader · Oman', hub: 'MMH' },
   { email: 'mohamed.fawzy@cns-me.com', name: 'Mohamed Fawzy', title: 'Team Leader · Oman', hub: 'MMH' },
   { email: 'asim.butt@cns-me.com', name: 'Asim Butt', title: 'Team Leader · UAE', hub: 'DMH' },
@@ -4959,29 +4984,60 @@ function checkAcct(a) {
   if (!a.name) return 'Name missing';
   if (!EMAIL_RE.test(a.email)) return 'Email or username missing or not valid (a username uses only letters, numbers, . _ -)';
   if (!ROLE[a.role]) return `Role “${a.rawRole || ''}” is not used in SPMS`;
-  if (!a.pw || String(a.pw).length < 4 || /\s/.test(String(a.pw))) return 'Password / employee ID missing (4+ characters, no spaces)';
+  if (!a.pw) return 'Password missing';
+  const weak = pwProblem(a.pw); if (weak) return weak + ' (' + PW_RULE.replace(/\.$/, '') + ')';
+  if (a.role === 'TECH' && a.budget === false) return 'Engineer budget is not a number (OMR)';
   return '';
 }
-async function fbCreateAccount(a) {
-  mustRole('TL');
-  if (a.email === 'mohamed.said@cns-me.com') return false;   /* the Technical Manager is built in and locked — never create or overwrite from an import or the form */
-  const auth2 = await fbSecondaryAuth(); let made = true;
+/* a login that already exists: only the sender (running as the project owner) can change someone else's password.
+   Answers 'ok' (set), 'own' (they already chose their own password, so it was kept), or 'fail' (the sender couldn't). */
+async function fbAdminSetPw(email, pw, force) {
+  const u = FB.auth.currentUser; if (!u) return 'fail';
+  let r; try { r = await callSender({ op: 'admin-set-pw', t: await u.getIdToken(), email, pw: String(pw), force: !!force }); } catch (e) { return 'fail'; }
+  return r === 'ok' || r === 'own' ? r : 'fail';
+}
+/* add a person, or update them when they are already on the list. Their password is the one given here: a new login
+   gets it straight away; a login that already existed gets it through the sender — from an Excel file only while they
+   haven't chosen their own password yet, from "Add one" (force) always. mustChange on the staff record says whose
+   password it is: false = they chose it themselves (profile, the 30-day change, reset by code); null = the Team
+   Leader's. Answers { made, pw: 'new' | 'same' | 'set' | 'own' | 'kept', sid, role }. */
+async function fbCreateAccount(a, opt) {
+  mustRole('TL'); opt = opt || {};
+  if (a.email === SAID_EMAIL) return { skip: true };   /* Mohamed Said is built in and locked — never create or overwrite from an import or the form */
+  const weak = pwProblem(a.pw); if (weak) throw E(weak + '.');
+  const auth2 = await fbSecondaryAuth(); let made = true, same = false;
   try { await auth2.createUserWithEmailAndPassword(a.email, fbPw(a.pw)); }
   catch (e) { if (/email-already-in-use/.test(String(e && e.code))) made = false; else throw mapAuthErr(e, true); }
   finally { try { await auth2.signOut(); } catch (e) { /* already signed out */ } }
+  /* the login exists: does it already have this password? (then nothing needs changing) */
+  if (!made) { try { await auth2.signInWithEmailAndPassword(a.email, fbPw(a.pw)); same = true; } catch (e) { /* a different password */ } finally { try { await auth2.signOut(); } catch (e) { /* already signed out */ } } }
   const me = ME(), now = Date.now(), old = USERS.find(u => (u.email || u.id) === a.email);
   const role = (old && old.role === 'TL') || builtinTL(a.email) ? 'TL' : a.role;
   /* the short id (van, requests) must be unique: ahmed@cns-me.com and the username ahmed would otherwise share one */
   let sid = (old && old.sid) || idFromEmail(a.email);
-  if (!old) { const base = sid; for (let n = 2; USERS.some(u => (u.email || u.id) !== a.email && (u.sid || idFromEmail(u.email || u.id)) === sid); n++) sid = base + n; }   /* an import never demotes a Team Leader (built-in ones stay Team Leaders); that is done on purpose in the account itself */
-  await api.set('users', a.email, { email: a.email, sid, name: a.name, role, title: role === a.role ? a.title || acctTitle(role, a.hub) : (old && old.title) || acctTitle(role, a.hub), hub: a.hub, active: true, createdAt: (old && old.createdAt) || now, createdBy: (old && old.createdBy) || me.name, updatedAt: now, updatedBy: me.name, pwAt: (old && old.pwAt) || now });
-  return made;
+  if (!old) { const base = sid; for (let n = 2; USERS.some(u => (u.email || u.id) !== a.email && (u.sid || idFromEmail(u.email || u.id)) === sid); n++) sid = base + n; }   /* an import never demotes a Team Leader (built-in ones stay Team Leader) */
+  const doc = { email: a.email, sid, name: a.name, role, title: role === a.role ? a.title || acctTitle(role, a.hub) : (old && old.title) || acctTitle(role, a.hub), hub: a.hub, active: true, createdAt: (old && old.createdAt) || now, createdBy: (old && old.createdBy) || me.name, updatedAt: now, updatedBy: me.name, pwAt: made ? now : (old && old.pwAt) || now };
+  if (made) doc.mustChange = null; else if (old && old.mustChange !== undefined) doc.mustChange = old.mustChange;   /* the sender reads it: have they chosen their own password? */
+  await api.set('users', a.email, doc);
+  let pw = 'new';
+  if (same) pw = 'same';
+  else if (!made) { const r = await fbAdminSetPw(a.email, a.pw, opt.force); pw = r === 'ok' ? 'set' : r === 'own' ? 'own' : 'kept'; }
+  return { made, pw, sid, role };
 }
 async function fbCreateMany(rows, onProgress) {
-  let made = 0, had = 0;
-  for (let i = 0; i < rows.length; i++) { if (await fbCreateAccount(rows[i])) made++; else had++; if (onProgress) onProgress(i + 1, rows.length); await sleep(150); }
-  return { made, had };
+  const r = { made: 0, same: 0, set: 0, own: 0, kept: [], budgets: 0, budFail: 0 };
+  for (let i = 0; i < rows.length; i++) {
+    const a = rows[i], x = await fbCreateAccount(a);
+    if (!x.skip) {
+      if (x.made) r.made++; else if (x.pw === 'same') r.same++; else if (x.pw === 'set') r.set++; else if (x.pw === 'own') r.own++; else r.kept.push(a.name || loginShow(a.email));
+      /* the engineer's yearly budget from the file (technicians only): sets the budget, keeps what he has used so far */
+      if (x.role === 'TECH' && typeof a.budget === 'number') { try { await saveBudget(x.sid, { bamt: String(a.budget) }); r.budgets++; } catch (e) { r.budFail++; } }
+    }
+    if (onProgress) onProgress(i + 1, rows.length); await sleep(150);
+  }
+  return r;
 }
+const importMsg = r => [`${r.made} account${r.made === 1 ? '' : 's'} created`, r.same ? `${r.same} already had this password` : '', r.set ? `${r.set} existing login${r.set === 1 ? '' : 's'} got the new password` : '', r.own ? `${r.own} kept the password they chose` : '', r.kept.length ? `${r.kept.length} couldn’t get the new password` : '', r.budgets ? `${r.budgets} budget${r.budgets === 1 ? '' : 's'} set` : '', r.budFail ? `${r.budFail} budget${r.budFail === 1 ? '' : 's'} not saved` : ''].filter(Boolean).join(' · ');
 async function fbSaveAcct(email, d) {
   const me = mustRole('TL'), u = USERS.find(x => (x.email || x.id) === email); if (!u) throw E('This account no longer exists.');
   const role = d.role, active = d.active !== 'no', hub = HUBS.includes(d.hub) ? d.hub : u.hub, name = (d.name || '').trim();
@@ -4991,14 +5047,14 @@ async function fbSaveAcct(email, d) {
 }
 async function fbDeleteAccount(email) {
   const me = mustRole('TL');
-  if (email === 'mohamed.said@cns-me.com') throw E('The Technical Manager account can’t be removed.');
+  if (email === SAID_EMAIL) throw E('Mohamed Said’s account can’t be removed.');
   if (email === me.email) throw E('You can’t remove your own account. Ask another Team Leader to do it.');
   await api.del('users', email);   /* off the staff list, so they can no longer sign in; their request history stays */
 }
 async function fbDeleteAccountsMany(emails) {
   const me = mustRole('TL'); let n = 0;
   for (const email of emails) {
-    if (email === 'mohamed.said@cns-me.com' || email === me.email) continue;   /* never the Technical Manager or yourself */
+    if (email === SAID_EMAIL || email === me.email) continue;   /* never Mohamed Said's locked account or yourself */
     try { await api.del('users', email); n++; } catch (e) { /* skip one that is already gone */ }
   }
   if (!n) throw E('Nothing to remove.');
@@ -5011,15 +5067,31 @@ const ACC_ALIASES = {
   role: ['role', 'team', 'department', 'dept', 'function', 'jobrole'],
   hub: ['hub', 'location', 'country', 'base', 'site', 'region'],
   pw: ['password', 'employeeid', 'empid', 'empno', 'employeeno', 'employeenumber', 'staffid', 'id', 'pass'],
-  title: ['title', 'jobtitle', 'designation', 'position']
+  title: ['title', 'jobtitle', 'designation', 'position'],
+  budget: ['engineerbudget', 'budget', 'budgetallocation', 'allocatedbudget', 'yearlybudget', 'annualbudget', 'budgetomr', 'allocation']
 };
+/* an amount of money from Excel: 5000, "5,000", "OMR 5,000.500". Empty → null; not a number → false */
+function budgetCell(v) {
+  if (typeof v === 'number') return v >= 0 ? Math.round(v * 1000) / 1000 : false;
+  const t = String(v == null ? '' : v).trim(); if (!t) return null;
+  const n = t.replace(/,/g, '').replace(/^(omr|ro|r\.o\.?|aed)\s*/i, '').replace(/\s*(omr|ro|aed)$/i, '');
+  return /^\d+(\.\d+)?$/.test(n) ? Math.round(+n * 1000) / 1000 : false;
+}
 function parseAccounts(X, wb) {
   for (const sn of wb.SheetNames) {
     const aoa = X.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '', blankrows: false });
     for (let h = 0; h < Math.min(10, aoa.length); h++) {
       const col = {}, usedCol = new Set();
-      /* match a header to a field: exact alias, or the header starts with an alias (so “Email (login)”, “Employee ID No.” still match). Each column maps to one field. */
-      aoa[h].forEach((c, i) => { const k = normHead(c); if (!k || usedCol.has(i)) return; for (const [f, al] of Object.entries(ACC_ALIASES)) { if (col[f] != null) continue; if (al.includes(k) || al.some(a => a.length >= 4 && k.startsWith(a))) { col[f] = i; usedCol.add(i); break; } } });
+      /* match a header to a field: exact alias, else the longest alias the header starts with (so “Email (login)”,
+         “Employee ID No.”, “Engineer Budget (OMR)” still match). Each column maps to one field. */
+      const heads = aoa[h].map(normHead);
+      /* exact headings first, the first alias of a field winning (so a “Password” column beats an “Employee ID” column) */
+      for (const [f, al] of Object.entries(ACC_ALIASES)) for (const a of al) { const i = heads.findIndex((k, n) => k === a && !usedCol.has(n)); if (i >= 0) { col[f] = i; usedCol.add(i); break; } }
+      aoa[h].forEach((c, i) => {
+        const k = normHead(c); if (!k || usedCol.has(i)) return; let best = null, bestLen = 0;
+        for (const [f, al] of Object.entries(ACC_ALIASES)) { if (col[f] != null) continue; for (const a of al) if (a.length >= 4 && k.startsWith(a) && a.length > bestLen) { best = f; bestLen = a.length; } }
+        if (best) { col[best] = i; usedCol.add(i); }
+      });
       if (col.email == null || col.name == null) continue;
       /* a team column without a heading (as in the BFSI sheet): the column whose values are CS / WS / Logistics / PS */
       if (col.role == null) {
@@ -5033,7 +5105,8 @@ function parseAccounts(X, wb) {
         const email = toLogin(get('email')), name = get('name'); if (!email && !name) continue;
         let pw = get('pw'); if (/^\d+\.0+$/.test(pw)) pw = pw.replace(/\.0+$/, '');
         const role = roleOf(get('role')), hub = hubFromRole(get('role')) || acctHub(get('hub'));
-        rows.push({ row: r + 1, name, email, role, rawRole: get('role'), hub, pw, title: get('title') });
+        const budget = col.budget == null ? null : budgetCell(row[col.budget]);
+        rows.push({ row: r + 1, name, email, role, rawRole: get('role'), hub, pw, title: get('title'), budget });
       }
       return { sheet: sn, rows };
     }
@@ -5053,12 +5126,12 @@ async function readAccountsFile(file) {
 async function downloadAccountsTemplate() {
   if (!DL) return toast('Downloads work in the published app.', 'bad');
   try {
-    const X = await needXLSX(), wb = X.utils.book_new(), head = ['Name', 'Email', 'Role', 'Hub', 'Password', 'Title'];
-    const ws = X.utils.aoa_to_sheet([head, ['Example Technician', 'first.last@cns-me.com', 'Technician', HUBS[0], '1234', ''], ['Example Stock', 'store.keeper@cns-me.com', 'Stock', HUBS[0], '5678', '']]);
-    ws['!cols'] = [{ wch: 26 }, { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 26 }];
+    const X = await needXLSX(), wb = X.utils.book_new(), head = ['Name', 'Email', 'Role', 'Hub', 'Password', 'Title', 'Engineer Budget'];
+    const ws = X.utils.aoa_to_sheet([head, ['Example Technician', 'first.last@cns-me.com', 'Technician', HUBS[0], 'Start#2026a', '', 5000], ['Example Stock', 'store.keeper@cns-me.com', 'Stock', HUBS[0], 'Begin#2026b', '', '']]);
+    ws['!cols'] = [{ wch: 26 }, { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 26 }, { wch: 16 }];
     X.utils.book_append_sheet(wb, ws, 'Accounts');
-    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login. No email? Put a username instead (letters, numbers, . _ -) — they sign in with it.'], ['Role', 'Technician, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password, e.g. the employee ID. Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman']]);
-    help['!cols'] = [{ wch: 12 }, { wch: 90 }]; X.utils.book_append_sheet(wb, help, 'How to fill');
+    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login. No email? Put a username instead (letters, numbers, . _ -) — they sign in with it.'], ['Role', 'Technician, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password. ' + PW_RULE + ' Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman'], ['Engineer Budget', 'Technicians only: yearly budget in OMR, e.g. 5000. Optional. What he has used so far is kept.']]);
+    help['!cols'] = [{ wch: 16 }, { wch: 100 }]; X.utils.book_append_sheet(wb, help, 'How to fill');
     savedToast(await DL.save({ filename: 'SPMS-accounts-template.xlsx', data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Template saved');
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
 }
@@ -5096,30 +5169,32 @@ SH.accounts = d => {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
     body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email or username *', 'first.last@cns-me.com or a username', { hint: 'No email? Type a username (letters, numbers, . _ -). They sign in with that username and password.' })}
       ${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}
-      ${inp(d, 'pw', 'First password *', 'e.g. the employee ID', { hint: 'They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
-    op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: toLogin(d.email), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a); }, stay: true, ok: made => made ? 'Account created' : 'Saved. This login already existed, so the password didn’t change.' };
+      ${inp(d, 'pw', 'First password *', 'e.g. Start#2026a', { hint: PW_RULE + ' They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
+    op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: toLogin(d.email), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a, { force: true }); }, stay: true,
+      ok: r => r.skip ? 'Mohamed Said’s account is built in and can’t be changed.' : r.made ? 'Account created' : r.pw === 'same' ? 'Saved. This login already had this password.' : r.pw === 'set' ? 'Saved. This login already existed — its password is now the one you typed.' : 'Saved, but this login already existed and SPMS couldn’t change its password. Open the person and tap “Send password email”.' };
   } else {
     const rows = d.acc ? d.acc.rows : [], known = new Set(USERS.map(u => u.email || u.id));
     const seen = new Set(), ready = [], bad = [];
     for (const r of rows) { let why = checkAcct(r); if (!why && seen.has(r.email)) why = 'Email repeated in the file'; seen.add(r.email); if (why) bad.push(Object.assign({ why }, r)); else ready.push(r); }
     const fresh = ready.filter(r => !known.has(r.email)).length;
-    body = `<div class="card"><div class="sec-h" style="padding:0"><h2>1 · The staff list</h2></div><p class="note" style="padding:0">Your Team sheet works as it is: the Role column decides (“request part from … HUB” is a Technician at that hub; Team Leader, Stock and Workshop approval), and the employee ID is the first password. Or fill in the template.</p><button class="btn sm sec" data-a="accTemplate">${ic('download', 'sm')}Download template</button></div>
+    const kept = (UI.sheet && UI.sheet.p && UI.sheet.p.kept) || [], hasBud = rows.some(r => typeof r.budget === 'number');
+    body = `${kept.length ? `<div class="alert warn wrap"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>${kept.length} ${kept.length === 1 ? 'person' : 'people'} already had a login and didn’t get the new password</b><span class="s">${esc(kept.slice(0, 12).join(', '))}${kept.length > 12 ? ' …' : ''}. SPMS’s email service couldn’t change it. Open each one (People) and tap “Send password email”.</span></div></div>` : ''}<div class="card"><div class="sec-h" style="padding:0"><h2>1 · The staff list</h2></div><p class="note" style="padding:0">Your Team sheet works as it is: the Role column decides (“request part from … HUB” is a Technician at that hub; Team Leader, Stock and Workshop approval). The Password column is the first password: ${esc(PW_RULE.replace(/^A/, 'a'))} An “Engineer Budget” column sets each technician’s yearly budget (OMR). Or fill in the template.</p><button class="btn sm sec" data-a="accTemplate">${ic('download', 'sm')}Download template</button></div>
       <div class="card"><div class="sec-h" style="padding:0"><h2>2 · Choose the file</h2></div><label class="drop" for="f-accfile">${ic('inbox')}<b>${d.acc ? esc(d.acc.name) : 'Drop the Excel file here'}</b><span>${d.acc ? 'Choose another file' : 'or tap to choose it'}</span><input class="vh" type="file" id="f-accfile" accept=".xlsx,.xlsm,.xls,.csv"></label>${d.accBusy ? '<div class="infobox" role="status">Reading the file…</div>' : ''}</div>
       ${d.acc ? `<section class="blk"><div class="sec-h"><h2>3 · Check and create</h2><span class="t3 muted">${esc(d.acc.sheet)}</span></div>
         <div class="kpis k3">${kpi('Ready', ready.length)}${kpi('New logins', fresh)}${kpi('Skipped', bad.length, bad.length ? 'warn' : '')}</div>
-        ${ready.length ? tbl(['Name', 'Email', 'Role', 'Hub'], ready.slice(0, 200).map(r => `<tr><td>${esc(r.name)}${known.has(r.email) ? ' <span class="chip plain">has login</span>' : ''}</td><td class="mono">${esc(loginShow(r.email))}</td><td>${esc(ROLE[r.role])}</td><td>${esc(r.hub)}</td></tr>`)) : '<div class="infobox">Nobody to add from this file.</div>'}
+        ${ready.length ? tbl(['Name', 'Email', 'Role', 'Hub'].concat(hasBud ? ['Budget (OMR)'] : []), ready.slice(0, 200).map(r => `<tr><td>${esc(r.name)}${known.has(r.email) ? ' <span class="chip plain">has login</span>' : ''}</td><td class="mono">${esc(loginShow(r.email))}</td><td>${esc(ROLE[r.role])}</td><td>${esc(r.hub)}</td>${hasBud ? `<td class="r">${r.role === 'TECH' && typeof r.budget === 'number' ? esc(r.budget.toLocaleString('en', { maximumFractionDigits: 3 })) : '<span class="muted">—</span>'}</td>` : ''}</tr>`)) : '<div class="infobox">Nobody to add from this file.</div>'}
         ${bad.length ? `<div class="sec-h"><h2>Skipped</h2></div>${tbl(['Row', 'Name', 'Why'], bad.slice(0, 100).map(b => `<tr class="flag"><td class="r">${b.row}</td><td>${esc(b.name || b.email)}</td><td class="wrap">${esc(b.why)}</td></tr>`))}` : ''}
-        <div id="acc-prog" aria-live="polite"></div><p class="note">Safe to run again: people who already have a login keep their password.</p></section>` : ''}`;
-    if (ready.length) op = { label: `Create ${ready.length} account${ready.length === 1 ? '' : 's'}`, yes: 'Yes, create', check: () => `Create SPMS logins for ${ready.length} people? Their first password is the one in the file.`, run: () => fbCreateMany(ready, accProgress), stay: true, ok: r => `${r.made} account${r.made === 1 ? '' : 's'} created${r.had ? ` · ${r.had} already had a login (details updated)` : ''}` };
+        <div id="acc-prog" aria-live="polite"></div><p class="note">Safe to run again. Someone who already has a login gets the password in the file, unless they have already chosen their own.</p></section>` : ''}`;
+    if (ready.length) op = { label: `Create ${ready.length} account${ready.length === 1 ? '' : 's'}`, yes: 'Yes, create', check: () => `Create SPMS logins for ${ready.length} people? Their first password is the one in the file.`, run: () => fbCreateMany(ready, accProgress), stay: true, after: r => { if (UI.sheet) UI.sheet.p = Object.assign({}, UI.sheet.p, { kept: r.kept }); }, ok: importMsg };
   }
   return { title: 'Staff accounts', sub: 'Only people listed here can sign in', body: seg + body, op, foot: op ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
 };
 SH.acct = (d, p) => {
   const u = USERS.find(x => (x.email || x.id) === p.id); if (!u) return { title: 'Not found', body: emptyBox('This account no longer exists', '') };
-  if ((u.email || u.id) === 'mohamed.said@cns-me.com') {   /* the Technical Manager: nobody can change or remove this account */
+  if ((u.email || u.id) === SAID_EMAIL) {   /* Mohamed Said: built in, nobody can change or remove this account */
     return { title: u.name, sub: esc(u.email || u.id),
       body: `<div class="card" style="flex-direction:row;align-items:center"><span class="avatar mini">${esc(initials(u.name))}</span><div style="min-width:0"><b>${esc(u.name)}</b><div class="t3 muted">${esc(u.title || ROLE[u.role])}</div><div class="mono muted" style="font-size:12px">${esc(u.email || u.id)}${u.hub ? ' · ' + esc(u.hub) : ''}</div></div></div>
-        <div class="infobox">${ic('lock', 'sm')}This is the Technical Manager's account. It can't be changed or removed.</div>`,
+        <div class="infobox">${ic('lock', 'sm')}This is Mohamed Said’s built-in account. It can’t be changed or removed.</div>`,
       foot: `<button class="btn sec" data-a="close">Close</button>` };
   }
   if (!d._i) { Object.assign(d, { name: u.name, role: u.role, hub: u.hub || HUBS[0], title: u.title || '', active: u.active === false ? 'no' : 'yes' }); d._i = 1; }
@@ -5151,7 +5226,9 @@ async function fbChangePassword(d) {
   const user = FB.auth.currentUser; if (!user) throw E('Sign in again first.');
   const cur = String(d.pcur || ''), nw = String(d.pnew || '');
   if (!nw) throw E('Enter the new password.');
+  const weak = pwProblem(nw); if (weak) throw E(weak + '.');
   if (nw !== String(d.pnew2 || '')) throw E('The two new passwords don’t match.');
+  if (nw === cur) throw E('Choose a new password, different from the current one.');
   const P = window.firebase.auth.EmailAuthProvider;
   try { await user.reauthenticateWithCredential(P.credential(user.email, fbPw(cur))); }
   catch (e) { try { await user.reauthenticateWithCredential(P.credential(user.email, cur)); } catch (e2) { const c = String(e2 && e2.code || ''); if (/wrong-password|invalid-credential|invalid-login/.test(c)) throw E('Your current password is not right.'); throw mapAuthErr(e2); } }
@@ -5185,6 +5262,7 @@ async function localChangePassword(d) {
   const cur = String(d.pcur || ''), nw = String(d.pnew || '');
   if (!cur) throw E('Enter your current password.');
   if (!nw) throw E('Enter the new password.');
+  const weak = pwProblem(nw); if (weak) throw E(weak + '.');
   if (nw !== String(d.pnew2 || '')) throw E('The two new passwords don’t match.');
   if (nw === cur) throw E('The new password is the same as the current one.');
   if (!(await checkPassword(a, cur))) throw E('Your current password is not right.');
@@ -5206,7 +5284,7 @@ SH.pwreset = d => {
 SH.pw = d => ({
   title: 'Change password', sub: UI.fbMode ? 'For your SPMS login' : 'Saved for every device you sign in on',
   body: `${fld('Current password', `<input class="inp" id="f-pcur" data-d="pcur" type="password" autocomplete="current-password" value="${esc(d.pcur || '')}">`, '', 'f-pcur')}
-    ${fld('New password', `<input class="inp" id="f-pnew" data-d="pnew" type="password" autocomplete="new-password" value="${esc(d.pnew || '')}">`, '', 'f-pnew')}
+    ${fld('New password', `<input class="inp" id="f-pnew" data-d="pnew" type="password" autocomplete="new-password" value="${esc(d.pnew || '')}">`, PW_RULE, 'f-pnew')}
     ${fld('New password again', `<input class="inp" id="f-pnew2" data-d="pnew2" type="password" autocomplete="new-password" value="${esc(d.pnew2 || '')}">`, '', 'f-pnew2')}`,
   op: { label: 'Save', run: () => UI.fbMode ? fbChangePassword(d) : localChangePassword(d), ok: 'Password changed. Use the new one next time you sign in.' }
 });
@@ -5325,7 +5403,15 @@ try { const q = new URLSearchParams(location.search).get('job'); if (q) { UI.ope
    2-factor is opt-in: it does nothing until the Team Leader turns it on (settings/security.otp), and once a phone
    has passed the code once, it is trusted and never asked again on that phone.
    ========================================================================== */
-const DAY_MS = 86400000, PW_MAX_AGE = 30 * DAY_MS, TRUST_KEY = 'spms-device-trusted';
+const DAY_MS = 86400000, PW_MAX_AGE = 30 * DAY_MS, TRUST_KEY = 'spms-device-trusted', WEAK_KEY = 'spms-pw-weak';
+/* the password just used to sign in: kept in memory only until the password screen is passed, so the new password can't
+   be the same one. Whether it meets the rules is kept for this tab (survives a reload, so the change can't be skipped). */
+let PW_SIGNED = '';
+function markSignInPw(p) {
+  PW_SIGNED = p || ''; const weak = !!(p && pwProblem(p)); UI.pwWeakMem = weak;
+  try { if (weak) sessionStorage.setItem(WEAK_KEY, '1'); else sessionStorage.removeItem(WEAK_KEY); } catch (e) { /* kept in memory */ }
+}
+const pwWeakNow = () => { try { return sessionStorage.getItem(WEAK_KEY) === '1'; } catch (e) { return !!UI.pwWeakMem; } };
 /* send a message to the sender and read its short reply. A plain text/plain POST, so the browser sends it without a
    pre-flight and can read the answer. */
 async function callSender(body) {
@@ -5384,10 +5470,10 @@ async function resetSend(email) {
 }
 async function resetCheck(email, code, pw) {
   code = String(code || '').replace(/\D/g, ''); if (code.length !== 6) throw E('Enter the 6-digit code from the email.');
-  if (String(pw || '').length < 4) throw E('The new password needs at least 4 characters.');
+  const weak = pwProblem(pw); if (weak) throw E(weak + '.');
   const r = await callSender({ op: 'otp-reset-check', email: String(email).toLowerCase(), code: code, pw: String(pw) });
   if (r === 'ok') return true;
-  throw E({ bad: 'That code is wrong.', expired: 'That code has expired. Send a new one.', locked: 'Too many wrong tries. Send a new one.', 'no code': 'No code was sent. Send one first.', short: 'The password needs at least 4 characters.', 'no user': 'No SPMS login for this email. Ask the Team Leader.', 'no-admin': 'Reset by code isn’t set up yet. Use the email link instead.' }[r] || 'Could not reset the password. Try again.');
+  throw E({ bad: 'That code is wrong.', expired: 'That code has expired. Send a new one.', locked: 'Too many wrong tries. Send a new one.', 'no code': 'No code was sent. Send one first.', short: PW_RULE, weak: 'The password is too weak. ' + PW_RULE, 'no user': 'No SPMS login for this email. Ask the Team Leader.', 'no-admin': 'Reset by code isn’t set up yet. Use the email link instead.' }[r] || 'Could not reset the password. Try again.');
 }
 /* the reset sheet, opened from the sign-in page: step 1 ask for the email, step 2 enter the code and a new password */
 SH.pwmail = d => {
@@ -5396,7 +5482,7 @@ SH.pwmail = d => {
       title: 'Enter the code', sub: esc(d.email || ''),
       body: `<div class="infobox">${ic('lock', 'sm')}We emailed a 6-digit code to <b>${esc(d.email)}</b>. Enter it and choose a new password. The code lasts 10 minutes.</div>
         ${fld('6-digit code *', `<input class="inp mono" id="f-code" data-d="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="______" value="${esc(d.code || '')}">`, '', 'f-code')}
-        <div class="two">${fld('New password *', `<input class="inp" id="f-pw" data-d="pw" type="password" autocomplete="new-password" value="${esc(d.pw || '')}">`, '', 'f-pw')}${fld('Again *', `<input class="inp" id="f-pw2" data-d="pw2" type="password" autocomplete="new-password" value="${esc(d.pw2 || '')}">`, '', 'f-pw2')}</div>
+        <div class="two">${fld('New password *', `<input class="inp" id="f-pw" data-d="pw" type="password" autocomplete="new-password" value="${esc(d.pw || '')}">`, PW_RULE, 'f-pw')}${fld('Again *', `<input class="inp" id="f-pw2" data-d="pw2" type="password" autocomplete="new-password" value="${esc(d.pw2 || '')}">`, '', 'f-pw2')}</div>
         <button class="linkbtn" type="button" data-a="otpResend" data-k="reset">Didn’t get it? Send a new code</button>`,
       op: { label: 'Set my password', run: () => { if (String(d.pw || '') !== String(d.pw2 || '')) throw E('The two passwords don’t match.'); return resetCheck(d.email, d.code, d.pw); }, ok: 'Password set. Sign in with it now.', after: () => closeSheet() }
     };
@@ -5415,11 +5501,13 @@ SH.pwmail = d => {
 /* ---------- the 30-day password change (shown as a wall after sign-in when due) ---------- */
 async function forcePwChange(d) {
   const user = FB.auth.currentUser, me = ME(); if (!user || !me) throw E('Sign in again.');
-  const nw = String(d.pnew || ''); if (nw.length < 4) throw E('The new password needs at least 4 characters.');
+  const nw = String(d.pnew || ''), weak = pwProblem(nw); if (weak) throw E(weak + '.');
   if (nw !== String(d.pnew2 || '')) throw E('The two passwords don’t match.');
+  if (PW_SIGNED && nw === PW_SIGNED) throw E('Choose a new password, different from the one you signed in with.');
   try { await user.updatePassword(fbPw(nw)); }
   catch (e) { if (/requires-recent-login/.test(String(e && e.code))) throw E('For safety, sign out and sign in again, then change the password.'); throw mapAuthErr(e, true); }
   try { await FB.fs.collection('users').doc(me.email).set({ pwAt: Date.now(), mustChange: false }, { merge: true }); } catch (e) { /* the clock will start next time */ }
+  markSignInPw('');
   /* a new password is a security event: this phone must prove itself again with a code, so sign out */
   lsDel(TRUST_KEY); await FB.auth.signOut().catch(() => {});
 }
@@ -5438,7 +5526,7 @@ SH.security = d => {
     body: `<div class="infobox">${ic('lock', 'sm')}With 2-factor on, each person types a 6-digit code emailed to them <b>the first time they sign in on a phone</b>. After that the phone is trusted and isn’t asked again. It stops someone using a stolen password on a new phone.</div>
       ${fld('Require a login code (2-factor)', segBtns(d, 'on', [['no', 'Off'], ['yes', 'On']]))}
       ${d.on === 'yes' ? `<p class="hint" style="margin:0">Codes are emailed by SPMS. If email ever stops working, turn this off here and everyone can still sign in with their password.</p>` : ''}
-      <div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2></div><span class="hint">Everyone must change their password every 30 days; SPMS asks them when it is due. You can also force a reset from a person’s account.</span></div>`,
+      <div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2></div><span class="hint">Everyone must change their password every 30 days; SPMS asks them when it is due. ${esc(PW_RULE)} Someone whose password doesn’t meet this is asked for a new one when they sign in.</span></div>`,
     op: { label: 'Save', run: () => setSecurity(d.on === 'yes'), ok: d.on === 'yes' ? '2-factor is on' : '2-factor is off' }
   };
 };
@@ -5487,8 +5575,8 @@ function renderPwGate() {
   const d = UI.gateD || (UI.gateD = {}), left = pwDaysLeft(UI.pwDoc);
   gateShell(`<form id="pwg-form" class="card" novalidate>
     <div class="sec-h" style="padding:0"><h2 style="margin:0">Choose a new password</h2></div>
-    <p class="hint" style="margin:2px 0 4px">${UI.pwDoc && UI.pwDoc.mustChange ? 'Your Team Leader asked you to set a new password.' : 'Passwords are changed every 30 days. Please set a new one to continue.'} After this, SPMS signs you out so you sign in with the new password.</p>
-    <div class="fld"><label class="lbl" for="pw-new">New password</label><div class="pw"><input class="inp" id="pw-new" type="password" autocomplete="new-password" value=""><button type="button" class="pw-t" data-a="pwgToggle" aria-label="Show password">Show</button></div></div>
+    <p class="hint" style="margin:2px 0 4px">${UI.pwDoc && UI.pwDoc.mustChange ? 'Your Team Leader asked you to set a new password.' : pwWeakNow() ? 'SPMS now needs stronger passwords. Choose a new one to continue.' : 'Passwords are changed every 30 days. Please set a new one to continue.'} After this, SPMS signs you out so you sign in with the new password.</p>
+    <div class="fld"><label class="lbl" for="pw-new">New password</label><div class="pw"><input class="inp" id="pw-new" type="password" autocomplete="new-password" value=""><button type="button" class="pw-t" data-a="pwgToggle" aria-label="Show password">Show</button></div><span class="hint">${esc(PW_RULE)}</span></div>
     <div class="fld"><label class="lbl" for="pw-new2">New password again</label><input class="inp" id="pw-new2" type="password" autocomplete="new-password" value=""></div>
     <div id="gate-err" class="err" role="alert"${d._err ? '' : ' hidden'}>${esc(d._err || '')}</div>
     <button class="btn block" type="submit" id="pwg-go">Save new password</button>
@@ -5524,6 +5612,10 @@ async function signIn(email, pw) {
 async function fbSignIn(email, pw) {
   email = toLogin(email); pw = String(pw || ''); if (!email || !pw) throw E('Enter your email or username, and your password.');
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
+  markSignInPw(pw);   /* before signing in: a password that doesn't meet the rules must be changed right after */
+  try { await fbSignInTry(email, pw); } catch (e) { markSignInPw(''); throw e; }
+}
+async function fbSignInTry(email, pw) {
   let first;
   try { await FB.auth.signInWithEmailAndPassword(email, fbPw(pw)); return; }
   catch (e) { first = e; const c = String((e && e.code) || ''); if (!/wrong-password|invalid-credential|invalid-login-credentials|user-not-found|invalid-password/.test(c)) throw mapAuthErr(e); }
@@ -5539,10 +5631,10 @@ function resetData() { unsubAll(); BUDGETS = {}; JOBS = []; JOBS_OPEN = []; JOBS
 async function fbAuthChanged(user) {
   resetData(); UI.gate = null;
   const fail = msg => { UI.siErr = msg; UI.authReady = true; UI.profile = null; ACCOUNTS = TEST_ACCOUNTS.slice(); USERS = []; $('#scr').innerHTML = ''; render(); };
-  if (!user) { UI.profile = null; ACCOUNTS = TEST_ACCOUNTS.slice(); USERS = []; UI.authReady = true; if (!UI.sheet || UI.sheet.name !== 'pwmail') closeSheet(); $('#scr').innerHTML = ''; render(); return; }
+  if (!user) { markSignInPw(''); UI.profile = null; ACCOUNTS = TEST_ACCOUNTS.slice(); USERS = []; UI.authReady = true; if (!UI.sheet || UI.sheet.name !== 'pwmail') closeSheet(); $('#scr').innerHTML = ''; render(); return; }
   const email = (user.email || '').toLowerCase();
   try {
-    const doc = await FB.fs.collection('users').doc(email).get(); let d = doc.exists ? doc.data() : null;
+    const doc = await FB.fs.collection('users').doc(email).get(); let d = doc.exists ? fixTitle(doc.data()) : null;
     const bt = builtinTL(email);
     /* a built-in Team Leader signing in for the first time: add them to the staff list (the rules allow it only once their
        email is confirmed, which the password email does) */
@@ -5562,14 +5654,14 @@ async function fbAuthChanged(user) {
   UI.authReady = true;
   /* gates, in order: first the one-time login code on a new phone, then the 30-day password change */
   if (otpRequired() && !isUserLogin(email)) { UI.gate = 'otp'; UI.gateD = {}; render(); startOtpGate(); return; }   /* username logins have no email to receive a code */
-  if (pwMustChange(UI.pwDoc)) { UI.gate = 'pw'; UI.gateD = {}; render(); return; }
-  UI.gate = null;
+  if (pwMustChange(UI.pwDoc) || pwWeakNow()) { UI.gate = 'pw'; UI.gateD = {}; render(); return; }
+  UI.gate = null; PW_SIGNED = '';   /* no password screen: the typed password isn't needed any more */
   UI.store = 'connecting'; render(); $('#scr').scrollTop = 0; subscribeAll(); toast(`Signed in as ${UI.profile.name}`); refreshPush();
 }
 /* after a gate is cleared: move to the next gate, or into the app */
 function afterGate() {
-  if (pwMustChange(UI.pwDoc) && UI.gate !== 'pw') { UI.gate = 'pw'; UI.gateD = {}; render(); return; }
-  UI.gate = null; UI.store = 'connecting'; render(); $('#scr').scrollTop = 0; subscribeAll(); toast(`Signed in as ${UI.profile.name}`); refreshPush();
+  if ((pwMustChange(UI.pwDoc) || pwWeakNow()) && UI.gate !== 'pw') { UI.gate = 'pw'; UI.gateD = {}; render(); return; }
+  UI.gate = null; PW_SIGNED = ''; UI.store = 'connecting'; render(); $('#scr').scrollTop = 0; subscribeAll(); toast(`Signed in as ${UI.profile.name}`); refreshPush();
 }
 /* send the first login code and show the code screen */
 async function startOtpGate() { try { await otpLoginSend(); UI.gateD._sent = 1; } catch (e) { UI.gateD._err = e.message; } if (UI.gate === 'otp') render(); }
