@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261102080338">
+<meta name="spms-build" content="20261102122743">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -900,8 +900,8 @@ const STAFF = [];
 'use strict';
 /* ==========================================================================
    SPMS Field — spare parts lifecycle from SOW v1.00
-   Requests (Technician → Team Leader → Stock → Technician → return → Stock → Workshop → Stock),
-   technician van stock with Auto-Rep, hub stock with min/max levels, approval-based inventory
+   Requests (Engineer → Team Leader → Stock → Engineer → return → Stock → Workshop → Stock),
+   engineer van stock with Auto-Rep, hub stock with min/max levels, approval-based inventory
    changes, an inventory log for audit and serial-number tracing, reports and Excel export.
    ========================================================================== */
 /* The test Team Leader stays until the real one is set up. The other test accounts exist only in the test build (07-test-accounts.js). */
@@ -915,7 +915,7 @@ const TEST_ACCOUNTS = FIREBASE_BUILD && !FB_TEST ? [] : [
 let ACCOUNTS = TEST_ACCOUNTS.concat(FIREBASE_BUILD ? [] : STAFF);
 let USERS = [];   /* Firebase build: everyone in the users collection, active or not (the Team Leader's Accounts screen) */
 const idFromEmail = e => String(e || '').trim().toLowerCase().split('@')[0].replace(/[^a-z0-9.]/g, '');
-const ROLE = { TECH: 'Technician', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver' };
+const ROLE = { TECH: 'Engineer', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver' };
 /* what the person is called on screen: the full-access manager (Mohamed Said) shows his title, "Technical Manager - BFSI" */
 const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || SAID_TITLE) : (me ? ROLE[me.role] || '' : '');
 /* Mohamed Said's built-in, locked account (role Team Leader). His title is always "Technical Manager - BFSI", whatever
@@ -967,31 +967,33 @@ function myHub() {
   const c = me && (me.country || guessCountry(me.title)); const inC = c && HUB_INFO.find(h => h.country === c);
   return inC ? inC.code : HUBS[0];
 }
-const REJECT_REASONS = ['Service call invalid or already closed', 'Technician already holds this part', 'Duplicate request', 'Part does not fit the machine', 'Hub out of stock, vendor order needed', 'Other'];
+const REJECT_REASONS = ['Service call invalid or already closed', 'Engineer already holds this part', 'Duplicate request', 'Part does not fit the machine', 'Hub out of stock, vendor order needed', 'Other'];
 const REMOVE_REASONS = ['Damaged in store', 'Lost', 'Expired', 'Other'];
 const FIX_REASONS = ['Wrong entry', 'Count difference', 'Other'];
 const COURIERS = ['Company van'];   /* every dispatch and return goes by company van */
 const APP_URL = FIREBASE_BUILD ? location.origin + location.pathname.replace(/index\.html$/, '') : 'https://claude.ai/artifact/Y7qL8qB6YZ5cQtfvLRT3c4';   /* the link staff open; used in WhatsApp messages */
 const SESSION_KEY = 'spms-flow-session-v1', LAST_EMAIL = 'spms-last-email', LOCAL_KEY = 'spms-flow-local-v2', LEASE_KEY = 'spms-lease-v1';
 const HOUR = 36e5, DAY = 864e5;
+/* older records say "Engineer"; the role is now called "Engineer" */
+const eng = s => String(s == null ? '' : s).replace(/\bTechnicians\b/g, 'Engineers').replace(/\btechnicians\b/g, 'engineers').replace(/\bTechnician\b/g, 'Engineer').replace(/\btechnician\b/g, 'engineer');
 
 /* Status → label, who acts next, what they do. Restock jobs (type 'rep') use REP_ST labels. */
 const ST = {
   TL: { label: 'Waiting for Team Leader', tone: 'warn', who: 'TL', next: 'Approve or reject' },
   STOCK: { label: 'Approved · waiting for Stock', tone: 'info', who: 'STOCK', next: 'Pick and dispatch' },
-  DISPATCHED: { label: 'On the way to technician', tone: 'info', who: 'TECH', next: 'Confirm receipt' },
-  /* Inside Muscat: the part goes from the Muscat Main Hub to the technician by driver. */
+  DISPATCHED: { label: 'On the way to engineer', tone: 'info', who: 'TECH', next: 'Confirm receipt' },
+  /* Inside Muscat: the part goes from the Muscat Main Hub to the engineer by driver. */
   DRV_PICK: { label: 'Ready · waiting for the driver', tone: 'info', who: 'DRIVER', next: 'Collect the part from the hub' },
-  DRV_GO: { label: 'Driver is bringing the part', tone: 'info', who: 'DRIVER', next: 'Deliver it to the technician' },
-  /* Outside Muscat: the technician uses from his own hub; the Muscat Main Hub replenishes it by driver. */
+  DRV_GO: { label: 'Driver is bringing the part', tone: 'info', who: 'DRIVER', next: 'Deliver it to the engineer' },
+  /* Outside Muscat: the engineer uses from his own hub; the Muscat Main Hub replenishes it by driver. */
   USE_OK: { label: 'Approved · take it from your hub', tone: 'ok', who: 'TECH', next: 'Take the part from your hub' },
   REPL: { label: 'Hub refill · Muscat Main Hub to send', tone: 'warn', who: 'STOCK', next: 'Send the refill to the hub' },
   REPL_GO: { label: 'Replenishment on the way to the hub', tone: 'info', who: 'DRIVER', next: 'Deliver it to the hub' },
   REPL_CONF: { label: 'Refill on the way to the hub', tone: 'info', who: 'TECH', next: 'Confirm it arrived at your hub' },
-  /* The faulty part can go back to the Muscat Main Hub by driver instead of the technician taking it. */
+  /* The faulty part can go back to the Muscat Main Hub by driver instead of the engineer taking it. */
   DRV_RET_PICK: { label: 'Faulty part · waiting for the driver', tone: 'warn', who: 'DRIVER', next: 'Collect the faulty part' },
   DRV_RET_GO: { label: 'Faulty part on the way to Stock', tone: 'info', who: 'DRIVER', next: 'Deliver it to Stock' },
-  RECEIVED: { label: 'With technician', tone: 'info', who: 'TECH', next: 'Record replacement' },
+  RECEIVED: { label: 'With engineer', tone: 'info', who: 'TECH', next: 'Record replacement' },
   RETURN: { label: 'Return due', tone: 'warn', who: 'TECH', next: 'Send the part back' },
   RETURNING: { label: 'Return on the way to Stock', tone: 'info', who: 'STOCK', next: 'Confirm return received' },
   ATHUB: { label: 'Returned · at Stock', tone: 'warn', who: 'STOCK', next: 'Send to repair, scrap or restock' },
@@ -1008,10 +1010,17 @@ const REP_ST = {
   DISPATCHED: { label: 'Van restock on the way', next: 'Confirm restock received' },
   CLOSED: { label: 'Added to van stock', next: '' }
 };
+/* parts an engineer sends back to the Main Hub in one go (type 'ret') */
+const RET_ST = {
+  RETURNING: { label: 'On the way to the Main Hub', next: 'Confirm the parts arrived' },
+  CLOSED: { label: 'Back at the Main Hub', next: '' }
+};
+const TYPE_ST = { rep: REP_ST, ret: RET_ST };
 const DONE_STATES = ['CLOSED', 'REJECTED', 'CANCELLED'];
 const isOpenStatus = s => !DONE_STATES.includes(s);
-const stLabel = j => (j.type === 'rep' && REP_ST[j.status] ? REP_ST[j.status].label : (ST[j.status] || ST.CLOSED).label);
-const stNext = j => (j.type === 'rep' && REP_ST[j.status] ? REP_ST[j.status].next : (ST[j.status] || ST.CLOSED).next);
+const typeSt = j => (TYPE_ST[j.type] || {})[j.status];
+const stLabel = j => (typeSt(j) || ST[j.status] || ST.CLOSED).label;
+const stNext = j => (typeSt(j) || ST[j.status] || ST.CLOSED).next;
 const stWho = j => (ST[j.status] || ST.CLOSED).who;
 
 /* ---------- live state ---------- */
@@ -1283,7 +1292,7 @@ function firestoreBackend(fs) {
    The free Firebase plan allows 50,000 document reads a day, and opening the app used to read every stock line and every
    part as a document of its own (thousands each time). These collections are kept instead inside a few big documents
    ("packs"), the records stored as text: opening the app reads one document per pack.
-   - Stock lines are packed by their place (a hub, a van, the scrap pool), at most `cap` lines a pack, so a technician only
+   - Stock lines are packed by their place (a hub, a van, the scrap pool), at most `cap` lines a pack, so an engineer only
      ever writes the packs of their own van (the security rules check the pack name).
    - Parts and the Excel import records sit in `k` packs, each record in the pack its id hashes to.
    Every change is a transaction on the pack(s) it touches, so two people never overwrite each other's lines. */
@@ -1470,7 +1479,7 @@ let ARCHIVE = null, SCHEMA = null;
 function unsubAll() { for (const k of Object.keys(unsubs)) { try { unsubs[k](); } catch (e) { /* closed */ } delete unsubs[k]; } }
 const userAcc = u => ({ id: u.sid || idFromEmail(u.email || u.id), role: u.role, name: u.name || u.email, title: u.title || ROLE[u.role], email: String(u.email || u.id).toLowerCase(), hub: u.hub || '' });
 function normJob(j) { if (!j.type) j.type = 'req'; if (j.open == null) j.open = isOpenStatus(j.status); return j; }
-/* A technician (by the role on their staff record) only needs their own requests: on Firebase they load just those,
+/* An engineer (by the role on their staff record) only needs their own requests: on Firebase they load just those,
    which keeps each opening of the app to a few hundred document reads (the free plan allows 50,000 a day). */
 const techOnly = () => !!(api && api.kind === 'firebase' && UI.profile && UI.profile.baseRole === 'TECH');
 const jobScope = () => techOnly() ? [['techId', '==', UI.profile.id]] : [];
@@ -1506,7 +1515,7 @@ function subscribeAll() {
   });
   unsubs.stock = api.sub('stock', { limit: 1000 }, list => { LEGACY = list; ready.stock = true; afterLoad(); });
   /* Firebase build: the staff list lives in the database (the Team Leader adds people), so every screen that lists
-     technicians reads it from there */
+     engineers reads it from there */
   if (api.kind === 'firebase') unsubs.users = api.sub('users', { limit: 1000 }, list => {
     USERS = list.map(fixTitle); ACCOUNTS = USERS.filter(u => u.active !== false && ROLE[u.role]).map(userAcc);
     /* the Team Leader changed my account (hub, role, name): it applies straight away */
@@ -1514,11 +1523,11 @@ function subscribeAll() {
     if (mine && mine.active !== false && ROLE[mine.role]) {
       const wasTech = p.baseRole === 'TECH';
       Object.assign(p, { role: mine.role, baseRole: mine.role, hub: mine.hub || '', name: mine.name || p.name, title: mine.title || ROLE[mine.role] });
-      if (wasTech !== (mine.role === 'TECH')) setTimeout(subscribeAll, 0);   /* became or stopped being a technician: load the right data */
+      if (wasTech !== (mine.role === 'TECH')) setTimeout(subscribeAll, 0);   /* became or stopped being an engineer: load the right data */
     }
     DATAV.set++; changed();
   });
-  /* engineer budgets for this year: a technician reads only their own */
+  /* engineer budgets for this year: an engineer reads only their own */
   const by = budYear();
   unsubs.budgets = api.sub('budgets', { where: (techOnly() ? [['sid', '==', UI.profile.id]] : []).concat([['year', '==', by]]) }, list => {
     const m = {}; for (const b of list) if (b.sid) m[b.id] = b; BUDGETS = m; DATAV.set++; changed();
@@ -1529,7 +1538,7 @@ function subscribeAll() {
 function subRecent() {
   if (unsubs.jobsRecent) unsubs.jobsRecent();
   const lim = Math.min(UI.jobLimit, api.maxLimit), got = list => { JOBS_RECENT = list; ALL_LOADED = list.length < lim || !!ARCHIVE; ready.jobsRecent = true; mergeJobs(); };
-  /* a technician's newest requests need a database index (jobs: techId + createdAt). Until it exists, load their requests
+  /* an engineer's newest requests need a database index (jobs: techId + createdAt). Until it exists, load their requests
      without the order instead of showing an error. */
   const plain = () => { unsubs.jobsRecent = api.sub('jobs', { where: jobScope(), limit: 1000 }, list => got(list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, lim))); };
   unsubs.jobsRecent = api.sub('jobs', { where: jobScope(), orderBy: ['createdAt', 'desc'], limit: lim }, got,
@@ -1580,7 +1589,7 @@ function afterLoad() {
 let migrating = false, migratedOnce = false, migrateWait = 0;
 async function runMigration() {
   if (migrating || UI.canWrite === false || Date.now() < migrateWait) return;
-  /* on Firebase only Stock and the Team Leader move data (a technician's phone never reads the whole store for this) */
+  /* on Firebase only Stock and the Team Leader move data (an engineer's phone never reads the whole store for this) */
   const r = UI.profile && (UI.profile.baseRole || UI.profile.role), office = !api.packed || ['TL', 'STOCK'].includes(r);
   const needStock = LEGACY.length > 0 && office;
   const needJobs = JOBS_RECENT.some(j => j.open == null && isOpenStatus(j.status)) && office;
@@ -1811,7 +1820,7 @@ async function savePartSettings(pn, d) {
   const min = {}, max = {};
   for (const h of HUBS) { min[h] = numOrBlank(d['min' + h], `Minimum at ${h}`); max[h] = numOrBlank(d['max' + h], `Maximum at ${h}`); if (min[h] && max[h] && min[h] > max[h]) throw E(`The minimum is higher than the maximum for ${HUB_NAME[h]}.`); }
   const vanMin = numOrBlank(d.vanMin, 'Van minimum'), vanMax = numOrBlank(d.vanMax, 'Van maximum');
-  if (vanMin && vanMax && vanMin > vanMax) throw E('The minimum is higher than the maximum for technician vans.');
+  if (vanMin && vanMax && vanMin > vanMax) throw E('The minimum is higher than the maximum for engineer vans.');
   const autoRep = d.autoRep === 'yes', restricted = d.restricted === 'yes';
   if (autoRep && !vanMin) throw E('Set a van minimum so Auto-Rep knows when to refill.');
   const doc = { name, price, min, max, vanMin, vanMax, autoRep, restricted };
@@ -1837,10 +1846,10 @@ async function fbDeletePartsMany(pns) {
   for (const pn of want) { const k = lines.filter(l => l.pn === pn).length; log({ t: 'Part removed', pn, qty: 0, note: k ? `Removed with ${k} stock line${k === 1 ? '' : 's'}` : 'Removed' }); }
   return want.length;
 }
-/* Stock sends hub parts to a technician's van: one restock per part number, the technician confirms receipt. */
+/* Stock sends hub parts to an engineer's van: one restock per part number, the engineer confirms receipt. */
 async function stockSendToVanMany(d) {
   const me = mustRole('STOCK');
-  const tech = techList().find(t => t.id === d.tech); if (!tech) throw E('Choose the technician.');
+  const tech = techList().find(t => t.id === d.tech); if (!tech) throw E('Choose the engineer.');
   const want = (d.picks || []), picks = want.map(p => { const l = LINES.find(x => x.key === p.id); return l && HUBS.includes(l.loc) ? { key: l.key, loc: l.loc, qty: l.sn ? 1 : Math.max(1, Math.min(qtyOf(l), parseInt(p.qty, 10) || 1)) } : null; }).filter(Boolean);
   if (!want.length) throw E('Pick the parts to send.');
   if (picks.length !== want.length) throw E('One of the parts you picked is no longer at the hub. Check the list.');
@@ -1908,7 +1917,7 @@ async function decideAdj(id, ok, d) {
 }
 
 /* ---------- requests ---------- */
-/* Every request belongs to its technician's hub: only that hub's Team Leaders, Stock and Workshop get it.
+/* Every request belongs to its engineer's hub: only that hub's Team Leaders, Stock and Workshop get it.
    Someone with no hub covers every hub, and a hub with nobody in a role falls back to everyone in that role. */
 function accHub(a) {
   if (!a) return '';
@@ -1958,7 +1967,7 @@ function must(j, status, role) {
   if (!j) throw E('This request no longer exists.');
   const ok = Array.isArray(status) ? status.includes(j.status) : j.status === status;
   if (!ok) throw E(`This request has moved on (${stLabel(j)}). Close and reopen it.`);
-  if (role === 'TECH' && j.techId !== me.id) throw E('This is another technician’s request.');
+  if (role === 'TECH' && j.techId !== me.id) throw E('This is another engineer’s request.');
   if (role !== 'TECH') {
     if (!inMyHub(stepHub(j), me)) throw E(`This request belongs to ${HUB_NAME[stepHub(j)] || stepHub(j)}.`);
     const o = stepOwner(j); if (!isOwner(o, me)) throw E(`${o.name || 'Someone else'} is handling this one.`);
@@ -1990,7 +1999,7 @@ async function createJob(d) {
   const me = mustRole('TECH');
   const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
   const qty = parseInt(d.qty, 10); if (!(qty >= 1 && qty <= 99)) throw E('Quantity must be between 1 and 99.');
-  const forVan = !!d.forVan;   /* a part asked only for the technician's own van stock: no call, machine or site needed */
+  const forVan = !!d.forVan;   /* a part asked only for the engineer's own van stock: no call, machine or site needed */
   let scn = '', machine = '', site = '';
   if (!forVan) {
     scn = (d.scn || '').trim().toUpperCase(); if (!scn) throw E('Enter the Service Call Number. Parts can only be requested against a call.');
@@ -2003,10 +2012,10 @@ async function createJob(d) {
   }
   const now = Date.now(), id = newId('REQ');
   const hub = HUBS.includes(d.hub) ? d.hub : myHub();
-  const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (hub === 'MMH' ? 'inside' : 'outside');   /* inside Muscat (from the Muscat Main Hub) or outside Muscat (from the technician's own hub) */
+  const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (hub === 'MMH' ? 'inside' : 'outside');   /* inside Muscat (from the Muscat Main Hub) or outside Muscat (from the engineer's own hub) */
   const body = { id, type: 'req', forVan, pn, desc: (d.desc || '').trim() || part(pn).name, qty, unit: +part(pn).price || 0, scn, machine, machineSn: forVan ? '' : (findMachine(machine) || {}).sn || '', model: forVan ? '' : (d.model || '').trim(), customer: forVan ? '' : (d.customer || '').trim(), contract: forVan ? '' : (d.contract || '').trim(), site, gps: forVan ? null : d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
-    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', note: (d.note || '').trim(), reason: forVan ? 'For van stock' : '', techId: me.id, techName: me.name, hub, area, grp: d.grp || '', status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
-    history: [{ at: now, by: me.name, role: 'Technician', action: 'Requested', note: forVan ? `${pn} × ${qty} for van stock` : `${pn} × ${qty} for ${scn} · ${machine}` }] };
+    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', chargeable: !forVan && d.charge === '1', note: (d.note || '').trim(), reason: forVan ? 'For van stock' : '', techId: me.id, techName: me.name, hub, area, grp: d.grp || '', status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
+    history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Requested', note: forVan ? `${pn} × ${qty} for van stock` : `${pn} × ${qty} for ${scn} · ${machine}${!forVan && d.charge === '1' ? ' · chargeable case' : ''}` }] };
   await saveJob(body); return id;
 }
 /* one form, several parts: make one request per part so each is tracked on its own, all sharing a group id (grp) so the
@@ -2022,7 +2031,7 @@ async function createJobs(d) {
   for (const pt of parts) ids.push(await createJob(Object.assign({}, d, { pn: pt.pn, desc: pt.desc, qty: pt.qty, grp })));
   return ids;
 }
-/* a technician adds parts straight into their own van (parts they already hold) */
+/* an engineer adds parts straight into their own van (parts they already hold) */
 async function vanAdd(d) {
   const me = mustRole('TECH'); const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
   const loc = vanLoc(me.id), name = (d.name || '').trim() || partName(pn), note = (d.note || '').trim(), cond = d.cond || 'New', sns = parseSNs(d.sns);
@@ -2036,7 +2045,7 @@ async function vanAdd(d) {
   await putLine(loc, pn, { qty, name, cond, note, source: 'Added to van' });
   log({ t: 'Added to van', pn, qty, from: me.name, to: loc, note }); return qty;
 }
-/* a technician loads several parts into the van from an Excel file: each row goes through the same checks as typing it in */
+/* an engineer loads several parts into the van from an Excel file: each row goes through the same checks as typing it in */
 async function vanAddMany(rows, fileName) {
   mustRole('TECH'); let added = 0; const skipped = [];
   for (const r of rows) {
@@ -2050,11 +2059,11 @@ async function techCancel(id, d) {
   return jobStep(id, ['TL', 'STOCK', 'USE_OK'], 'TECH', async (j, me) => {
     if (j.type !== 'req') throw E('Only part requests can be cancelled.');
     const note = (d.cnote || '').trim();
-    return saveJob(nextDoc(j, me, 'CANCELLED', 'Cancelled by technician', note, { outcome: 'Cancelled by technician' }));
+    return saveJob(nextDoc(j, me, 'CANCELLED', 'Cancelled by engineer', note, { outcome: 'Cancelled by engineer' }));
   });
 }
 function checkTl(j, d) {
-  if (d.mode === 'reject') { const rs = d.reason || REJECT_REASONS[0]; if (rs === 'Other' && !(d.remarks || '').trim()) throw E('Explain why you are rejecting it.'); return `Reject ${j.type === 'rep' ? 'this van restock' : 'this request'}? ${j.type === 'rep' ? '' : 'The technician sees your reason.'}`; }
+  if (d.mode === 'reject') { const rs = d.reason || REJECT_REASONS[0]; if (rs === 'Other' && !(d.remarks || '').trim()) throw E('Explain why you are rejecting it.'); return `Reject ${j.type === 'rep' ? 'this van restock' : 'this request'}? ${j.type === 'rep' ? '' : 'The engineer sees your reason.'}`; }
   const q = parseInt(d.q, 10) || j.qty; if (!(q >= 1 && q <= 99)) throw E('Quantity must be between 1 and 99.');
   return null;
 }
@@ -2182,7 +2191,7 @@ async function raiseRefill(j, me, n) {
   const now = Date.now(); let id = `${j.id}-RF`; for (let k = 2; JOB(id); k++) id = `${j.id}-RF${k}`;
   const body = { id, type: 'hubrep', pn: normPN(j.pn), desc: j.desc || partName(j.pn), qty: n, qtyApproved: n, unit: +(j.unit != null ? j.unit : part(j.pn).price) || 0, hub: MAIN_HUB, to: j.hub, refillFor: j.id, techId: me.id, techName: me.name,
     reason: `Refill for ${HUB_NAME[j.hub] || j.hub}`, status: 'REPL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name, scn: j.scn || '', machine: j.machine || '',
-    history: [{ at: now, by: me.name, role: 'Technician', action: 'Hub refill raised', note: `${normPN(j.pn)} × ${n} from ${HUB_NAME[MAIN_HUB]} to ${HUB_NAME[j.hub] || j.hub} (used on ${j.id})` }] };
+    history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Hub refill raised', note: `${normPN(j.pn)} × ${n} from ${HUB_NAME[MAIN_HUB]} to ${HUB_NAME[j.hub] || j.hub} (used on ${j.id})` }] };
   await saveJob(body); return body;
 }
 async function techHubArrived(id) {
@@ -2252,7 +2261,7 @@ async function techUse(id, d) {
     const { rets, useUnits, us, vanAdds, hubBack } = planUse(j, d); const now = Date.now(), due = now + returnDays(jobHub(j)) * DAY, note = (d.note || '').trim();
     const firstUsed = useUnits.find(u => u.used && u.removedSn);
     const use = { at: now, replaced: useUnits.some(u => u.used), units: useUnits, note, removedPn: firstUsed ? firstUsed.removedPn : '', removedSn: firstUsed ? firstUsed.removedSn : '', vanKept: vanAdds.length };
-    /* parts the technician keeps: add them to their van stock now */
+    /* parts the engineer keeps: add them to their van stock now */
     for (const v of vanAdds) {
       await putLine(vanLoc(me.id), v.pn, { sn: v.sn, qty: v.qty, cond: 'New', name: v.name, source: `Kept from ${j.id}` });
       log({ t: 'Kept in van', pn: v.pn, sn: v.sn, qty: v.qty || 1, from: me.name, to: vanLoc(me.id), ref: j.id });
@@ -2277,7 +2286,7 @@ async function techUse(id, d) {
       const item = r.type === 'unused' || r.arrived ? (us.find(u => u.sn && u.sn === r.sn) || {}).item : (r.installedSn ? (us.find(u => u.sn === r.installedSn) || {}).item : null);
       kids.push(Object.assign(cleanCopy(j), { id: cid, parent: j.id, split: true, qty: r.qty, qtyApproved: r.qty, status: 'RETURN', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
         dispatch: Object.assign({}, j.dispatch, { items: item ? [item] : [{ pn: r.pn, sn: '', qty: r.qty, from: (j.dispatch || {}).from }] }), use: Object.assign({}, use, { units: [] }), ret: Object.assign({ due }, r),
-        history: [{ at: now, by: me.name, role: 'Technician', action: 'Separate return created', note: `Split from ${j.id}: ${r.arrived ? 'faulty-on-arrival' : r.type === 'defective' ? 'defective' : 'unused'} ${r.pn}${r.sn ? ' SN ' + r.sn : ' × ' + r.qty}` }] }));
+        history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Separate return created', note: `Split from ${j.id}: ${r.arrived ? 'faulty-on-arrival' : r.type === 'defective' ? 'defective' : 'unused'} ${r.pn}${r.sn ? ' SN ' + r.sn : ' × ' + r.qty}` }] }));
     }
     for (const c of kids) await saveJob(c);
     const doc = nextDoc(j, me, 'RETURN', use.replaced ? 'Replacement recorded' : rets[0].arrived ? 'Part arrived faulty' : 'Part not used', summary + (note ? ' · ' + note : ''), { use, ret: Object.assign({ due }, rets[0]), splits: (j.splits || []).concat(kids.map(c => c.id)), rcvPhotos: (d.photos || []).slice(0, 3) });
@@ -2473,7 +2482,7 @@ async function stockBackInStock(id, d) {
   });
 }
 
-/* ---------- technician van stock & Auto-Rep ---------- */
+/* ---------- engineer van stock & Auto-Rep ---------- */
 function checkVanUse(d) {
   const me = ME(); const l = LINES.find(x => x.key === d.line && x.loc === vanLoc(me.id));
   if (!l) throw E('Pick the part you used from your van.');
@@ -2492,12 +2501,72 @@ async function vanUse(d) {
     dispatch: { by: me.name, at: now, items: [t], sn: t.sn || 'bulk × ' + n, from: vanLoc(me.id), courier: '', ref: '' },
     use: { at: now, replaced: true, units: t.sn ? [{ sn: t.sn, used: true, removedPn: rpn, removedSn: rsn }] : [{ bulk: true, qty: n, used: n }], removedPn: rpn, removedSn: rsn, note: (d.note || '').trim() },
     ret: { type: 'defective', pn: rpn, sn: rsn, qty: n, name: t.name, due: now + returnDays(myHub()) * DAY },
-    history: [{ at: now, by: me.name, role: 'Technician', action: 'Used from van stock', note: `${t.pn} ${t.sn ? 'SN ' + t.sn : '× ' + n} on ${scn} · ${machine}${rsn ? ' · removed SN ' + rsn : ''}` }] };
+    history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Used from van stock', note: `${t.pn} ${t.sn ? 'SN ' + t.sn : '× ' + n} on ${scn} · ${machine}${rsn ? ' · removed SN ' + rsn : ''}` }] };
   try { await saveJob(job); } catch (e) { await putBack([t]); throw e; }
   log({ t: 'Installed from van stock', pn: t.pn, sn: t.sn, qty: n, from: vanLoc(me.id), to: machine, ref: id });
   log({ t: 'Removed from machine', pn: rpn, sn: rsn, qty: n, from: machine, to: me.name, ref: id });
   const rep = await autoRep(me.id, me.name, t.pn);
   return { job, rep };
+}
+/* ---------- engineer: send parts back to the Main Hub in one go (before leave, or to clear the van / his outside hub's
+   shelf). The parts leave his van or hub at once and are "on the way" until Stock at the Main Hub confirms them; anything
+   Stock doesn't tick as arrived goes back where it came from, so nothing disappears from the inventory. ---------- */
+/* the main hub of a hub's country: Muscat Main Hub in Oman, Dubai Main Hub in the UAE */
+const mainHubFor = h => { const c = hubCountry(h), m = HUB_INFO.find(x => x.country === c && /main hub/i.test(x.name || '')); return m ? m.code : MAIN_HUB; };
+/* where an engineer can send parts back from: his van, and the shelf of his own outside hub */
+function backSources(me) {
+  me = me || ME(); if (!me) return [];
+  const out = [[vanLoc(me.id), 'My van']], h = myHub();
+  if (isOutHub(h) && h !== mainHubFor(h)) out.push([h, HUB_NAME[h] || h]);
+  return out;
+}
+async function techSendBack(d) {
+  const me = mustRole('TECH'), src = d.src || vanLoc(me.id);
+  if (!backSources(me).some(([v]) => v === src)) throw E('You can only send back parts from your own van or your own hub.');
+  const to = mainHubFor(myHub()); if (src === to) throw E('These parts are already at the Main Hub.');
+  const want = [...new Set(d.items || [])], lines = want.map(k => LINES.find(l => l.key === k && l.loc === src));
+  if (!want.length) throw E('Tick the parts to send back.');
+  if (lines.some(l => !l)) throw E('Some parts have moved since you opened this. Close it and open it again.');
+  const taken = await takeMany(lines.map(l => ({ key: l.key, qty: qtyOf(l), loc: src })));
+  const now = Date.now(), id = newId('RET'), n = sum(taken, t => t.qty), ref = (d.ref || '').trim(), note = (d.note || '').trim();
+  const job = { id, type: 'ret', pn: taken[0].pn, desc: 'Return to ' + (HUB_NAME[to] || to), qty: n, qtyApproved: n, techId: me.id, techName: me.name, hub: to, from: src,
+    items: taken.map(t => ({ pn: t.pn, name: t.name || '', sn: t.sn || '', qty: t.qty, cond: t.cond || 'New', bin: t.bin || '', price: +t.price || 0 })), back: { ref, note, at: now },
+    status: 'RETURNING', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
+    history: [{ at: now, by: me.name, byId: me.id, role: ROLE.TECH, action: 'Sent back to the Main Hub', note: `${n} part${n === 1 ? '' : 's'} from ${locName(src)} to ${HUB_NAME[to] || to}${ref ? ' · ' + ref : ''}${note ? ' · ' + note : ''}` }] };
+  try { await saveJob(job); } catch (e) { await putBack(taken); throw e; }
+  for (const t of taken) log({ t: 'Sent back to the Main Hub', pn: t.pn, sn: t.sn, qty: t.qty, from: src, to, ref: id, note });
+  return job;
+}
+/* Stock at the Main Hub: the parts that arrived go on its shelf; the ones not ticked go back to where they came from */
+async function stockTakeBack(id, d) {
+  return jobStep(id, 'RETURNING', 'STOCK', async (j, me) => {
+    if (j.type !== 'ret') throw E('This is not a return to the Main Hub.');
+    const items = j.items || [], got = new Set((d.items || items.map((x, i) => String(i))).map(String));
+    if (!items.some((x, i) => got.has(String(i)))) throw E('Tick the parts that arrived. If none arrived, ask the engineer to cancel this return.');
+    /* a serial number already in the inventory would stop halfway: check them all first */
+    for (const t of items) if (t.sn) { const dup = await snInStock(t.sn); if (dup) throw E(`Serial number ${t.sn} is already in the inventory (${locName(dup.loc)}). Sort that out first.`); }
+    const ok = [], missing = [];
+    for (const [i, t] of items.entries()) {
+      const arrived = got.has(String(i));
+      await putLine(arrived ? j.hub : j.from, t.pn, { sn: t.sn, qty: t.qty, cond: t.cond, bin: arrived ? '' : t.bin, name: t.name, source: arrived ? `Sent back by ${j.techName}` : 'Not received at the Main Hub' });
+      (arrived ? ok : missing).push(t);
+    }
+    const nOk = sum(ok, t => t.qty), note = `${nOk} part${nOk === 1 ? '' : 's'} received${missing.length ? ` · not received: ${missing.map(t => t.pn + ' ' + itemTxt(t)).join(', ')} (back in ${locName(j.from)})` : ''}`;
+    const doc = await saveJob(nextDoc(j, me, 'CLOSED', 'Received at the Main Hub', note, { back: Object.assign({}, j.back, { doneAt: Date.now(), doneBy: me.name, missing: missing.map(t => `${t.pn} ${itemTxt(t)}`) }) }));
+    for (const t of ok) log({ t: 'Received back at the Main Hub', pn: t.pn, sn: t.sn, qty: t.qty, from: j.techName, to: j.hub, ref: j.id });
+    for (const t of missing) log({ t: 'Not received at the Main Hub', pn: t.pn, sn: t.sn, qty: t.qty, from: j.techName, to: j.from, ref: j.id });
+    return doc;
+  });
+}
+/* the engineer changes his mind before Stock confirms: the parts go back to his van or hub */
+async function techCancelBack(id) {
+  return jobStep(id, 'RETURNING', 'TECH', async (j, me) => {
+    if (j.type !== 'ret') throw E('This is not a return to the Main Hub.');
+    for (const t of j.items || []) await putLine(j.from, t.pn, { sn: t.sn, qty: t.qty, cond: t.cond, bin: t.bin, name: t.name, source: 'Return cancelled' });
+    const doc = await saveJob(nextDoc(j, me, 'CANCELLED', 'Return cancelled', `Parts back in ${locName(j.from)}`));
+    for (const t of j.items || []) log({ t: 'Return to the Main Hub cancelled', pn: t.pn, sn: t.sn, qty: t.qty, from: 'On the way', to: j.from, ref: j.id });
+    return doc;
+  });
 }
 async function autoRep(techId, tName, pn) {
   const p = part(pn); if (!p.autoRep || !(+p.vanMin > 0)) return null;
@@ -2606,7 +2675,7 @@ const budKey = (sid, y) => `${sid}~${y}`;
 const budOffice = () => { const r = UI.profile && (UI.profile.baseRole || UI.profile.role); return ['TL', 'STOCK'].includes(r); };
 /* what a request costs the engineer's budget right now */
 function jobSpend(j) {
-  if (!j || j.split || j.type === 'rep' || j.type === 'hubrep' || ['REJECTED', 'CANCELLED'].includes(j.status)) return 0;
+  if (!j || j.split || j.chargeable || ['rep', 'hubrep', 'ret'].includes(j.type) || ['REJECTED', 'CANCELLED'].includes(j.status)) return 0;   /* a chargeable case is paid by the customer, not the engineer's budget */
   const up = +(j.unit != null ? j.unit : part(j.pn).price) || 0, items = (j.dispatch && j.dispatch.items) || [];
   const priceOf = it => it && +it.price > 0 ? +it.price : up;
   if (j.use && Array.isArray(j.use.units) && j.use.units.length) {   /* after the job: only what was installed */
@@ -2769,7 +2838,7 @@ function budgetCard(sid, title) {
   return `<section class="card bud" aria-label="Budget"><div class="bud-h"><span class="lead ${tone}">${ic('wallet')}</span><div class="main"><b>${esc(title || 'My budget ' + b.year)}</b><span class="s">${b.left < 0 ? `<span class="t-bad">Over budget by ${money(-b.left)}</span>` : `${money(b.left)} left`}</span></div><span class="bud-pct ${tone}">${pct}%</span></div>
     ${budBar(b.used, b.amount)}<div class="bud-nums"><span>Used <b>${money(b.used)}</b></span><span>Budget <b>${money(b.amount)}</b></span></div></section>`;
 }
-/* one line about a technician's budget: on the new request form, and for the Team Leader approving */
+/* one line about an engineer's budget: on the new request form, and for the Team Leader approving */
 function budgetLine(sid, cost, already, who, forVan) {
   const b = budgetInfo(sid); if (!b.set) return '';
   const used = r3(b.used - (already || 0) + (cost || 0)), left = r3(b.amount - used), tone = budTone(used, b.amount);
@@ -2777,9 +2846,10 @@ function budgetLine(sid, cost, already, who, forVan) {
   const sub = `${who ? esc(who) + '’s budget' : 'Budget'} ${b.year}: ${money(used)} used of ${money(b.amount)}${cost ? ' · this request ' + money(cost) : ''}${forVan ? ' · given back when it reaches the van' : ''}`;
   return `<div class="budnew ${tone}" role="status"><span class="lead ${tone}">${ic('wallet', 'sm')}</span><div class="main"><b>${head}</b><span class="s">${sub}</span>${budBar(used, b.amount)}</div></div>`;
 }
-/* new request form: what the parts in it cost the technician */
+/* new request form: what the parts in it cost the engineer */
 function newBudget(d) {
   const me = ME(); if (!me || me.role !== 'TECH') return '';
+  if (!d.forVan && d.charge === '1') return budgetInfo(me.id).set ? `<div class="budnew ok" role="status"><span class="lead ok">${ic('wallet', 'sm')}</span><div class="main"><b>Chargeable case</b><span class="s">These parts are not taken from your budget.</span></div></div>` : '';
   const list = (d.parts || []).slice(), cur = normPN(d.pn); if (cur && !list.some(x => normPN(x.pn) === cur)) list.push({ pn: cur, qty: d.qty });
   const html = budgetLine(me.id, partsCost(list), 0, '', !!d.forVan); if (!html) return '';
   const noPrice = list.filter(p => !(+part(p.pn).price > 0)).length;
@@ -2819,10 +2889,20 @@ function steps(j) {
   const r = j.ret || {}, w = j.ws || {};
   if (j.type === 'rep') return [['Restock raised', true], ['Approved', ['STOCK', 'DISPATCHED'].includes(j.status) || !!j.dispatch], ['Sent to the van', !!j.dispatch], ['Received into the van', j.status === 'CLOSED' && !!j.receivedAt]];
   if (j.type === 'hubrep') return [['Refill raised', true], ['Sent by the Muscat Main Hub', !!j.dispatch], ['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']];
+  if (j.type === 'ret') return [['Sent back by the engineer', true], ['Received at ' + (HUB_NAME[j.hub] || j.hub), j.status === 'CLOSED']];
   const tail = [['Return sent', !!r.shippedAt], ['Return received at Stock', !!r.hubAt], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   if (j.type === 'van') return [['Used from van stock', true]].concat(tail);
   if (fromHub(j)) return [['Requested', true], ['Team Leader approved', !!j.tl && !j.tl.rejected && !j.tl.withdrawn], ['Taken from ' + (HUB_NAME[j.hub] || j.hub), !!j.dispatch], ['Replacement recorded', !!j.use]].concat(tail);
-  return [['Requested', true], ['Team Leader approved', !!j.dispatch || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)], ['Dispatched by Stock', !!j.dispatch], ['Received by technician', !!j.receivedAt], ['Replacement recorded', !!j.use]].concat(tail);
+  return [['Requested', true], ['Team Leader approved', !!j.dispatch || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)], ['Dispatched by Stock', !!j.dispatch], ['Received by engineer', !!j.receivedAt], ['Replacement recorded', !!j.use]].concat(tail);
+}
+/* a return to the Main Hub in a list: how many parts, from where */
+function retRow(j, me, mine, tone) {
+  const n = jobQty(j), pns = new Set((j.items || []).map(t => t.pn)).size;
+  return `<button class="jcard ${mine ? 'mine' : ''}" data-a="sheet" data-s="job" data-id="${esc(j.id)}">
+    <span class="j-ic ${tone ? 't-' + tone : ''}">${ic(ST_IC[j.status] || 'ret')}</span>
+    <span class="j-main"><span class="j-t1"><b>${esc(j.desc || 'Return to the Main Hub')}</b><span class="when">${rel(j.updatedAt)}</span></span>
+      <span class="j-t2"><span class="num">${n} part${n === 1 ? '' : 's'}</span><span>· ${pns} part number${pns === 1 ? '' : 's'}</span>${me.role !== 'TECH' ? `<span>· ${esc(j.techName)}</span>` : ''}${kindPills(j)}</span>
+      <span class="j-t3">${mine && stNext(j) ? `<span class="next">${esc(stNext(j))}${ic('chev')}</span>` : stChip(j)}</span></span></button>`;
 }
 function kindPills(j) {
   let s = '';
@@ -2830,6 +2910,8 @@ function kindPills(j) {
   if (j.forVan) s += '<span class="pill">For van</span>';
   if (j.type === 'van') s += '<span class="pill">From van</span>';
   if (j.type === 'hubrep') s += `<span class="pill">Hub refill · ${esc(j.to || '')}</span>`;
+  if (j.type === 'ret') s += `<span class="pill">Return · ${esc(isVan(j.from) ? 'van' : j.from || '')}</span>`;
+  if (j.chargeable) s += '<span class="pill">Chargeable</span>';
   if (fromHub(j)) s += `<span class="pill">From ${esc(j.hub)} stock</span>`;
   if (j.backorder) s += '<span class="pill">Back-order</span>';
   if (j.split) s += '<span class="pill">Separate return</span>';
@@ -2849,6 +2931,7 @@ function jobRow(j, me) {
   if (j.status === 'RETURN') extra = esc(dueText(retDue(j)));
   else if (j.status === 'REPAIRING') extra = `${tmState(j) === 'running' ? 'Running' : tmState(j) === 'paused' ? 'Paused' : 'Not started'} · <span data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</span>`;
   const rem = j.status === 'RETURN' && (j.reminders || []).length ? `<span class="remline">${ic('bell', 'sm')}Team Leader reminder · ${esc(rel(j.reminders[j.reminders.length - 1].at))}</span>` : '';
+  if (j.type === 'ret') return retRow(j, me, mine, tone);
   const who = j.type === 'rep' ? `${esc(j.techName)}’s van` : j.type === 'hubrep' ? `Refill · ${esc(HUB_NAME[j.to] || j.to)}` : me.role !== 'TECH' ? esc(j.techName) : j.scn ? `<span class="mono">${esc(j.scn)}</span>` : '';
   const title = j.desc || partName(j.pn) || (j.type === 'rep' ? 'Van restock' : 'Request');
   return `<button class="jcard ${mine ? 'mine' : ''} ${late ? 'late' : ''}" data-a="sheet" data-s="job" data-id="${esc(j.id)}">
@@ -2937,12 +3020,12 @@ function allList(me) {
   return `${shown.length ? `<div class="jobs">${shown.map(j => jobRow(j, me)).join('')}</div>` : emptyBox(q ? 'No matches' : 'Nothing here', q ? 'Try another search.' : '')}${all.length > shown.length ? `<p class="note">Showing 200 of ${all.length}. Search to narrow it.</p>` : ''}${more}`;
 }
 
-/* ---------- technician van ---------- */
+/* ---------- engineer van ---------- */
 function vanView(me) {
   const loc = vanLoc(me.id), lines = LINES.filter(l => l.loc === loc), units = sum(lines, qtyOf), low = vanLow(me.id);
   const groups = new Map(); for (const l of lines) { const g = groups.get(l.pn) || []; g.push(l); groups.set(l.pn, g); }
   for (const x of low) if (!groups.has(x.pn)) groups.set(x.pn, []);
-  const reps = JOBS.filter(j => j.type === 'rep' && j.techId === me.id && isOpenStatus(j.status));
+  const reps = JOBS.filter(j => ['rep', 'ret'].includes(j.type) && j.techId === me.id && isOpenStatus(j.status));
   const list = [...groups.entries()].map(([pn, g]) => {
     const p = part(pn), tot = sum(g, qtyOf), lv = levelOf(tot, +p.vanMin || 0, +p.vanMax || 0);
     return `<section class="blk"><div class="grp"><h2>${tag(pn)} ${esc(p.name || (g[0] || {}).name || '')}</h2><span class="lv">${tot} in van${p.vanMin ? ` · min ${p.vanMin}${p.vanMax ? ' · max ' + p.vanMax : ''}` : ''}</span><span class="lvs">${lv ? `<span class="lvl ${lv}">${lv === 'low' ? 'Low' : lv === 'over' ? 'Over max' : 'OK'}</span>` : ''}</span></div>
@@ -2951,7 +3034,8 @@ function vanView(me) {
   return `<div class="kpis k3"><div class="kpi"><span class="k">Units</span><span class="v">${units}</span></div><div class="kpi"><span class="k">Part numbers</span><span class="v">${new Set(lines.map(l => l.pn)).size}</span></div><div class="kpi ${low.length ? 'warn' : ''}"><span class="k">Below min</span><span class="v">${low.length}</span></div></div>
     ${lines.length ? `<button class="btn cta block" data-a="sheet" data-s="vanuse">${ic('wrench', 'sm')}Use a part from my van</button>` : ''}
     <button class="btn ${lines.length ? 'sec' : 'cta'} block" data-a="sheet" data-s="vanadd">${ic('plus', 'sm')}Add a part to my van</button>
-    ${reps.length ? `<section class="blk"><div class="sec-h"><h2>Restocks for your van</h2></div><div class="jobs">${reps.map(j => jobRow(j, me)).join('')}</div></section>` : ''}
+    ${backSources(me).some(([v]) => LINES.some(l => l.loc === v)) ? `<button class="btn sec block" data-a="sheet" data-s="sendback">${ic('ret', 'sm')}Return parts to the Main Hub</button>` : ''}
+    ${reps.length ? `<section class="blk"><div class="sec-h"><h2>Restocks and returns</h2></div><div class="jobs">${reps.map(j => jobRow(j, me)).join('')}</div></section>` : ''}
     ${lines.length || groups.size ? list : emptyBox('Your van is empty', 'Parts Stock sends you show up here.')}<div style="height:56px"></div>`;
 }
 
@@ -3000,17 +3084,17 @@ function dbView(me) {
   if (me.role !== 'TL') return '<div class="err">Only the Team Leader can open the database.</div>';
   const open = JOBS.filter(j => isOpenStatus(j.status)).length, overdue = JOBS.filter(isLate).length;
   const rep = JOBS.filter(j => j.ws && j.ws.total != null), cost = sum(rep, j => j.ws.total);
-  const cols = ['Request', 'Type', 'Technician', 'Part', 'SCN', 'Status', 'Returned SN', 'Repair total'];
+  const cols = ['Request', 'Type', 'Engineer', 'Part', 'SCN', 'Status', 'Returned SN', 'Repair total'];
   const rows = JOBS.slice(0, 400);
   return `<div class="kpis"><div class="kpi"><span class="k">Requests${allLoaded() ? '' : ' <small>(newest)</small>'}</span><span class="v">${JOBS.length}</span></div><div class="kpi"><span class="k">Open</span><span class="v">${open}</span></div><div class="kpi ${overdue ? 'bad' : ''}"><span class="k">Returns overdue</span><span class="v">${overdue}</span></div><div class="kpi"><span class="k">Repair cost</span><span class="v">${Math.round(cost).toLocaleString('en-GB')}<small>OMR</small></span></div></div>
     <div class="duo">
       <div class="card"><div class="sec-h" style="padding:0"><h2>Workshop rate per hour</h2><b class="num">${money(SETTINGS.rate)}</b></div><div class="withscan"><input class="inp num" id="rate" data-draft="rate" type="number" min="0" step="any" inputmode="decimal" value="${esc(draft('rate', SETTINGS.rate))}" aria-label="Workshop rate per hour (OMR)"><button class="btn sm" data-a="saveRate">Save</button></div><span class="hint">Repair cost = hours × rate + parts</span></div>
       <div class="card"><div class="sec-h" style="padding:0"><h2>Auto-Rep approval limits</h2></div><div class="two"><div class="fld"><label class="lbl" for="p-autoMaxValue">Up to value (OMR)</label><input class="inp num" id="p-autoMaxValue" data-draft="autoMaxValue" type="number" min="0" step="any" inputmode="decimal" value="${esc(draft('autoMaxValue', POLICY.autoMaxValue))}"></div><div class="fld"><label class="lbl" for="p-autoMaxQty">Up to units</label><input class="inp num" id="p-autoMaxQty" data-draft="autoMaxQty" type="number" min="0" step="1" inputmode="numeric" value="${esc(draft('autoMaxQty', POLICY.autoMaxQty))}"></div></div><button class="btn sm sec" data-a="savePolicy">Save limits</button><span class="hint">Smaller restocks skip your approval</span></div>
     </div>
-    ${UI.fbMode ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Staff accounts</h2><button class="btn sm" data-a="sheet" data-s="accounts">${ic('user', 'sm')}Manage</button></div><span class="hint">${USERS.filter(u => u.active !== false).length} people can sign in · ${USERS.filter(u => u.active !== false && u.role === 'TECH').length} technicians</span></div>` : ''}
+    ${UI.fbMode ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Staff accounts</h2><button class="btn sm" data-a="sheet" data-s="accounts">${ic('user', 'sm')}Manage</button></div><span class="hint">${USERS.filter(u => u.active !== false).length} people can sign in · ${USERS.filter(u => u.active !== false && u.role === 'TECH').length} engineers</span></div>` : ''}
     ${UI.fbMode && me.role === 'TL' ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Security</h2><button class="btn sm sec" data-a="sheet" data-s="security">${ic('lock', 'sm')}2-factor login</button></div><span class="hint">${UI.otpOn ? 'On · a login code the first time on each phone' : 'Off · sign in with email and password only'} · passwords change every 30 days</span></div>` : ''}
     ${UI.fbMode ? '' : `<div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2><button class="btn sm sec" data-a="sheet" data-s="pwreset">${ic('ret', 'sm')}Reset a password</button></div><span class="hint">Everyone can change their own password in their profile</span></div>`}
-    <div class="card"><div class="sec-h" style="padding:0"><h2>Machine list</h2><button class="btn sm sec" data-a="sheet" data-s="machines">${ic('sheet', 'sm')}${UI.machInfo ? 'Update' : 'Import Excel'}</button></div><span class="hint">${ensureMachines(() => { if (UI.tab === 'db') render(); }) && UI.machInfo ? `${UI.machInfo.n.toLocaleString('en-GB')} machines · technicians type the ATM code or serial number and SPMS fills in the rest` : MACHINES ? 'No machines yet. Import the ATM / CDM list so new requests fill in the machine details.' : 'Loading…'}</span></div>
+    <div class="card"><div class="sec-h" style="padding:0"><h2>Machine list</h2><button class="btn sm sec" data-a="sheet" data-s="machines">${ic('sheet', 'sm')}${UI.machInfo ? 'Update' : 'Import Excel'}</button></div><span class="hint">${ensureMachines(() => { if (UI.tab === 'db') render(); }) && UI.machInfo ? `${UI.machInfo.n.toLocaleString('en-GB')} machines · engineers type the ATM code or serial number and SPMS fills in the rest` : MACHINES ? 'No machines yet. Import the ATM / CDM list so new requests fill in the machine details.' : 'Loading…'}</span></div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Hubs</h2><button class="btn sm sec" data-a="sheet" data-s="hubs">${ic('edit', 'sm')}Manage hubs</button></div><div class="chips">${HUB_INFO.map(h => `<span class="chip plain" title="${esc(h.name)}"><b>${esc(h.code)}</b>&nbsp;${esc(h.name)}${h.country ? ' · ' + esc(h.country) : ''}</span>`).join('')}</div></div>
     <button class="btn" data-a="excel">${ic('download', 'sm')}Download Excel · 10 sheets, with graphs</button>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Test data</h2><button class="btn sm danger" data-a="sheet" data-s="wipe">${ic('ban', 'sm')}Delete…</button></div><span class="hint">Clear the requests, inventory log and stock left over from testing, so the reports and the dashboard start from zero</span></div>
@@ -3078,7 +3162,7 @@ function chime(force) {
 }
 let headsT;
 const HEAD_TITLE = { TL: 'New part request', STOCK: 'Approved · ready to send', DISPATCHED: 'Part on the way to you', RECEIVED: 'Record the replacement', RETURN: 'Return due', RETURNING: 'Return on the way', ATHUB: 'Return to route', WORKSHOP: 'Part sent for repair', REPAIRING: 'Repair to finish', REPAIRED: 'Repaired part coming back' };
-function headTitle(j) { if (j.type === 'rep') return { TL: 'Van restock to approve', STOCK: 'Van restock to send', DISPATCHED: 'Restock on the way to your van' }[j.status] || 'Van restock'; return HEAD_TITLE[j.status] || stNext(j) || 'Update'; }
+function headTitle(j) { if (j.type === 'ret') return j.status === 'RETURNING' ? 'Parts coming back to the Main Hub' : stLabel(j); if (j.type === 'rep') return { TL: 'Van restock to approve', STOCK: 'Van restock to send', DISPATCHED: 'Restock on the way to your van' }[j.status] || 'Van restock'; return HEAD_TITLE[j.status] || stNext(j) || 'Update'; }
 function headsUp(items) {
   if (!items.length) return;
   const it = items[0], more = items.length - 1;
@@ -3090,7 +3174,7 @@ function headsUp(items) {
 }
 function hideHeads() { clearTimeout(headsT); const h = $('#heads'); if (h) h.classList.remove('show'); }
 function hideHeadsFor(id) { const h = $('#heads'); if (h && h.classList.contains('show') && h.querySelector(`[data-id="${CSS.escape(id)}"]`)) hideHeads(); }
-const jobHead = j => ({ s: 'job', id: j.id, icon: j.type === 'rep' ? 'van' : ST_IC[j.status] || 'bell2', title: headTitle(j), urgent: j.urgency === 'urgent' && j.status === 'TL', line: `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${j.type === 'rep' ? j.techName + '’s van' : j.techName}` });
+const jobHead = j => ({ s: 'job', id: j.id, icon: j.type === 'rep' ? 'van' : ST_IC[j.status] || 'bell2', title: headTitle(j), urgent: j.urgency === 'urgent' && j.status === 'TL', line: j.type === 'ret' ? `${jobQty(j)} part${jobQty(j) === 1 ? '' : 's'} · ${j.desc || ''} · ${j.techName}` : `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${j.type === 'rep' ? j.techName + '’s van' : j.techName}` });
 
 
 function sheetErr(e) {
@@ -3135,15 +3219,18 @@ function hubSeg(d, k, except) {
   if (hs.length <= 3) return segBtns(d, k, hs.map(h => [h, HUB_NAME[h]]));
   return `<select class="inp" id="f-${k}" data-d="${k}" data-rr="1" aria-label="Hub">${hs.map(h => `<option value="${esc(h)}"${d[k] === h ? ' selected' : ''}>${esc(h)} · ${esc(HUB_NAME[h])}</option>`).join('')}</select>`;
 }
-/* the hub a technician's parts usually come from: their recent dispatches */
+/* the hub an engineer's parts usually come from: their recent dispatches */
 function usualHub(techId) { const c = {}; for (const j of JOBS) if (j.techId === techId && j.dispatch && HUBS.includes(j.dispatch.from)) c[j.dispatch.from] = (c[j.dispatch.from] || 0) + 1; const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0]; if (best) return best[0]; const a = ACC(techId); return a && HUBS.includes(a.hub) ? a.hub : null; }
 function availText(pn) { const a = HUBS.map(h => `${h} ${qtyAt(h, pn)}`); const me = ME(); if (me && me.role === 'TECH') a.push(`${qtyAt(vanLoc(me.id), pn)} in your van`); return a.join(' · '); }
 const itemTxt = t => `${t.sn ? 'SN ' + t.sn : 'bulk × ' + t.qty}`;
 const jobLink = id => `<button class="linkbtn mono" data-a="sheet" data-s="job" data-id="${esc(id)}">${esc(id)}</button>`;
 
 /* ---------- request / restock / van-use panel ---------- */
+/* the steps a request went through (older records say "Engineer"; shown as "Engineer") */
+const histFold = (j, turn) => `<details class="fold"${turn ? '' : ' open'}><summary>History<span class="t3">${(j.history || []).length} step${(j.history || []).length === 1 ? '' : 's'}</span></summary><div class="fold-b"><ul class="tl">${(j.history || []).map(h => `<li class="${/Rejected|Scrapped|Cancelled|withdrawn/i.test(h.action) ? 'bad' : 'ok'}"><div class="t1">${esc(eng(h.action))}</div>${h.note ? `<div class="t2">${esc(eng(h.note))}</div>` : ''}<div class="t3">${fmtDT(h.at)} · ${esc(h.by)}${h.role ? ' · ' + esc(eng(h.role)) : ''}</div></li>`).join('')}${stWho(j) ? `<li class="now"><div class="t1">Waiting: ${esc(ROLE[stWho(j)])}</div><div class="t2">${esc(stNext(j))}</div></li>` : ''}</ul></div></details>`;
 SH.job = (d, p) => {
   const j = JOB(p.id); if (!j) return { title: 'Not found', body: emptyBox('This request no longer exists', '') };
+  if (j.type === 'ret') return retSheet(j, d);
   const me = ME(), turn = myTurn(j, me), alts = altActions(j, me);
   let a = null;
   if (d.alt) a = altForm(j, me, d); else if (turn) a = actionForm(j, me, d);
@@ -3153,7 +3240,7 @@ SH.job = (d, p) => {
   const pbar = ['REJECTED', 'CANCELLED'].includes(j.status) ? '' : `<div class="pbar" aria-label="${doneN} of ${st.length} steps done"><div class="segs">${st.map(([, ok], i) => `<i class="${ok ? 'on' : i === cur ? 'cur' : ''}"></i>`).join('')}</div><div class="lab"><span>${cur < 0 ? '<b>All steps done</b>' : `Next: <b>${esc(st[cur][0])}</b>`}</span><span>${doneN} of ${st.length}</span></div></div>`;
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
   const facts = j.type === 'rep' ? fact('Van', esc(j.techName)) + fact('Why', esc(j.reason || 'Van restock')) + fact('Value', money(jobQty(j) * (+part(j.pn).price || 0))) + fact('Raised', fmtD(j.createdAt))
-    : fact('Technician', esc(j.techName)) + fact('Service call', `<span class="mono">${esc(j.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j.machine || '–')}${j.machineSn && j.machineSn !== j.machine ? ' · SN ' + esc(j.machineSn) : ''}</span>`) + fact(j.customer || !j.site ? 'Customer' : 'Site', esc(j.customer || j.site || '–'));
+    : fact('Engineer', esc(j.techName)) + fact('Service call', `<span class="mono">${esc(j.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j.machine || '–')}${j.machineSn && j.machineSn !== j.machine ? ' · SN ' + esc(j.machineSn) : ''}</span>`) + fact(j.customer || !j.site ? 'Customer' : 'Site', esc(j.customer || j.site || '–'));
   const head = `<div class="card"><div class="chips">${tag(j.pn)}<b class="num">× ${jobQty(j)}</b>${stChip(j)}${lateChip(j)}${kindPills(j)}</div>${j.desc ? `<div class="jh-t">${esc(j.desc)}</div>` : ''}<div class="facts">${facts}</div>${['TL', 'STOCK'].includes(j.status) ? `<div class="t3 muted">In stock: ${esc(availText(j.pn))}</div>` : ''}${pbar}${stWho(j) && !turn ? `<div class="infobox nextbox"><span>Next: <b>${esc(ROLE[stWho(j)])}${stepOwner(j) && stepOwner(j).name ? ' (' + esc(stepOwner(j).name) + ')' : ''}</b> · ${esc(stNext(j))}</span></div>` : ''}</div>`;
   const info = `<details class="fold"><summary>Details<span class="t3 mono">${esc(j.id)}</span></summary><div class="fold-b">${dl([['Reference', `<span class="mono">${esc(j.id)}</span>`], ['Hub', esc(HUB_NAME[jobHub(j)] || jobHub(j))], j.parent && [j.backorder ? 'Back-order of' : 'Split from', jobLink(j.parent)],
       j.model && ['Model', esc(j.model)], j.contract && ['AMC / lease', esc(j.contract)], j.site && j.customer && ['Site', esc(j.site)],
@@ -3164,13 +3251,13 @@ SH.job = (d, p) => {
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
       r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}`],
       (j.reminders || []).length && ['Reminders', j.reminders.map(x => `${fmtDT(x.at)} · ${esc(x.by)}`).join('<br>')],
-      w.total != null && w.doneAt && ['Repair', `${esc(w.outcome)} · ${money(w.total)}`], j.outcome && ['Outcome', esc(j.outcome)]])}</div></details>`;
+      w.total != null && w.doneAt && ['Repair', `${esc(w.outcome)} · ${money(w.total)}`], j.outcome && ['Outcome', esc(eng(j.outcome))]])}</div></details>`;
   const altRow = !d.alt && alts.length ? `<div class="alts">${alts.map(([v, l, x]) => x === 'remind' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}${esc(l)}</button>` : `<button class="btn sm sec" data-a="alt" data-v="${v}">${esc(l)}</button>`).join('')}</div>` : '';
   let body = head + (a ? a.form : '') + altRow + info;
   if ((j.reqPhotos || []).length || (j.rcvPhotos || []).length) body += `<section class="blk"><div class="card">${photoStrip(j.reqPhotos, 'Request photos')}${photoStrip(j.rcvPhotos, 'Photos when received')}</div></section>`;
   if (w.doneAt) body += `<section class="blk"><div class="sec-h"><h2>Repair report</h2></div><div class="card">${dl([(w.partName || w.partSn) && ['Part', `${esc(w.partName || '')} ${w.partSn ? '<span class="mono">SN ' + esc(w.partSn) + '</span>' : ''}`], w.diagnosis && ['What was wrong', esc(w.diagnosis)], w.fix && ['How fixed', esc(w.fix)], w.materials && ['Things used', esc(w.materials)], ['Workshop time', `${fmtDur((w.tm && w.tm.acc) || 0)} (${w.hours} h) × ${money(w.rate)}/h = ${money(w.labour)}`], w.matCost ? ['Materials', money(w.matCost)] : null, w.timeFixed && ['Time corrected', (w.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${esc(x.why)} (${esc(x.by)})`).join('<br>')], w.notes && ['Notes', esc(w.notes)], ['Total', `<b>${money(w.total)}</b>`], ['Time at workshop', `${w.days} days`], ['By', `${esc(w.doneBy || w.by)} · ${fmtDT(w.doneAt)}`]])}</div></section>`;
   if (!['REJECTED', 'CANCELLED'].includes(j.status)) body += `<details class="fold"><summary>All steps<span class="t3">${doneN} of ${st.length}</span></summary><div class="fold-b"><ul class="steps">${st.map(([l, ok], i) => `<li class="${ok ? 'done' : i === cur ? 'cur' : ''}">${esc(l)}</li>`).join('')}</ul></div></details>`;
-  body += `<details class="fold"${turn ? '' : ' open'}><summary>History<span class="t3">${(j.history || []).length} step${(j.history || []).length === 1 ? '' : 's'}</span></summary><div class="fold-b"><ul class="tl">${(j.history || []).map(h => `<li class="${/Rejected|Scrapped|Cancelled|withdrawn/i.test(h.action) ? 'bad' : 'ok'}"><div class="t1">${esc(h.action)}</div>${h.note ? `<div class="t2">${esc(h.note)}</div>` : ''}<div class="t3">${fmtDT(h.at)} · ${esc(h.by)}${h.role ? ' · ' + esc(h.role) : ''}</div></li>`).join('')}${stWho(j) ? `<li class="now"><div class="t1">Waiting: ${esc(ROLE[stWho(j)])}</div><div class="t2">${esc(stNext(j))}</div></li>` : ''}</ul></div></details>`;
+  body += histFold(j, turn);
   let foot;
   if (!d.alt && turn && j.status === 'REPAIRING') {
     const tm = tmState(j), b2 = (v, l, c) => `<button class="btn ${c || ''}" data-a="ws" data-v="${v}" id="ws-${v}">${l}</button>`;
@@ -3190,7 +3277,7 @@ SH.group = (d, p) => {
   const canAct = !!(me && me.role === 'TL' && inMyHub(jobHub(j0), me) && pending.length);
   if (canAct && !d.reason) d.reason = REJECT_REASONS[0];
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
-  const facts = fact('Technician', esc(j0.techName)) + (forVan ? fact('For', 'Van stock') : fact('Service call', `<span class="mono">${esc(j0.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j0.machine || '–')}</span>`) + fact(j0.customer ? 'Customer' : 'Site', esc(j0.customer || j0.site || '–'))) + fact('Raised', fmtD(j0.createdAt));
+  const facts = fact('Engineer', esc(j0.techName)) + (j0.chargeable ? fact('Case', 'Chargeable') : '') + (forVan ? fact('For', 'Van stock') : fact('Service call', `<span class="mono">${esc(j0.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j0.machine || '–')}</span>`) + fact(j0.customer ? 'Customer' : 'Site', esc(j0.customer || j0.site || '–'))) + fact('Raised', fmtD(j0.createdAt));
   const head = `<div class="card"><div class="jh-t">Request · ${sibs.length} part${sibs.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} to decide` : ' · all decided'}</div><div class="facts">${facts}</div>${canAct ? budgetLine(j0.techId, 0, 0, j0.techName, forVan) : ''}</div>`;
   const rows = sibs.map(j => {
     const decided = j.status !== 'TL';
@@ -3198,7 +3285,7 @@ SH.group = (d, p) => {
     const btns = (canAct && !decided) ? `<div class="two" style="gap:6px"><button class="btn sm ok" data-a="grpOne" data-id="${esc(j.id)}" data-m="approve">Approve</button><button class="btn sm danger" data-a="grpOne" data-id="${esc(j.id)}" data-m="reject">Reject</button></div>` : '';
     return `<div class="card" style="gap:8px"><div class="chips">${tag(j.pn)}<b class="num">× ${j.qty}</b>${stTxt}</div><div class="t3">${esc(j.desc || partName(j.pn) || '')} · in stock: ${esc(availText(j.pn))}</div>${btns}</div>`;
   }).join('');
-  const rejectBox = canAct ? `${sel(d, 'reason', 'Reason for any reject', REJECT_REASONS)}${area(d, 'remarks', d.reason === 'Other' ? 'Explain the reject (required)' : 'Remarks (optional)', 'The technician sees this on rejected parts')}` : '';
+  const rejectBox = canAct ? `${sel(d, 'reason', 'Reason for any reject', REJECT_REASONS)}${area(d, 'remarks', d.reason === 'Other' ? 'Explain the reject (required)' : 'Remarks (optional)', 'The engineer sees this on rejected parts')}` : '';
   const allBtns = canAct ? `<div class="two"><button class="btn ok" data-a="grpAll" data-m="approve">Approve all ${pending.length}</button><button class="btn danger" data-a="grpAll" data-m="reject">Reject all ${pending.length}</button></div>` : '';
   return { title: 'Request', sub: forVan ? esc(j0.techName) + ' · van stock' : `${esc(j0.scn || '')}${j0.machine ? ' · ' + esc(j0.machine) : ''}`, body: `${head}${rows}${rejectBox}${allBtns}`, foot: `<button class="btn sec" data-a="close">Close</button>` };
 };
@@ -3219,7 +3306,7 @@ function altForm(j, me, d) {
   switch (d.alt) {
     case 'cancel': return { title: 'Cancel request', form: box(`<p style="margin:0">Cancel the request for <b>${esc(j.pn)} × ${j.qty}</b> on <span class="mono">${esc(j.scn)}</span>? Use this when the part is no longer needed.</p>${area(d, 'cnote', 'Reason (optional)', 'e.g. Fixed without a new part')}`), op: { label: 'Cancel request', cls: 'danger', danger: true, yes: 'Yes, cancel it', check: () => 'Cancel this request? It will close and Stock won’t send the part.', run: () => techCancel(j.id, d), ok: 'Request cancelled' } };
     case 'askmain': return { title: 'Ask the Muscat Main Hub', form: box(`<p style="margin:0">The part isn’t on the shelf at ${esc(HUB_NAME[j.hub] || j.hub)}? Then Stock at the Muscat Main Hub sends <b>${esc(j.pn)} × ${j.qtyApproved || j.qty}</b> to you instead, like any other request.</p>${area(d, 'anote', 'Note (optional)', 'e.g. Shelf empty, or the part there is damaged')}`), op: { label: 'Ask the Muscat Main Hub', run: () => techAskMain(j.id, d), ok: 'Sent to Stock at the Muscat Main Hub' } };
-    case 'withdraw': return { title: 'Withdraw approval', form: box(`<p style="margin:0">Stock has not sent this part yet. Withdrawing closes the ${j.type === 'rep' ? 'restock' : 'request'} as rejected, and the technician sees your reason.</p>${area(d, 'wnote', 'Why are you withdrawing it? (required)', 'e.g. Customer replaced the machine')}`), op: { label: 'Withdraw approval', cls: 'danger', danger: true, yes: 'Yes, withdraw', check: () => checkWithdraw(j, d), run: () => tlWithdraw(j.id, d), ok: 'Approval withdrawn' } };
+    case 'withdraw': return { title: 'Withdraw approval', form: box(`<p style="margin:0">Stock has not sent this part yet. Withdrawing closes the ${j.type === 'rep' ? 'restock' : 'request'} as rejected, and the engineer sees your reason.</p>${area(d, 'wnote', 'Why are you withdrawing it? (required)', 'e.g. Customer replaced the machine')}`), op: { label: 'Withdraw approval', cls: 'danger', danger: true, yes: 'Yes, withdraw', check: () => checkWithdraw(j, d), run: () => tlWithdraw(j.id, d), ok: 'Approval withdrawn' } };
     case 'fixsn': return { title: 'Correct serial number', form: box(`<p style="margin:0">Current serial number of the part you are returning: <b class="mono">${esc(j.ret.sn || '(none)')}</b></p>${inp(d, 'fsn', 'Correct serial number *', 'As printed on the part', { mono: true })}${inp(d, 'fwhy', 'Why is it changing? *', 'e.g. Typing mistake')}<span class="hint">The old value is kept in the history and the inventory log.</span>`), op: { label: 'Save correction', run: () => techFixSn(j.id, d), stay: true, ok: 'Serial number corrected' } };
     case 'scrap': return { title: 'Scrap the part', form: box(`<p style="margin:0">Can’t repair <b class="mono">${esc(j.ret.pn)}${j.ret.sn ? ' SN ' + esc(j.ret.sn) : ''}</b>? Scrap it here. It goes to the scrap pool (its good pieces can be used in other repairs) and the request closes.</p>${area(d, 'sreason', 'Why can’t it be repaired? *', 'e.g. Main board burnt, no spare available')}${wsParts(j).length ? `<span class="hint">Spare parts already used (${money(sum(wsParts(j), p => +p.cost || 0))}) stay on the repair cost.</span>` : ''}`), op: { label: 'Scrap part', cls: 'danger', danger: true, yes: 'Yes, scrap it', check: () => checkScrap(j, d), run: () => wsScrap(j.id, d), ok: 'Scrapped. The part is in the scrap pool.' } };
     case 'fixtime': return { title: 'Correct repair time', form: box(`<p style="margin:0">Timer now: <b data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</b>. Enter the time actually worked so far. ${tmState(j) === 'running' ? 'The timer keeps running from the corrected time.' : ''}</p><div class="two">${inp(d, 'fh', 'Hours', '0', { type: 'number', num: true })}${inp(d, 'fm', 'Minutes', '0', { type: 'number', num: true })}</div>${inp(d, 'fwhy', 'Why are you correcting it? *', 'e.g. Forgot to start the timer')}<span class="hint">The Team Leader sees every correction in the repair report and the Excel file.</span>`), op: { label: 'Save time', run: () => wsFixTime(j.id, d), stay: true, ok: 'Repair time corrected' } };
@@ -3233,13 +3320,13 @@ function actionForm(j, me, d) {
     case 'TL': {
       if (!d.mode) d.mode = 'approve'; if (d.q == null) d.q = j.qty; if (!d.reason) d.reason = REJECT_REASONS[0];
       const rep = j.type === 'rep', why = rep ? ((j.history || []).find(h => /Needs Team Leader/.test(h.action)) || {}).note : '';
-      const bud = rep ? '' : budgetLine(j.techId, r3((+(j.unit != null ? j.unit : part(j.pn).price) || 0) * (+d.q || j.qty)), j.createdAt >= budgetInfo(j.techId).from ? jobSpend(j) : 0, j.techName, !!j.forVan);
+      const bud = rep ? '' : j.chargeable ? `<div class="budnew ok" role="status"><span class="lead ok">${ic('wallet', 'sm')}</span><div class="main"><b>Chargeable case</b><span class="s">Not taken from ${esc(j.techName)}’s budget.</span></div></div>` : budgetLine(j.techId, r3((+(j.unit != null ? j.unit : part(j.pn).price) || 0) * (+d.q || j.qty)), j.createdAt >= budgetInfo(j.techId).from ? jobSpend(j) : 0, j.techName, !!j.forVan);
       const route = rep || j.forVan || !isOutHub(j.hub) ? '' : hubUse(j, +d.q || j.qty)
         ? `<div class="autohint">${ic('hub', 'sm')}<span>From his hub: ${esc(HUB_NAME[j.hub] || j.hub)} has ${qtyAt(j.hub, j.pn)} in stock. After you approve, he takes it there; when he installs it, the Muscat Main Hub refills the hub.</span></div>`
         : `<div class="infobox">${ic('truck', 'sm')} ${j.hub !== accHub(ACC(j.techId)) ? `Requested from ${esc(HUB_NAME[j.hub] || j.hub)}, not his own hub` : `Not enough at ${esc(HUB_NAME[j.hub] || j.hub)} (${qtyAt(j.hub, j.pn)} in stock)`}: Stock at the Muscat Main Hub sends it to him.</div>`;
       const form = box(`${bud}${route}${rep ? `<div class="infobox">${j.auto ? 'Auto-Rep restock' : 'Van restock'} for ${esc(j.techName)}’s van: ${esc(j.reason || '')}.${why ? ' Needs you because: ' + esc(why) + '.' : ''} Value ${money(jobQty(j) * (+part(j.pn).price || 0))}.</div>` : ''}${segBtns(d, 'mode', [['approve', 'Approve'], ['reject', 'Reject']])}
-        ${d.mode === 'approve' ? fld('Quantity to approve', stepper(d, 'q', 1, 99, 'Quantity to approve'), +d.q !== j.qty ? `Requested ${j.qty}.` : '') + area(d, 'remarks', 'Remarks (optional)', rep ? 'Visible to Stock' : 'Visible to the technician')
-          : sel(d, 'reason', 'Reason', REJECT_REASONS) + area(d, 'remarks', d.reason === 'Other' ? 'Explain (required)' : 'Note (optional)', 'Visible to the technician')}`);
+        ${d.mode === 'approve' ? fld('Quantity to approve', stepper(d, 'q', 1, 99, 'Quantity to approve'), +d.q !== j.qty ? `Requested ${j.qty}.` : '') + area(d, 'remarks', 'Remarks (optional)', rep ? 'Visible to Stock' : 'Visible to the engineer')
+          : sel(d, 'reason', 'Reason', REJECT_REASONS) + area(d, 'remarks', d.reason === 'Other' ? 'Explain (required)' : 'Note (optional)', 'Visible to the engineer')}`);
       return { form, op: { label: d.mode === 'reject' ? 'Reject' : 'Approve', cls: d.mode === 'reject' ? 'danger' : 'ok', danger: true, yes: 'Yes, reject', check: () => checkTl(j, d), run: () => tlDecide(j.id, d) } };
     }
     case 'REPL':
@@ -3370,7 +3457,7 @@ function autoFill(kind, d) {
 }
 const autoHint = (d, ...kinds) => { const h = kinds.map(k => d['_hint_' + k]).filter(Boolean)[0]; return h ? `<div class="autohint" role="status">${ic('check', 'sm')}<span>${esc(h)}</span></div>` : ''; };
 
-/* ---------- technician: new request ---------- */
+/* ---------- engineer: new request ---------- */
 /* Read coordinates the way phones copy them: "23.588, 58.383", "23.588 58.383", "23.58845° N, 58.38291° E",
    23°35'18.4"N 58°22'58.5"E, Arabic digits, and full Google Maps links. Swapped numbers are put right for Oman/UAE. */
 const inGulf = (lat, lng) => lat >= 16 && lat <= 27.5 && lng >= 51 && lng <= 60.5;
@@ -3481,7 +3568,7 @@ function pnSuggest(d) {
   if (q) { const v = qtyAt(van, q), h = sum(hubLines(q), qtyOf); hint = v ? `<div class="okbox" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span>You have <b>${v}</b> in your van — no need to request it.</span>${UI.sheet && UI.sheet.name === 'new' ? `<button class="btn sm" data-a="sheet" data-s="vanuse">${ic('wrench', 'sm')}Use from my van</button>` : ''}</div>` : `<span class="hint" style="color:${h ? 'var(--ok)' : 'var(--warn)'}">${h ? HUBS.map(x => `${x} ${qtyAt(x, q)}`).join(' · ') + ' at the hubs' : 'Not in stock at the hubs. You can still request it.'}</span>`; }
   return (chips ? `<div class="snchips">${chips}</div>` : '') + hint;
 }
-/* the hub a request comes from: the nearest hub to the GPS or typed position, unless the technician picked one */
+/* the hub a request comes from: the nearest hub to the GPS or typed position, unless the engineer picked one */
 function hubFromPlace(d) {
   if (d._picked && d._picked.hub) return false;
   let g = d.gps && !d.gps.doubt ? d.gps : null; if (!g && (d.gpsTxt || '').trim()) g = parseCoords(d.gpsTxt); if (!g) g = d.gps;
@@ -3549,6 +3636,7 @@ SH.new = d => {
       ${fld('Quantity' + star, `<div class="stepper" role="group" aria-label="Quantity"><button type="button" data-a="step" data-k="qty" data-delta="-1" aria-label="Less"${d.qty <= 1 ? ' disabled' : ''}>−</button><output class="num">${d.qty}</output><button type="button" data-a="step" data-k="qty" data-delta="1" aria-label="More"${d.qty >= 99 ? ' disabled' : ''}>+</button></div>`)}
       <button class="btn sec" data-a="addPart">${ic('plus', 'sm')}Add another part${forVan ? '' : ' for the same machine'}</button>
       ${fld('What is this for?', segBtns(d, 'forVan', [['', 'For a machine'], ['1', 'For my van']]), forVan ? 'Van stock — no call or machine needed. It goes into your van when you receive it.' : 'A part for a job on a machine.')}
+      ${forVan ? '' : fld('Chargeable case', segBtns(d, 'charge', [['', 'No'], ['1', 'Yes']]), d.charge === '1' ? 'The customer pays for these parts: they are not taken from your budget.' : 'Choose Yes if the customer pays for the parts. Then they are not taken from your budget.')}
       <div id="live-budnew" aria-live="polite">${newBudget(d)}</div>
       ${forVan ? '' : `<div class="sec-h" style="padding:10px 0 0"><h2>The machine</h2></div>
       ${inp(d, 'scn', 'Service Call Number *', 'e.g. SCN-26-04831', { mono: true, auto: 'scn' })}${machineField(d)}${autoHint(d, 'scn', 'machine')}
@@ -3563,7 +3651,7 @@ SH.new = d => {
   };
 };
 
-/* ---------- technician: use a part from the van ---------- */
+/* ---------- engineer: use a part from the van ---------- */
 SH.vanuse = d => {
   const me = ME(), lines = LINES.filter(l => l.loc === vanLoc(me.id));
   if (!lines.length) return { title: 'Use a part from my van', body: emptyBox('Your van is empty', 'Parts that Stock sends to your van show up here.') };
@@ -3582,9 +3670,49 @@ SH.vanuse = d => {
   };
 };
 
-/* ---------- technician: add a part to their own van ---------- */
+/* ---------- engineer: send parts back to the Main Hub (before leave, or to clear the van / his outside hub) ---------- */
+const backOpt = (on, id, pn, sn, qty, name, cond) => `<button class="opt ${on ? 'on' : ''}" aria-pressed="${on}" data-a="togItem" data-id="${esc(id)}"><span class="radio"></span><span class="main"><span class="t1">${tag(pn)} ${sn ? `<span class="mono">SN ${esc(sn)}</span>` : `× ${qty}`}</span><span class="t2">${esc(name || partName(pn) || '')}${cond && cond !== 'New' ? ' · ' + esc(cond) : ''}</span></span></button>`;
+SH.sendback = d => {
+  const me = ME(); if (!me || me.role !== 'TECH') return { title: 'Return parts', body: '<div class="err">Only an engineer can send parts back.</div>' };
+  const srcs = backSources(me); if (!srcs.some(([v]) => v === d.src)) d.src = srcs[0][0];
+  const to = mainHubFor(myHub()), toName = HUB_NAME[to] || to, van = isVan(d.src);
+  const lines = LINES.filter(l => l.loc === d.src).sort((a, b) => a.pn.localeCompare(b.pn) || String(a.sn || '').localeCompare(String(b.sn || '')));
+  d._all = lines.map(l => l.key);
+  if (d._src !== d.src || !d.items) { d.items = d._all.slice(); d._src = d.src; }   /* everything, unless he unticks some */
+  d.items = d.items.filter(k => d._all.includes(k));
+  const units = sum(lines.filter(l => d.items.includes(l.key)), qtyOf);
+  const body = `${srcs.length > 1 ? fld('Send back from', segBtns(d, 'src', srcs)) : ''}
+    <div class="infobox">${ic('ret', 'sm')} The parts go to <b>${esc(toName)}</b>. Stock there confirms them when they arrive; anything that doesn't arrive comes back to your ${van ? 'van' : 'hub'}.</div>
+    ${lines.length ? fld(`Parts to send · ${units} unit${units === 1 ? '' : 's'}`, `<button class="btn sm sec" data-a="allItems">${d.items.length === lines.length ? 'Untick all' : 'Tick all'}</button><div class="opts">${lines.map(l => backOpt(d.items.includes(l.key), l.key, l.pn, l.sn, qtyOf(l), l.name, l.cond)).join('')}</div>`, 'Going on leave? Send everything.') : emptyBox('Nothing here', van ? 'Your van is empty.' : 'There are no parts on this shelf.')}
+    ${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}${area(d, 'note', 'Note', 'e.g. Going on leave until 20 Nov')}`;
+  return { title: 'Return parts to the Main Hub', sub: esc(toName), body,
+    op: d.items.length ? { label: `Send ${units} part${units === 1 ? '' : 's'} back`, yes: 'Yes, send', check: () => `Send ${units} part${units === 1 ? '' : 's'} to ${toName}? They leave your ${van ? 'van' : 'hub'} now.`, run: () => techSendBack(d), ok: `On the way to ${toName}. Stock confirms them when they arrive.` } : null,
+    foot: d.items.length ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
+};
+/* a return to the Main Hub: Stock ticks what arrived; the engineer can cancel it until then */
+function retSheet(j, d) {
+  const me = ME(), turn = myTurn(j, me), items = j.items || [], b = j.back || {}, open = j.status === 'RETURNING', n = jobQty(j);
+  const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
+  let body = `<div class="card"><div class="chips"><b class="num">${n} part${n === 1 ? '' : 's'}</b>${stChip(j)}${kindPills(j)}</div><div class="jh-t">${esc(j.desc || 'Return to the Main Hub')}</div>
+    <div class="facts">${fact('Engineer', esc(j.techName))}${fact('From', esc(locName(j.from)))}${fact('To', esc(HUB_NAME[j.hub] || j.hub))}${fact('Sent', fmtDT(j.createdAt))}${fact('Reference', b.ref ? `<span class="mono">${esc(b.ref)}</span>` : '')}${fact('Note', esc(b.note || ''))}</div></div>`;
+  let op = null;
+  if (turn && open) {
+    d._all = items.map((x, i) => String(i)); if (!d.items) d.items = d._all.slice();
+    const got = items.filter((x, i) => d.items.includes(String(i))), miss = items.length - got.length, nGot = sum(got, t => t.qty);
+    body += box(`<p style="margin:0">Tick each part that arrived. Anything not ticked goes back to ${esc(locName(j.from))}.</p><button class="btn sm sec" data-a="allItems">${d.items.length === items.length ? 'Untick all' : 'Tick all'}</button><div class="opts">${items.map((t, i) => backOpt(d.items.includes(String(i)), String(i), t.pn, t.sn, t.qty, t.name, t.cond)).join('')}</div>`);
+    op = { label: `Confirm ${nGot} received`, yes: 'Yes, confirm', check: () => miss ? `${miss} not ticked go${miss === 1 ? 'es' : ''} back to ${locName(j.from)}. Confirm the rest arrived?` : null, run: () => stockTakeBack(j.id, d), ok: `Added to the ${HUB_NAME[j.hub] || j.hub} stock` };
+  } else {
+    body += `<section class="blk"><div class="sec-h"><h2>Parts</h2></div><div class="list">${items.map(t => `<div class="row"><span class="lead info">${ic('box', 'sm')}</span><div class="main"><div class="t1">${tag(t.pn)} ${t.sn ? `<span class="mono">SN ${esc(t.sn)}</span>` : `× ${t.qty}`}</div><div class="t3">${esc(t.name || partName(t.pn) || '')}${t.cond && t.cond !== 'New' ? ' · ' + esc(t.cond) : ''}</div></div></div>`).join('')}</div></section>`;
+    if ((b.missing || []).length) body += `<div class="alert warn wrap"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>Not received at the Main Hub</b><span class="s">${esc(b.missing.join(', '))} · back in ${esc(locName(j.from))}</span></div></div>`;
+    if (open && me && me.role === 'TECH' && j.techId === me.id) op = { label: 'Cancel this return', danger: true, yes: 'Yes, cancel', check: () => `Cancel this return? The parts go back to ${locName(j.from)}.`, run: () => techCancelBack(j.id), ok: `Cancelled · the parts are back in ${locName(j.from)}` };
+  }
+  body += histFold(j, turn);
+  return { title: turn && open ? stNext(j) : 'Return to the Main Hub', sub: `${esc(j.techName)} · <span class="mono">${esc(j.id)}</span>`, body, op };
+}
+
+/* ---------- engineer: add a part to their own van ---------- */
 SH.vanadd = d => {
-  const me = ME(); if (!me || me.role !== 'TECH') return { title: 'Add to my van', body: '<div class="err">Only a technician can add to their van.</div>' };
+  const me = ME(); if (!me || me.role !== 'TECH') return { title: 'Add to my van', body: '<div class="err">Only an engineer can add to their van.</div>' };
   if (!d.qty) d.qty = 1; if (!d.cond) d.cond = 'New'; if (!d.vmode) d.vmode = 'type';
   const seg = segBtns(d, 'vmode', [['type', 'Type it in'], ['excel', 'From Excel']]);
   if (d.vmode === 'excel') {
@@ -3651,7 +3779,7 @@ SH.part = (d, p) => {
     title: 'Part settings', sub: esc(pn),
     body: `${inp(d, 'name', 'Part name *', '')}${inp(d, 'price', 'Unit price (OMR)', '0.000', { type: 'number', num: true })}
       ${HUBS.map(h => `${fld(HUB_NAME[h], `<div class="two">${inp(d, 'min' + h, 'Minimum', '0', { type: 'number', num: true })}${inp(d, 'max' + h, 'Maximum', '0', { type: 'number', num: true })}</div>`)}`).join('')}
-      ${fld('Each technician’s van', `<div class="two">${inp(d, 'vanMin', 'Minimum', '0', { type: 'number', num: true })}${inp(d, 'vanMax', 'Maximum', '0', { type: 'number', num: true })}</div>`)}
+      ${fld('Each engineer’s van', `<div class="two">${inp(d, 'vanMin', 'Minimum', '0', { type: 'number', num: true })}${inp(d, 'vanMax', 'Maximum', '0', { type: 'number', num: true })}</div>`)}
       ${fld('Auto-Rep', segBtns(d, 'autoRep', [['no', 'Off'], ['yes', 'On']]), 'Tops vans up when they drop below the minimum')}
       ${fld('Restricted part', segBtns(d, 'restricted', [['no', 'No'], ['yes', 'Yes']]), 'Always needs the Team Leader')}
       <span class="hint">0 switches a level off</span>
@@ -3709,8 +3837,8 @@ SH.line = (d, p) => {
   const n = l.sn ? 1 : Math.min(+d.mq || 1, qtyOf(l)), unit = `${n} × ${l.pn}${l.sn ? ' SN ' + l.sn : ''}`;
   let form = '', op = null;
   if (d.mode === 'van') {
-    form = `${sel(d, 'tech', 'Technician', techs.map(t => [t.id, t.name]))}${l.sn ? '' : fld('Quantity', stepper(d, 'mq', 1, qtyOf(l), 'Quantity'))}<div class="infobox">${ic('truck', 'sm')} Goes by company van</div>${inp(d, 'ref', 'Reference', 'Optional', { mono: true })}`;
-    op = { label: 'Send to van', yes: 'Yes, send', check: () => `Send ${unit} to ${techName(d.tech)}’s van? It leaves ${l.loc} now.`, run: () => stockSendToVan(l.key, d), ok: 'Sent. The technician confirms receipt.' };
+    form = `${sel(d, 'tech', 'Engineer', techs.map(t => [t.id, t.name]))}${l.sn ? '' : fld('Quantity', stepper(d, 'mq', 1, qtyOf(l), 'Quantity'))}<div class="infobox">${ic('truck', 'sm')} Goes by company van</div>${inp(d, 'ref', 'Reference', 'Optional', { mono: true })}`;
+    op = { label: 'Send to van', yes: 'Yes, send', check: () => `Send ${unit} to ${techName(d.tech)}’s van? It leaves ${l.loc} now.`, run: () => stockSendToVan(l.key, d), ok: 'Sent. The engineer confirms receipt.' };
   } else if (d.mode === 'move') {
     const pick = fld('Move to', hubSeg(d, 'to', l.loc)), to = d.to;
     form = `${pick}${l.sn ? '' : fld('Quantity', stepper(d, 'mq', 1, qtyOf(l), 'Quantity'))}`;
@@ -3737,7 +3865,7 @@ SH.adj = (d, p) => {
     foot: `<button class="btn danger" data-a="adjDecide" data-v="no">Reject</button><button class="btn ok" data-a="go" id="f-go">Approve change</button>` };
 };
 
-/* ---------- Stock: send parts to a technician's van ---------- */
+/* ---------- Stock: send parts to an engineer's van ---------- */
 const vanPending = (techId, pn) => sum(JOBS.filter(j => j.type === 'rep' && j.techId === techId && normPN(j.pn) === normPN(pn) && isOpenStatus(j.status)), j => j.qtyApproved || j.qty);
 function vanNeeds(techId) {   /* parts below the van minimum, minus restocks already on the way */
   return vanLow(techId).map(x => Object.assign({}, x, { need: Math.max(x.max, x.min) - x.qty - vanPending(techId, x.pn) })).filter(x => x.need > 0);
@@ -3749,7 +3877,7 @@ function vanAvail(d) {
   return `<div class="snchips">${hits.slice(0, 30).map(l => `<button class="snchip" data-a="vanPick" data-id="${esc(l.key)}"><span class="mono">${esc(l.pn)}${l.sn ? ' · ' + esc(l.sn) : ''}</span><small>${esc(l.name || partName(l.pn))}${l.sn ? '' : ' · ' + qtyOf(l) + ' in stock'}</small></button>`).join('')}</div>${hits.length > 30 ? `<span class="hint">Showing 30 of ${hits.length}. Type to narrow.</span>` : ''}`;
 }
 SH.sendvan = (d, p) => {
-  const techs = techList(); if (!techs.length) return { title: 'Send to a van', body: emptyBox('No technicians yet', 'Technicians appear here once they have an account.') };
+  const techs = techList(); if (!techs.length) return { title: 'Send to a van', body: emptyBox('No engineers yet', 'Engineers appear here once they have an account.') };
   if (!d._i) { d.tech = p.id && techs.some(t => t.id === p.id) ? p.id : techs[0].id; d.from = myHub(); d.picks = []; d._i = 1; }
   d.picks = (d.picks || []).filter(pk => LINES.some(l => l.key === pk.id && HUBS.includes(l.loc)));
   const t = techs.find(x => x.id === d.tech) || techs[0], inVan = sum(LINES.filter(l => l.loc === vanLoc(t.id)), qtyOf), needs = vanNeeds(t.id);
@@ -3757,8 +3885,8 @@ SH.sendvan = (d, p) => {
   const sug = needs.length ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Below the van minimum</h2><button class="btn sm sec" data-a="vanSuggestAll">${ic('plus', 'sm')}Add all</button></div><div class="list">${needs.map(x => { const at = qtyAt(d.from, x.pn); return `<div class="row"><div class="main"><div class="t1">${tag(x.pn)} ${esc(x.name || partName(x.pn))}</div><div class="t3">${x.qty} in van · min ${x.min} · max ${x.max} · send ${x.need} · ${at} at ${esc(d.from)}</div></div>${at ? `<button class="btn sm sec" data-a="vanSuggest" data-id="${esc(x.pn)}">Add</button>` : ''}</div>`; }).join('')}</div></div>` : '';
   const list = d.picks.length ? `<div class="list">${d.picks.map(pk => { const l = LINES.find(x => x.key === pk.id); return `<div class="row"><div class="main"><div class="t1">${tag(l.pn)} ${l.sn ? `<span class="mono">SN ${esc(l.sn)}</span>` : ''}</div><div class="t3">${esc(l.name || partName(l.pn))} · from ${esc(l.loc)}</div></div>${l.sn ? '' : `<div class="stepper" role="group" aria-label="Quantity"><button type="button" data-a="vanQty" data-id="${esc(l.key)}" data-delta="-1" aria-label="Less"${+pk.qty <= 1 ? ' disabled' : ''}>−</button><output class="num">${esc(pk.qty)}</output><button type="button" data-a="vanQty" data-id="${esc(l.key)}" data-delta="1" aria-label="More"${+pk.qty >= qtyOf(l) ? ' disabled' : ''}>+</button></div>`}<button class="x" data-a="vanUnpick" data-id="${esc(l.key)}" aria-label="Remove ${esc(l.pn)}">${ic('x', 'sm')}</button></div>`; }).join('')}</div>` : '<p class="note">No parts picked yet.</p>';
   return {
-    title: 'Send to a van', sub: 'The technician confirms when they arrive',
-    body: `${sel(d, 'tech', 'Technician', techs.map(x => [x.id, x.name]))}<p class="note" style="margin-top:-8px">${inVan} part${inVan === 1 ? '' : 's'} in ${esc(t.name)}’s van now${needs.length ? ` · ${needs.length} below the minimum` : ''}</p>
+    title: 'Send to a van', sub: 'The engineer confirms when they arrive',
+    body: `${sel(d, 'tech', 'Engineer', techs.map(x => [x.id, x.name]))}<p class="note" style="margin-top:-8px">${inVan} part${inVan === 1 ? '' : 's'} in ${esc(t.name)}’s van now${needs.length ? ` · ${needs.length} below the minimum` : ''}</p>
       ${fld('Send from', hubSeg(d, 'from'))}${sug}
       ${fld('Find parts at ' + d.from, `<div class="searchbox">${ic('search')}<input class="inp" id="f-vq" data-d="vq" data-live="vanav" placeholder="Part number, name or serial" value="${esc(d.vq || '')}" autocomplete="off" aria-label="Find parts"></div><div id="live-vanav">${vanAvail(d)}</div>`)}
       <section class="blk"><div class="sec-h"><h2>Sending</h2><span class="t3 muted">${units} part${units === 1 ? '' : 's'}</span></div>${list}</section>
@@ -3780,7 +3908,7 @@ SH.hubs = d => {
     op: can ? { label: d.hedit ? 'Save hub' : 'Add hub', run: () => saveHub(d), stay: true, ok: c => `Hub ${c} saved` } : null,
     foot: can ? `<button class="btn sec" data-a="${d.hedit ? 'hubNew' : 'close'}">${d.hedit ? 'Cancel edit' : 'Close'}</button><button class="btn" data-a="go" id="f-go">${d.hedit ? 'Save hub' : 'Add hub'}</button>` : '' };
 };
-/* after a technician sends a request: confirm it, say how the Team Leader hears about it, and allow an immediate cancel */
+/* after an engineer sends a request: confirm it, say how the Team Leader hears about it, and allow an immediate cancel */
 const tlHears = () => FIREBASE_BUILD && pushConfigured() ? 'The Team Leader gets a notification now' : 'The Team Leader sees it in Approvals now';
 SH.sent = (d, p) => {
   const j = JOB(p.id); if (!j) return { title: 'Request sent', sub: tlHears(), body: '', foot: `<button class="btn" data-a="close">Done</button>` };
@@ -3921,7 +4049,7 @@ async function readImportFile(file) {
   } catch (e) { d._err = e instanceof UserError ? e.message : 'Could not read this file. Save it as .xlsx or .csv and try again.'; if (!(e instanceof UserError)) console.error(e); }
   d.impBusy = false; if (UI.sheet === s) renderSheet();
 }
-/* ---------- technician: load parts into the van from Excel (same column names as the stock import) ---------- */
+/* ---------- engineer: load parts into the van from Excel (same column names as the stock import) ---------- */
 function vanRows(raw) {
   const ready = [], bad = [], seen = new Set();
   for (const o of raw) {
@@ -4068,7 +4196,7 @@ SH.import = d => {
 };
 /* ==========================================================================
    Machine list (ATMs and CDMs): the Team Leader imports it from Excel once (and again to update it). In a new request
-   the technician types the ATM code (Terminal ID) or the serial number and SPMS fills in the machine, model, customer
+   the engineer types the ATM code (Terminal ID) or the serial number and SPMS fills in the machine, model, customer
    and site. Kept in the database (staff only), in a few large records so loading it costs only a few reads.
    ========================================================================== */
 const MACH_CHUNK = 400, MACH_SEP = '\t';
@@ -4174,7 +4302,7 @@ SH.machines = d => {
   const active = f ? f.rows.filter(m => !/removed|inactive|not\s*act/i.test(m.status)).length : 0;
   const byCust = f ? groupSum(f.rows, m => m.customer, () => 1).slice(0, 8) : [];
   return {
-    title: 'Machine list', sub: 'ATMs and CDMs: the technician types the ATM code or serial number, SPMS fills in the rest',
+    title: 'Machine list', sub: 'ATMs and CDMs: the engineer types the ATM code or serial number, SPMS fills in the rest',
     body: `<div class="infobox">${ic('db', 'sm')}${MACHINES == null ? 'Loading…' : info ? `<span><b>${info.n.toLocaleString('en-GB')} machines</b> saved${info.at ? ` · ${esc(fmtD(info.at))}` : ''}${info.by ? ` by ${esc(info.by)}` : ''}. Importing again replaces the whole list.</span>` : 'No machine list yet. Import your Excel file.'}</div>
       <div class="card"><div class="sec-h" style="padding:0"><h2>Choose the Excel file</h2></div><p class="note" style="padding:0">Columns used: Serial Number, Terminal ID (ATM code), Customer, Device Model, Location, Country, Status. Other columns are left out.</p>
         <label class="drop" for="f-machfile">${ic('inbox')}<b>${f ? esc(f.name) : 'Drop the Excel file here'}</b><span>${f ? 'Choose another file' : 'or tap to choose it'}</span><input class="vh" type="file" id="f-machfile" accept=".xlsx,.xlsm,.xls,.csv"></label>${d.busy ? '<div class="infobox" role="status">Reading the file…</div>' : ''}</div>
@@ -4367,7 +4495,7 @@ function dashData(jobs, led, now) {
   const lateRet = outRet.filter(isLate);
   const auto = jobs.filter(j => j.type === 'rep' && j.auto && (j.createdAt || 0) >= since);
   const kpis = [
-    ['Taken from stock', count(recent, 'taken'), 'units sent to technicians and vans'],
+    ['Taken from stock', count(recent, 'taken'), 'units sent to engineers and vans'],
     ['Installed', count(recent, 'inst'), 'units put into machines'],
     ['Back in stock', count(recent, 'back'), 'unused returns and repaired parts'],
     ['Not back yet', sum(outRet, j => j.ret.qty || 1), lateRet.length ? `${lateRet.length} overdue` : 'none overdue', lateRet.length ? 'bad' : ''],
@@ -4382,7 +4510,7 @@ function dashData(jobs, led, now) {
   const decisions = [['Back to stock (not used)', 'stock'], ['Sent to Workshop', 'repair'], ['Scrapped by Stock', 'scrap'], ['Consumed', 'consume']].map(([l, r]) => [l, sum(routed.filter(j => j.ret.route === r), j => j.ret.qty || 1)]).filter(x => x[1]);
   const wsDone = jobs.filter(j => j.ws && j.ws.doneAt), wsScrap = wsDone.filter(j => /^Scrapped/.test(j.outcome || ''));
   const workshop = [['Repaired', wsDone.length - wsScrap.length], ['Not repairable (scrapped)', wsScrap.length]].filter(x => x[1]);
-  const events = groupSum(recent.filter(e => !/settings changed|rate changed|Hub removed/i.test(e.t)), e => e.t, units);
+  const events = groupSum(recent.filter(e => !/settings changed|rate changed|Hub removed/i.test(e.t)), e => eng(e.t), units);
   return { since, kpis, weekly, steps, decisions, workshop, events };
 }
 const niceMax = m => { if (m <= 4) return 4; const p = Math.pow(10, Math.floor(Math.log10(m))); for (const k of [1, 2, 2.5, 5, 10]) if (k * p >= m) return k * p; return 10 * p; };
@@ -4421,7 +4549,7 @@ function dashBuckets(r) {
 const bucketLabel = b => b.kind === 'day' ? shortDay(b.s) : b.kind === 'month' ? new Date(b.s).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : `${shortDay(b.s)} – ${shortDay(addDays(b.e, -1))}`;
 const bucketTick = b => b.kind === 'month' ? new Date(b.s).toLocaleDateString('en-GB', { month: 'short' }) : shortDay(b.s);
 const STEP_WORD = { day: 'by day', days: 'every 3 days', week: 'by week', month: 'by month' }, STEP_COL = { day: 'Day', days: 'Days', week: 'Week', month: 'Month' };
-const DASH_PHASES = [['Waiting for your approval', ['TL']], ['Approved · Stock to send', ['STOCK', 'REPL', 'REPL_GO', 'DRV_PICK', 'DRV_GO']], ['With the technician', ['DISPATCHED', 'RECEIVED', 'USE_OK', 'REPL_CONF']], ['Return on its way back', ['RETURN', 'RETURNING', 'DRV_RET_PICK', 'DRV_RET_GO']], ['At Stock · to decide', ['ATHUB']], ['In the Workshop', ['WORKSHOP', 'REPAIRING', 'REPAIRED']]];
+const DASH_PHASES = [['Waiting for your approval', ['TL']], ['Approved · Stock to send', ['STOCK', 'REPL', 'REPL_GO', 'DRV_PICK', 'DRV_GO']], ['With the engineer', ['DISPATCHED', 'RECEIVED', 'USE_OK', 'REPL_CONF']], ['Return on its way back', ['RETURN', 'RETURNING', 'DRV_RET_PICK', 'DRV_RET_GO']], ['At Stock · to decide', ['ATHUB']], ['In the Workshop', ['WORKSHOP', 'REPAIRING', 'REPAIRED']]];
 function dashModel(jobs, led, r) {
   const units = e => Math.abs(+e.qty || 0) || 1, B = dashBuckets(r), start = r.start, end = r.end, pStart = start - (end - start);
   const cnt = (k, s, t) => sum(led.filter(e => e.at >= s && e.at < t && DASH_EV[k].includes(e.t)), units);
@@ -4624,7 +4752,7 @@ function repStock() {
   const value = sum(LINES, l => qtyOf(l) * (+part(l.pn).price || 0)), low = lowStock().filter(x => x.kind === 'low').length;
   return `<div class="kpis">${kpi('Part numbers', pns.length)}${kpi('Below minimum', low, low ? 'bad' : '')}${kpi('Units at hubs', sum(LINES.filter(l => HUBS.includes(l.loc)), qtyOf))}${kpi('Stock value', Math.round(value).toLocaleString('en-GB') + '<small>OMR</small>')}</div>
     <section class="blk"><div class="sec-h"><h2>Hub levels: in stock (min–max)</h2></div>${tbl(['Part', 'Name'].concat(...HUBS.map(h => [h, ''])).concat(['Vans', 'Value']), rows, 'No parts yet.')}</section>
-    <section class="blk"><div class="sec-h"><h2>Vans below their minimum</h2></div>${tbl(['Technician', 'Part', 'In van', 'Min', 'Max'], vanRows, 'Every van is at or above its minimum.')}</section>`;
+    <section class="blk"><div class="sec-h"><h2>Vans below their minimum</h2></div>${tbl(['Engineer', 'Part', 'In van', 'Min', 'Max'], vanRows, 'Every van is at or above its minimum.')}</section>`;
 }
 
 /* engineers */
@@ -4638,8 +4766,8 @@ function repEng() {
     const ret = js.filter(j => j.ret && j.ret.shippedAt && j.use && j.use.at), avg = ret.length ? sum(ret, j => j.ret.shippedAt - j.use.at) / ret.length : null;
     return { t, reqs: reqs.length, open: js.filter(j => isOpenStatus(j.status) && j.type !== 'rep').length, rej: reqs.filter(j => j.status === 'REJECTED').length, used: sum(js, usedUnits), van: sum(LINES.filter(l => l.loc === vanLoc(t.id)), qtyOf), late: js.filter(isLate).length, avg };
   });
-  return `<section class="blk"><div class="sec-h"><h2>Per technician</h2></div>${tbl(['Technician', 'Requests', 'Open', 'Rejected', 'Parts used', 'In van', 'Overdue returns', 'Avg. time to return'], rows.map(r => `<tr class="${r.late ? 'flag' : ''}"><td>${esc(r.t.name)}</td><td class="r">${r.reqs}</td><td class="r">${r.open}</td><td class="r">${r.rej}</td><td class="r">${r.used}</td><td class="r">${r.van}</td><td class="r">${r.late}</td><td class="r">${r.avg == null ? '–' : hrs(r.avg)}</td></tr>`))}</section>
-    ${bars('Parts used by technician', rows.filter(r => r.used).map(r => [r.t.name, r.used]).sort((a, b) => b[1] - a[1]))}`;
+  return `<section class="blk"><div class="sec-h"><h2>Per engineer</h2></div>${tbl(['Engineer', 'Requests', 'Open', 'Rejected', 'Parts used', 'In van', 'Overdue returns', 'Avg. time to return'], rows.map(r => `<tr class="${r.late ? 'flag' : ''}"><td>${esc(r.t.name)}</td><td class="r">${r.reqs}</td><td class="r">${r.open}</td><td class="r">${r.rej}</td><td class="r">${r.used}</td><td class="r">${r.van}</td><td class="r">${r.late}</td><td class="r">${r.avg == null ? '–' : hrs(r.avg)}</td></tr>`))}</section>
+    ${bars('Parts used by engineer', rows.filter(r => r.used).map(r => [r.t.name, r.used]).sort((a, b) => b[1] - a[1]))}`;
 }
 
 /* consumption: what was installed, every dimension side by side */
@@ -4652,8 +4780,8 @@ function repCons() {
   const it = consItems(), units = sum(it, x => x.n), value = sum(it, x => x.value);
   const dim = (title, key) => bars(title, groupSum(it, key, x => x.n).slice(0, 10).map(([k, v]) => [k, v, money(sum(it.filter(x => (key(x) || '(not recorded)') === k), y => y.value))]), v => v + (v === 1 ? ' unit' : ' units'));
   return `<div class="kpis k3">${kpi('Units installed', units)}${kpi('Value', Math.round(value).toLocaleString('en-GB') + '<small>OMR</small>')}${kpi('Service calls', new Set(it.map(x => x.j.scn)).size)}</div>
-    <div class="bars cols">${dim('By customer', x => x.j.customer)}${dim('By part', x => x.j.pn + (partName(x.j.pn) !== x.j.pn ? ' · ' + partName(x.j.pn) : ''))}${dim('By machine model', x => x.j.model)}${dim('By technician', x => x.j.techName)}</div>
-    <p class="note">Counts every part a technician recorded as installed, from requests and from van stock. Value uses the current unit price.</p>`;
+    <div class="bars cols">${dim('By customer', x => x.j.customer)}${dim('By part', x => x.j.pn + (partName(x.j.pn) !== x.j.pn ? ' · ' + partName(x.j.pn) : ''))}${dim('By machine model', x => x.j.model)}${dim('By engineer', x => x.j.techName)}</div>
+    <p class="note">Counts every part an engineer recorded as installed, from requests and from van stock. Value uses the current unit price.</p>`;
 }
 
 /* repair cost */
@@ -4676,15 +4804,15 @@ const ledgerWait = () => UI.ledgerErr ? `<div class="err">${esc(UI.ledgerErr)}</
 function repMoves() {
   if (!ensureLedger()) return ledgerWait();
   const since = Date.now() - 30 * DAY, rows = UI.ledger.rows.filter(e => e.at >= since);
-  return `<div class="kpis k3">${kpi('Movements, 30 days', rows.length)}${kpi('Units out to technicians', sum(rows.filter(e => /Dispatched to technician|Sent to van stock/.test(e.t)), e => e.qty))}${kpi('Units received', sum(rows.filter(e => e.t === 'Received'), e => e.qty))}</div>
+  return `<div class="kpis k3">${kpi('Movements, 30 days', rows.length)}${kpi('Units out to engineers', sum(rows.filter(e => /Dispatched to technician|Sent to van stock/.test(e.t)), e => e.qty))}${kpi('Units received', sum(rows.filter(e => e.t === 'Received'), e => e.qty))}</div>
     ${bars('Movements by type, last 30 days', groupSum(rows, e => e.t, () => 1))}
-    <section class="blk"><div class="sec-h"><h2>Latest movements</h2></div>${tbl(['When', 'Event', 'Part', 'Serial / qty', 'From', 'To', 'By'], rows.slice(0, 40).map(e => `<tr><td>${esc(isoDT(e.at))}</td><td>${esc(e.t)}</td><td class="mono">${esc(e.pn)}</td><td class="mono">${esc(e.sn || '× ' + e.qty)}</td><td>${esc(locName(e.from))}</td><td>${esc(locName(e.to))}</td><td>${esc(e.by)}</td></tr>`))}</section>`;
+    <section class="blk"><div class="sec-h"><h2>Latest movements</h2></div>${tbl(['When', 'Event', 'Part', 'Serial / qty', 'From', 'To', 'By'], rows.slice(0, 40).map(e => `<tr><td>${esc(isoDT(e.at))}</td><td>${esc(eng(e.t))}</td><td class="mono">${esc(e.pn)}</td><td class="mono">${esc(e.sn || '× ' + e.qty)}</td><td>${esc(locName(e.from))}</td><td>${esc(locName(e.to))}</td><td>${esc(e.by)}</td></tr>`))}</section>`;
 }
 function auditList() {
   if (!UI.ledger) return ledgerWait();
   const q = (UI.auditq || '').trim().toLowerCase();
   const rows = UI.ledger.rows.filter(e => !q || [e.t, e.pn, e.sn, e.from, e.to, e.ref, e.note, e.by].join(' ').toLowerCase().includes(q));
-  return `${tbl(['When', 'Event', 'Part', 'Serial', 'Qty', 'From', 'To', 'Reference', 'Note', 'By'], rows.slice(0, 300).map(e => `<tr><td>${esc(isoDT(e.at))}</td><td>${esc(e.t)}</td><td class="mono">${esc(e.pn)}</td><td class="mono">${esc(e.sn)}</td><td class="r">${esc(e.qty)}</td><td>${esc(locName(e.from))}</td><td>${esc(locName(e.to))}</td><td class="mono">${esc(e.ref)}</td><td class="wrap">${esc(e.note)}</td><td>${esc(e.by)} <span class="t3 muted">${esc(e.role)}</span></td></tr>`), q ? 'No matching entries.' : 'The log is empty.')}
+  return `${tbl(['When', 'Event', 'Part', 'Serial', 'Qty', 'From', 'To', 'Reference', 'Note', 'By'], rows.slice(0, 300).map(e => `<tr><td>${esc(isoDT(e.at))}</td><td>${esc(eng(e.t))}</td><td class="mono">${esc(e.pn)}</td><td class="mono">${esc(e.sn)}</td><td class="r">${esc(e.qty)}</td><td>${esc(locName(e.from))}</td><td>${esc(locName(e.to))}</td><td class="mono">${esc(e.ref)}</td><td class="wrap">${esc(e.note)}</td><td>${esc(e.by)} <span class="t3 muted">${esc(e.role)}</span></td></tr>`), q ? 'No matching entries.' : 'The log is empty.')}
     <p class="note">${rows.length > 300 ? `Showing 300 of ${rows.length} loaded entries. Search to narrow, or download Excel for everything.` : `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}.`}${UI.ledger.more ? ' Older entries are in the Excel file.' : ''}</p>`;
 }
 function repAudit() {
@@ -4710,7 +4838,7 @@ function traceList() {
   if (!r.rows.length && !line && !jobs.length) return emptyBox('Nothing found', `No record of serial number ${r.q}.`);
   const last = r.rows[r.rows.length - 1];
   const now = line ? `Now at ${locName(line.loc)}${line.cond ? ' · ' + line.cond : ''}` : last ? ({ Scrapped: 'Scrapped', Consumed: 'Consumed', Installed: `Installed in ${last.to}`, 'Installed from van stock': `Installed in ${last.to}` }[last.t] || `Not in stock · last seen: ${last.t.toLowerCase()} (${locName(last.to)})`) : '';
-  return `<div class="card"><div class="chips">${tag((last || line || {}).pn || '')}<b class="mono">SN ${esc(r.q)}</b></div><ul class="trace">${r.rows.map(e => `<li class="${/Scrapped|Removed from stock/.test(e.t) ? 'bad' : ''}"><div class="t1">${esc(e.t)}</div><div class="t2">${esc(locName(e.from) || '–')} → ${esc(locName(e.to) || '–')}${e.ref ? ' · ' + esc(e.ref) : ''}${e.note ? ' · ' + esc(e.note) : ''}</div><div class="t3">${fmtDT(e.at)} · ${esc(e.by)}</div></li>`).join('')}${now ? `<li class="now"><div class="t1">${esc(now)}</div></li>` : ''}</ul></div>
+  return `<div class="card"><div class="chips">${tag((last || line || {}).pn || '')}<b class="mono">SN ${esc(r.q)}</b></div><ul class="trace">${r.rows.map(e => `<li class="${/Scrapped|Removed from stock/.test(e.t) ? 'bad' : ''}"><div class="t1">${esc(eng(e.t))}</div><div class="t2">${esc(locName(e.from) || '–')} → ${esc(locName(e.to) || '–')}${e.ref ? ' · ' + esc(e.ref) : ''}${e.note ? ' · ' + esc(e.note) : ''}</div><div class="t3">${fmtDT(e.at)} · ${esc(e.by)}</div></li>`).join('')}${now ? `<li class="now"><div class="t1">${esc(now)}</div></li>` : ''}</ul></div>
     ${jobs.length ? `<section class="blk"><div class="sec-h"><h2>Requests with this serial number</h2></div><div class="jobs">${jobs.map(j => jobRow(j, ME())).join('')}</div></section>` : ''}`;
 }
 function repTrace() {
@@ -4721,13 +4849,14 @@ const REPORT_FN = { dash: repDash, returns: repReturns, stock: repStock, eng: re
 
 /* ---------- Excel workbook ---------- */
 const cv = x => x == null ? '' : x;
+const JOB_TYPE = { req: 'Request', rep: 'Van restock', van: 'Used from van', hubrep: 'Hub refill', ret: 'Return to Main Hub' };
 const REQ_COLS = [
-  ['Request', j => j.id], ['Type', j => ({ req: 'Request', rep: 'Van restock', van: 'Used from van' }[j.type] || 'Request')], ['Parent request', j => j.parent || ''], ['Created', j => isoDT(j.createdAt)], ['Technician', j => j.techName],
+  ['Request', j => j.id], ['Type', j => JOB_TYPE[j.type] || 'Request'], ['Parent request', j => j.parent || ''], ['Created', j => isoDT(j.createdAt)], ['Engineer', j => j.techName],
   ['Part number', j => j.pn], ['Description', j => j.desc], ['Qty requested', j => j.qty], ['Qty approved', j => j.qtyApproved || ''], ['Qty sent', j => j.dispatch ? jobQty(j) : ''],
   ['SCN', j => j.scn], ['Machine', j => j.machine], ['Machine SN', j => j.machineSn || ''], ['Model', j => j.model], ['Customer', j => j.customer], ['AMC / lease', j => j.contract], ['Delivery site', j => j.site],
-  ['GPS', j => j.gps ? `${(+j.gps.lat).toFixed(6)}, ${(+j.gps.lng).toFixed(6)}` : ''], ['Urgency', j => j.urgency], ['Status', j => stLabel(j)], ['Waiting for', j => stWho(j) ? ROLE[stWho(j)] : ''],
+  ['GPS', j => j.gps ? `${(+j.gps.lat).toFixed(6)}, ${(+j.gps.lng).toFixed(6)}` : ''], ['Urgency', j => j.urgency], ['Chargeable', j => j.chargeable ? 'Yes' : ''], ['Status', j => stLabel(j)], ['Waiting for', j => stWho(j) ? ROLE[stWho(j)] : ''],
   ['Team Leader', j => j.tl ? j.tl.by : ''], ['TL decided', j => j.tl ? isoDT(j.tl.at) : ''], ['TL note', j => j.tl ? j.tl.withdrawNote || j.tl.note : ''], ['Auto-Rep', j => j.auto ? (j.autoApproved ? 'Auto-approved' : 'Needed approval') : ''],
-  ['Dispatched from', j => j.dispatch ? j.dispatch.from : ''], ['Dispatched items', j => j.dispatch ? ((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn) : ''], ['Courier', j => j.dispatch ? j.dispatch.courier : ''], ['Dispatch ref', j => j.dispatch ? j.dispatch.ref : ''], ['Dispatched', j => j.dispatch ? isoDT(j.dispatch.at) : ''],
+  ['Dispatched from', j => j.dispatch ? j.dispatch.from : ''], ['Dispatched items', j => j.type === 'ret' ? (j.items || []).map(t => `${t.pn} ${itemTxt(t)}`).join(', ') : j.dispatch ? ((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn) : ''], ['Courier', j => j.dispatch ? j.dispatch.courier : ''], ['Dispatch ref', j => j.dispatch ? j.dispatch.ref : ''], ['Dispatched', j => j.dispatch ? isoDT(j.dispatch.at) : ''],
   ['Back-orders', j => (j.backorders || []).join(', ')], ['Received by tech', j => isoDT(j.receivedAt)], ['Replaced', j => j.use ? (j.use.replaced ? 'Yes' : 'No') : ''],
   ['Removed SN(s)', j => j.use ? ((j.use.units || []).filter(u => u.removedSn).map(u => u.removedSn).join(', ') || j.use.removedSn || '') : ''],
   ['Return type', j => j.ret ? j.ret.type : ''], ['Returned PN', j => j.ret ? j.ret.pn : ''], ['Returned SN', j => j.ret ? j.ret.sn : ''], ['Return qty', j => j.ret ? (j.ret.qty || 1) : ''], ['Return due', j => j.ret ? isoDT(j.ret.due) : ''],
@@ -4739,21 +4868,21 @@ const DB_COLS = REQ_COLS.map(c => c[0]);
 function buildSheets(jobs, led, adj) {
   const S = [];
   S.push(['Requests', DB_COLS, jobs.map(j => REQ_COLS.map(c => cv(c[1](j))))]);
-  const hist = []; for (const j of jobs) for (const h of (j.history || [])) hist.push([j.id, ({ req: 'Request', rep: 'Van restock', van: 'Used from van' }[j.type] || 'Request'), j.pn, j.scn || '', isoDT(h.at), h.role || '', h.by, h.action, h.note || '']);
+  const hist = []; for (const j of jobs) for (const h of (j.history || [])) hist.push([j.id, JOB_TYPE[j.type] || 'Request', j.pn, j.scn || '', isoDT(h.at), eng(h.role || ''), h.by, eng(h.action), eng(h.note || '')]);
   hist.sort((a, b) => cmpVal(a[4], b[4]));
   S.push(['History', ['Request', 'Type', 'Part number', 'SCN', 'When', 'Role', 'By', 'Step', 'Details'], hist]);
   S.push(['Repairs', ['Request', 'Part number', 'Part name', 'Serial number', 'Machine', 'Model', 'Customer', 'Workshop in', 'Repair started', 'Done', 'Workshop time', 'Hours', 'Rate OMR/h', 'Labour OMR', 'Parts used', 'Materials OMR', 'Total OMR', 'What was wrong', 'How fixed', 'Time corrected', 'Notes', 'Outcome', 'By'],
     jobs.filter(j => j.ws && j.ws.doneAt).map(j => [j.id, (j.ret || {}).pn || j.pn, j.ws.partName || '', j.ws.partSn || (j.ret || {}).sn || '', j.machine || '', j.model || '', j.customer || '', isoDT(j.ws.inAt), isoDT(j.ws.tm && j.ws.tm.startedAt), isoDT(j.ws.doneAt), fmtDur((j.ws.tm && j.ws.tm.acc) || 0), j.ws.hours, j.ws.rate, j.ws.labour, j.ws.materials || '', j.ws.matCost, j.ws.total, j.ws.diagnosis || '', j.ws.fix || '', (j.ws.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${x.why}`).join('; '), j.ws.notes || '', j.ws.outcome, j.ws.doneBy || j.ws.by])]);
-  S.push(['Returns', ['Request', 'Technician', 'Return type', 'Part number', 'Serial number', 'Qty', 'Replacement recorded', 'Due', 'Sent', 'Hours to return', 'Overdue', 'Reminders', 'Courier', 'Reference', 'At Stock', 'Serial corrected from', 'Arrived with different SN (expected)', 'Stock decision', 'Status'],
+  S.push(['Returns', ['Request', 'Engineer', 'Return type', 'Part number', 'Serial number', 'Qty', 'Replacement recorded', 'Due', 'Sent', 'Hours to return', 'Overdue', 'Reminders', 'Courier', 'Reference', 'At Stock', 'Serial corrected from', 'Arrived with different SN (expected)', 'Stock decision', 'Status'],
     jobs.filter(j => j.ret).map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, isoDT(j.use && j.use.at), isoDT(retDue(j)), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.route || '', stLabel(j)])]);
   const rep = []; for (const j of jobs) { if (!j.use || j.type === 'rep') continue; const units = Array.isArray(j.use.units) ? j.use.units : [{ sn: (j.dispatch && j.dispatch.sn) || '', used: j.use.replaced, removedPn: j.use.removedPn, removedSn: j.use.removedSn }];
     for (const u of units) { const n = u.bulk ? u.used : u.used ? 1 : 0; if (!n) continue; rep.push([j.id, isoDT(j.use.at), j.techName, j.customer || '', j.model || '', j.scn || '', j.machine || '', j.pn, u.bulk ? '' : u.sn || '', n, u.bulk ? j.pn : u.removedPn || '', u.bulk ? '' : u.removedSn || '', j.type === 'van' ? 'Van stock' : 'Request']); } }
-  S.push(['Parts replaced', ['Request', 'Date', 'Technician', 'Customer', 'Model', 'SCN', 'Machine', 'Installed PN', 'Installed SN', 'Qty', 'Removed PN', 'Removed SN', 'Source'], rep]);
+  S.push(['Parts replaced', ['Request', 'Date', 'Engineer', 'Customer', 'Model', 'SCN', 'Machine', 'Installed PN', 'Installed SN', 'Qty', 'Removed PN', 'Removed SN', 'Source'], rep]);
   S.push(['Inventory', ['Part number', 'Part name', 'Serial number', 'Qty', 'Location', 'Condition', 'Shelf / bin', 'Unit price OMR', 'Value OMR', 'Came from', 'Added', 'Added by'], LINES.map(l => { const pr = +part(l.pn).price || 0; return [l.pn, l.name || partName(l.pn), l.sn || '', qtyOf(l), locName(l.loc), l.cond || '', l.bin || '', pr, r3(pr * qtyOf(l)), l.source || '', isoDT(l.addedAt), l.addedBy || '']; })]);
   const pns = [...new Set(Object.keys(PARTS).concat(LINES.map(l => l.pn)))].sort();
   S.push(['Stock levels', ['Part number', 'Part name', 'Unit price OMR'].concat(...HUBS.map(h => [h + ' qty', h + ' min', h + ' max', h + ' level'])).concat(['In vans', 'Van min', 'Van max', 'Auto-Rep', 'Restricted']),
     pns.map(pn => { const p = part(pn); return [pn, p.name, +p.price || 0].concat(...HUBS.map(h => { const q = qtyAt(h, pn), mn = +p.min[h] || 0, mx = +p.max[h] || 0; return [q, mn, mx, { low: 'Below minimum', over: 'Over maximum', ok: 'OK' }[levelOf(q, mn, mx)] || '']; })).concat([sum(LINES.filter(l => isVan(l.loc) && l.pn === pn), qtyOf), +p.vanMin || 0, +p.vanMax || 0, p.autoRep ? 'Yes' : 'No', p.restricted ? 'Yes' : 'No']); })]);
-  S.push(['Inventory log', ['When', 'Event', 'Part number', 'Serial number', 'Qty', 'From', 'To', 'Reference', 'Note', 'By', 'Role'], led.map(e => [isoDT(e.at), e.t, e.pn || '', e.sn || '', cv(e.qty), locName(e.from), locName(e.to), e.ref || '', e.note || '', e.by || '', e.role || ''])]);
+  S.push(['Inventory log', ['When', 'Event', 'Part number', 'Serial number', 'Qty', 'From', 'To', 'Reference', 'Note', 'By', 'Role'], led.map(e => [isoDT(e.at), eng(e.t), e.pn || '', e.sn || '', cv(e.qty), locName(e.from), locName(e.to), e.ref || '', e.note || '', e.by || '', eng(e.role || '')])]);
   S.push(['Inventory changes', ['Asked', 'Asked by', 'Part number', 'Serial number', 'Location', 'Change', 'Reason', 'Note', 'Status', 'Decided', 'Decided by', 'Decision note'], adj.map(a => [isoDT(a.at), a.by, a.pn, a.sn || '', locName(a.loc), adjText(a), a.reason, a.note || '', a.status, isoDT(a.decidedAt), a.decidedBy || '', a.decisionNote || ''])]);
   return S.map(([n, head, rows]) => [n, head, rows.map(r => head.map((_, i) => r[i] == null ? '' : r[i]))]);
 }
@@ -5030,7 +5159,7 @@ async function fbCreateMany(rows, onProgress) {
     const a = rows[i], x = await fbCreateAccount(a);
     if (!x.skip) {
       if (x.made) r.made++; else if (x.pw === 'same') r.same++; else if (x.pw === 'set') r.set++; else if (x.pw === 'own') r.own++; else r.kept.push(a.name || loginShow(a.email));
-      /* the engineer's yearly budget from the file (technicians only): sets the budget, keeps what he has used so far */
+      /* the engineer's yearly budget from the file (engineers only): sets the budget, keeps what he has used so far */
       if (x.role === 'TECH' && typeof a.budget === 'number') { try { await saveBudget(x.sid, { bamt: String(a.budget) }); r.budgets++; } catch (e) { r.budFail++; } }
     }
     if (onProgress) onProgress(i + 1, rows.length); await sleep(150);
@@ -5127,10 +5256,10 @@ async function downloadAccountsTemplate() {
   if (!DL) return toast('Downloads work in the published app.', 'bad');
   try {
     const X = await needXLSX(), wb = X.utils.book_new(), head = ['Name', 'Email', 'Role', 'Hub', 'Password', 'Title', 'Engineer Budget'];
-    const ws = X.utils.aoa_to_sheet([head, ['Example Technician', 'first.last@cns-me.com', 'Technician', HUBS[0], 'Start#2026a', '', 5000], ['Example Stock', 'store.keeper@cns-me.com', 'Stock', HUBS[0], 'Begin#2026b', '', '']]);
+    const ws = X.utils.aoa_to_sheet([head, ['Example Engineer', 'first.last@cns-me.com', 'Engineer', HUBS[0], 'Start#2026a', '', 5000], ['Example Stock', 'store.keeper@cns-me.com', 'Stock', HUBS[0], 'Begin#2026b', '', '']]);
     ws['!cols'] = [{ wch: 26 }, { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 26 }, { wch: 16 }];
     X.utils.book_append_sheet(wb, ws, 'Accounts');
-    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login. No email? Put a username instead (letters, numbers, . _ -) — they sign in with it.'], ['Role', 'Technician, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password. ' + PW_RULE + ' Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman'], ['Engineer Budget', 'Technicians only: yearly budget in OMR, e.g. 5000. Optional. What he has used so far is kept.']]);
+    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login. No email? Put a username instead (letters, numbers, . _ -) — they sign in with it.'], ['Role', 'Engineer, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password. ' + PW_RULE + ' Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman'], ['Engineer Budget', 'Engineers only: yearly budget in OMR, e.g. 5000. Optional. What he has used so far is kept.']]);
     help['!cols'] = [{ wch: 16 }, { wch: 100 }]; X.utils.book_append_sheet(wb, help, 'How to fill');
     savedToast(await DL.save({ filename: 'SPMS-accounts-template.xlsx', data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Template saved');
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
@@ -5168,7 +5297,7 @@ SH.accounts = d => {
   } else if (d.mode === 'add') {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
     body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email or username *', 'first.last@cns-me.com or a username', { hint: 'No email? Type a username (letters, numbers, . _ -). They sign in with that username and password.' })}
-      ${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}
+      ${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}
       ${inp(d, 'pw', 'First password *', 'e.g. Start#2026a', { hint: PW_RULE + ' They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
     op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: toLogin(d.email), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a, { force: true }); }, stay: true,
       ok: r => r.skip ? 'Mohamed Said’s account is built in and can’t be changed.' : r.made ? 'Account created' : r.pw === 'same' ? 'Saved. This login already had this password.' : r.pw === 'set' ? 'Saved. This login already existed — its password is now the one you typed.' : 'Saved, but this login already existed and SPMS couldn’t change its password. Open the person and tap “Send password email”.' };
@@ -5178,7 +5307,7 @@ SH.accounts = d => {
     for (const r of rows) { let why = checkAcct(r); if (!why && seen.has(r.email)) why = 'Email repeated in the file'; seen.add(r.email); if (why) bad.push(Object.assign({ why }, r)); else ready.push(r); }
     const fresh = ready.filter(r => !known.has(r.email)).length;
     const kept = (UI.sheet && UI.sheet.p && UI.sheet.p.kept) || [], hasBud = rows.some(r => typeof r.budget === 'number');
-    body = `${kept.length ? `<div class="alert warn wrap"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>${kept.length} ${kept.length === 1 ? 'person' : 'people'} already had a login and didn’t get the new password</b><span class="s">${esc(kept.slice(0, 12).join(', '))}${kept.length > 12 ? ' …' : ''}. SPMS’s email service couldn’t change it. Open each one (People) and tap “Send password email”.</span></div></div>` : ''}<div class="card"><div class="sec-h" style="padding:0"><h2>1 · The staff list</h2></div><p class="note" style="padding:0">Your Team sheet works as it is: the Role column decides (“request part from … HUB” is a Technician at that hub; Team Leader, Stock and Workshop approval). The Password column is the first password: ${esc(PW_RULE.replace(/^A/, 'a'))} An “Engineer Budget” column sets each technician’s yearly budget (OMR). Or fill in the template.</p><button class="btn sm sec" data-a="accTemplate">${ic('download', 'sm')}Download template</button></div>
+    body = `${kept.length ? `<div class="alert warn wrap"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>${kept.length} ${kept.length === 1 ? 'person' : 'people'} already had a login and didn’t get the new password</b><span class="s">${esc(kept.slice(0, 12).join(', '))}${kept.length > 12 ? ' …' : ''}. SPMS’s email service couldn’t change it. Open each one (People) and tap “Send password email”.</span></div></div>` : ''}<div class="card"><div class="sec-h" style="padding:0"><h2>1 · The staff list</h2></div><p class="note" style="padding:0">Your Team sheet works as it is: the Role column decides (“request part from … HUB” is a Engineer at that hub; Team Leader, Stock and Workshop approval). The Password column is the first password: ${esc(PW_RULE.replace(/^A/, 'a'))} An “Engineer Budget” column sets each engineer’s yearly budget (OMR). Or fill in the template.</p><button class="btn sm sec" data-a="accTemplate">${ic('download', 'sm')}Download template</button></div>
       <div class="card"><div class="sec-h" style="padding:0"><h2>2 · Choose the file</h2></div><label class="drop" for="f-accfile">${ic('inbox')}<b>${d.acc ? esc(d.acc.name) : 'Drop the Excel file here'}</b><span>${d.acc ? 'Choose another file' : 'or tap to choose it'}</span><input class="vh" type="file" id="f-accfile" accept=".xlsx,.xlsm,.xls,.csv"></label>${d.accBusy ? '<div class="infobox" role="status">Reading the file…</div>' : ''}</div>
       ${d.acc ? `<section class="blk"><div class="sec-h"><h2>3 · Check and create</h2><span class="t3 muted">${esc(d.acc.sheet)}</span></div>
         <div class="kpis k3">${kpi('Ready', ready.length)}${kpi('New logins', fresh)}${kpi('Skipped', bad.length, bad.length ? 'warn' : '')}</div>
@@ -5206,7 +5335,7 @@ SH.acct = (d, p) => {
       <span class="hint">Each request he sends is added to “used”. Rejected, cancelled, faulty or unused parts are given back, and van parts count when he uses them. Change “used so far” only to start from your own figure.</span></div>`;
   return {
     title: u.name, sub: esc(loginShow(u.email || u.id)) + (isUserLogin(u.email || u.id) ? ' · signs in with a username' : ''),
-    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Technician'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
+    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
       ${budBox}
       <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div>${isUserLogin(u.email || u.id) ? `<p class="note" style="padding:0">This person signs in with the username <b class="mono">${esc(loginShow(u.email || u.id))}</b> and has no email, so SPMS can’t send them a password link. If they forget their password, remove this account and add them again with a new username.</p>` : `<p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button>`}</div>
@@ -5784,6 +5913,7 @@ const A = {
   },
   pickMachine(ds) { const d = sd(); pickMachine(d, ds.k); d._err = ''; renderSheet(); },
   pickPn(ds) { const d = sd(); d.pn = ds.pn; if (UI.sheet.name === 'new') d.desc = d.desc || ds.nm; else d.name = d.name || ds.nm; renderSheet(); },
+  allItems() { const d = sd(), all = d._all || []; d.items = (d.items || []).length === all.length ? [] : all.slice(); d._err = ''; renderSheet(); },
   togItem(ds) { const d = sd(); d.items = d.items || []; const i = d.items.indexOf(ds.id); if (i >= 0) d.items.splice(i, 1); else d.items.push(ds.id); d._err = ''; renderSheet(); },
   useAdd(ds) { const d = sd(); d.used = (d.used || []).concat([{ id: ds.id, qty: 1 }]); d.uq = ''; renderSheet(); const q = $('#f-uq'); if (q) q.focus(); },
   useDel(ds) { const d = sd(); d.used = (d.used || []).filter(u => u.id !== ds.id); renderSheet(); },
