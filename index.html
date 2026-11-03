@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261102122743">
+<meta name="spms-build" content="20261103182311">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1933,6 +1933,9 @@ const jobHub = j => HUBS.includes(j.hub) ? j.hub : accHub(ACC(j.techId)) || HUBS
 const MAIN_HUB = 'MMH', OUT_HUBS = ['MH', 'SOH', 'SUR', 'IBR', 'NZW', 'SLH'];
 const isOutHub = h => OUT_HUBS.includes(h);
 const fromHub = j => !!j && j.flow === 'hub';
+/* Stock may send a replacement only for a part that arrived faulty on a request Stock sent.
+   Parts taken from an outside hub's shelf are refilled on their own, and an installed part needs no replacement. */
+const canReplace = j => !!(j && j.ret && j.ret.arrived && j.ret.type === 'defective' && !fromHub(j));
 /* the hub whose people handle the step: for an outside hub, sending the part and receiving the faulty one are done at
    the Muscat Main Hub */
 const stepHub = j => j.type === 'req' && isOutHub(j.hub) && ['STOCK', 'RETURNING', 'ATHUB', 'WORKSHOP', 'REPAIRING', 'REPAIRED'].includes(j.status) ? MAIN_HUB : jobHub(j);
@@ -2335,7 +2338,7 @@ async function stockReceiveReturn(id, d) {
 function checkRoute(j, d) {
   const route = d.route || (j.ret.type === 'unused' ? 'stock' : 'repair'); const what = `${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + (j.ret.qty || 1)}`;
   if (route === 'stock' && j.ret.type !== 'unused') throw E('A defective part cannot go back to stock without repair.');
-  const rep = d.replace === 'yes' && j.ret.type === 'defective';
+  const rep = d.replace === 'yes' && canReplace(j);
   if (rep && !normSN(d.repSn)) throw E('Enter the serial number of the replacement part you are sending.');
   const repTxt = rep ? ` A replacement (SN ${normSN(d.repSn)}) is sent to ${j.techName}.` : '';
   if (route === 'scrap') return `Scrap ${what}?${repTxt} This can’t be undone.`;
@@ -2349,7 +2352,7 @@ async function stockRoute(id, d) {
     const route = d.route || (j.ret.type === 'unused' ? 'stock' : 'repair'), note = (d.note || '').trim(), hub = HUBS.includes(d.hub) ? d.hub : HUBS[0], now = Date.now();
     const ret = Object.assign({}, j.ret, { route, routeNote: note, routedAt: now, routeHub: route === 'stock' ? hub : '' });
     const q = j.ret.qty || 1;
-    const sendRep = d.replace === 'yes' && j.ret.type === 'defective', repId = sendRep ? newId('REQ') : '', repTxt = repId ? ' · replacement sent to ' + j.techName : '';
+    const sendRep = d.replace === 'yes' && canReplace(j), repId = sendRep ? newId('REQ') : '', repTxt = repId ? ' · replacement sent to ' + j.techName : '';
     let doc;
     if (route === 'repair') { doc = await saveJob(nextDoc(j, me, 'WORKSHOP', 'Sent to Workshop for repair', note + repTxt, { ret, replacedBy: repId || '' })); log({ t: 'Sent to workshop', pn: ret.pn, sn: ret.sn, qty: q, from: 'Stock', to: 'Workshop', ref: j.id, note }); }
     else {
@@ -3392,11 +3395,11 @@ function actionForm(j, me, d) {
       const opts = r.type === 'unused' ? [['stock', 'Back to stock'], ['repair', 'Repair'], ['scrap', 'Scrap']] : [['repair', 'Send to repair'], ['scrap', 'Scrap'], ['consume', 'Consume']];
       if (!d.route) d.route = opts[0][0]; if (!d.hub) d.hub = (j.dispatch && HUBS.includes(j.dispatch.from)) ? j.dispatch.from : myHub();
       if (!d.replace) d.replace = 'no'; if (!d.repFrom) d.repFrom = (j.dispatch && HUBS.includes(j.dispatch.from)) ? j.dispatch.from : myHub();
-      const repSection = r.type === 'defective'
+      const repSection = canReplace(j)
         ? fld(`Send ${esc(j.techName)} a replacement?`, segBtns(d, 'replace', [['no', 'No'], ['yes', 'Yes']]), 'A new one of the same part, sent straight to the engineer.')
           + (d.replace === 'yes' ? `${fld('Replacement sent from', hubSeg(d, 'repFrom'))}${inp(d, 'repSn', 'Serial number of the replacement *', 'As printed on the part', { mono: true, hint: 'If this serial number is in the inventory, it is taken from there.' })}` : '')
         : '';
-      return { form: box(`<p style="margin:0">${r.type === 'defective' ? 'Defective' : 'Unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> is at Stock.</p>${segBtns(d, 'route', opts)}${d.route === 'stock' ? fld('Put into', hubSeg(d, 'hub')) : ''}${area(d, 'note', 'Note', 'Condition, fault notes')}${repSection}`), op: { label: d.replace === 'yes' ? 'Confirm & send replacement' : 'Confirm', cls: ['scrap', 'consume'].includes(d.route) ? 'danger' : '', danger: true, yes: d.route === 'scrap' ? 'Yes, scrap it' : 'Yes, consume it', check: () => checkRoute(j, d), run: () => stockRoute(j.id, d) } };
+      return { form: box(`<p style="margin:0">${r.type === 'defective' ? 'Defective' : 'Unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> is at Stock.</p>${segBtns(d, 'route', opts)}${d.route === 'stock' ? fld('Put into', hubSeg(d, 'hub')) : ''}${area(d, 'note', 'Note', 'Condition, fault notes')}${repSection}`), op: { label: d.replace === 'yes' && canReplace(j) ? 'Confirm & send replacement' : 'Confirm', cls: ['scrap', 'consume'].includes(d.route) ? 'danger' : '', danger: true, yes: d.route === 'scrap' ? 'Yes, scrap it' : 'Yes, consume it', check: () => checkRoute(j, d), run: () => stockRoute(j.id, d) } };
     }
     case 'WORKSHOP':
       return { form: box(`<p style="margin:0">Confirm the Workshop received <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> arrived.</p>`), op: { label: 'Accept part', run: () => wsAccept(j.id) } };
