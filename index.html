@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261103182311">
+<meta name="spms-build" content="20261105114048">
 <title>SPMS Field App</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1087,9 +1087,15 @@ const isoDT = ts => { if (!ts) return ''; const d = new Date(ts); return `${d.ge
 function rel(ts) { if (!ts) return ''; const s = (Date.now() - ts) / 1000; if (s < 90) return 'just now'; if (s < 3600) return Math.round(s / 60) + ' min ago'; if (s < 86400) return Math.round(s / 3600) + ' h ago'; const d = Math.round(s / 86400); return d === 1 ? 'yesterday' : d + ' days ago'; }
 const money = v => 'OMR ' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 /* how long an engineer has to send the removed / unused part back, counted from when they recorded the install:
-   2 days at the Muscat Main Hub, 4 days at every other hub. Worked out from the install time, so the rule applies to every open return. */
-const RETURN_DAYS = { MMH: 2 }, RETURN_DAYS_OTHER = 4;
+   2 days at the Muscat Main Hub, 5 days at every other hub, unless the Team Leader set other numbers (settings/returns,
+   the service uses the same ones for its overdue emails). Worked out from the install time, so a change applies to every open return. */
+const RETURN_DEFAULT = { mmh: 2, other: 5 };
+const RETURN_DAYS = { MMH: RETURN_DEFAULT.mmh };
+let RETURN_DAYS_OTHER = RETURN_DEFAULT.other;
+const okDays = v => { const n = parseInt(v, 10); return n >= 1 && n <= 60 ? n : 0; };
+function setReturnDays(doc) { RETURN_DAYS.MMH = okDays(doc && doc.mmh) || RETURN_DEFAULT.mmh; RETURN_DAYS_OTHER = okDays(doc && doc.other) || RETURN_DEFAULT.other; }
 const returnDays = hub => RETURN_DAYS[hub] || RETURN_DAYS_OTHER;
+const daysWord = n => `${n} day${n === 1 ? '' : 's'}`;
 const retDue = j => { if (!j || !j.ret) return 0; const at = j.use && j.use.at; return at ? at + returnDays(jobHub(j)) * DAY : (j.ret.due || 0); };
 const durDH = ms => { const h = Math.max(1, Math.round(ms / HOUR)), d = Math.floor(h / 24), r = h % 24; return d ? `${d} day${d === 1 ? '' : 's'}${r ? ' ' + r + ' h' : ''}` : `${h} h`; };
 function dueText(due) { const ms = due - Date.now(); return ms < 0 ? `Overdue by ${durDH(-ms)}` : `Due in ${durDH(ms)} · by ${fmtDT(due)}`; }
@@ -1510,6 +1516,7 @@ function subscribeAll() {
     const w = list.find(x => x.id === 'workshop'); SETTINGS.rate = w && +w.rate >= 0 ? +w.rate : DEFAULT_RATE;
     SCHEMA = list.find(x => x.id === 'schema') || {};
     const hb = list.find(x => x.id === 'hubs'); setHubs(hb && hb.list); DATAV.inv++;
+    setReturnDays(list.find(x => x.id === 'returns'));
     const p = list.find(x => x.id === 'policy'); POLICY = { autoMaxValue: p && +p.autoMaxValue >= 0 ? +p.autoMaxValue : 100, autoMaxQty: p && +p.autoMaxQty >= 0 ? +p.autoMaxQty : 5 };
     ready.settings = true; DATAV.set++; afterLoad();
   });
@@ -2660,6 +2667,12 @@ async function removeHub(code) {
 
 /* ---------- settings (Team Leader) ---------- */
 async function setRate(v) { const me = mustRole('TL'); const r = +v; if (v === '' || v == null || !(r >= 0)) throw E('Enter the hourly rate (0 or more).'); await api.set('settings', 'workshop', { rate: r, updatedAt: Date.now(), by: me.name }); SETTINGS.rate = r; log({ t: 'Workshop rate changed', qty: 0, note: money(r) + ' per hour' }); }
+async function setReturnDeadline(m, o) {
+  const me = mustRole('TL'); const a = okDays(m), b = okDays(o);
+  if (!a) throw E('Enter the days for the Muscat Main Hub (1 to 60).'); if (!b) throw E('Enter the days for the other hubs (1 to 60).');
+  await api.set('settings', 'returns', { mmh: a, other: b, updatedAt: Date.now(), by: me.name }); setReturnDays({ mmh: a, other: b });
+  log({ t: 'Return deadline changed', qty: 0, note: `Muscat Main Hub ${a} days, other hubs ${b} days` });
+}
 async function setPolicy(v, q) { const me = mustRole('TL'); const a = +v, b = parseInt(q, 10); if (v === '' || !(a >= 0)) throw E('Enter the Auto-Rep value limit (0 or more).'); if (!(b >= 0)) throw E('Enter the Auto-Rep quantity limit (0 or more).'); await api.set('settings', 'policy', { autoMaxValue: a, autoMaxQty: b, updatedAt: Date.now(), by: me.name }); POLICY = { autoMaxValue: a, autoMaxQty: b }; log({ t: 'Auto-Rep limits changed', qty: 0, note: `Up to ${money(a)} and ${b} units approved automatically` }); }
 
 /* ---------- engineer budgets (yearly, OMR) ----------
@@ -3094,6 +3107,7 @@ function dbView(me) {
       <div class="card"><div class="sec-h" style="padding:0"><h2>Workshop rate per hour</h2><b class="num">${money(SETTINGS.rate)}</b></div><div class="withscan"><input class="inp num" id="rate" data-draft="rate" type="number" min="0" step="any" inputmode="decimal" value="${esc(draft('rate', SETTINGS.rate))}" aria-label="Workshop rate per hour (OMR)"><button class="btn sm" data-a="saveRate">Save</button></div><span class="hint">Repair cost = hours × rate + parts</span></div>
       <div class="card"><div class="sec-h" style="padding:0"><h2>Auto-Rep approval limits</h2></div><div class="two"><div class="fld"><label class="lbl" for="p-autoMaxValue">Up to value (OMR)</label><input class="inp num" id="p-autoMaxValue" data-draft="autoMaxValue" type="number" min="0" step="any" inputmode="decimal" value="${esc(draft('autoMaxValue', POLICY.autoMaxValue))}"></div><div class="fld"><label class="lbl" for="p-autoMaxQty">Up to units</label><input class="inp num" id="p-autoMaxQty" data-draft="autoMaxQty" type="number" min="0" step="1" inputmode="numeric" value="${esc(draft('autoMaxQty', POLICY.autoMaxQty))}"></div></div><button class="btn sm sec" data-a="savePolicy">Save limits</button><span class="hint">Smaller restocks skip your approval</span></div>
     </div>
+    <div class="card"><div class="sec-h" style="padding:0"><h2>Return deadline</h2></div><div class="two"><div class="fld"><label class="lbl" for="rd-mmh">Muscat Main Hub (days)</label><input class="inp num" id="rd-mmh" data-draft="rdMmh" type="number" min="1" max="60" step="1" inputmode="numeric" value="${esc(draft('rdMmh', RETURN_DAYS.MMH))}"></div><div class="fld"><label class="lbl" for="rd-other">Other hubs (days)</label><input class="inp num" id="rd-other" data-draft="rdOther" type="number" min="1" max="60" step="1" inputmode="numeric" value="${esc(draft('rdOther', RETURN_DAYS_OTHER))}"></div></div><button class="btn sm sec" data-a="saveReturns">Save deadline</button><span class="hint">Counted from the install. When a return is overdue, SPMS emails the engineer, with the Team Leader and the Technical Manager in copy.</span></div>
     ${UI.fbMode ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Staff accounts</h2><button class="btn sm" data-a="sheet" data-s="accounts">${ic('user', 'sm')}Manage</button></div><span class="hint">${USERS.filter(u => u.active !== false).length} people can sign in · ${USERS.filter(u => u.active !== false && u.role === 'TECH').length} engineers</span></div>` : ''}
     ${UI.fbMode && me.role === 'TL' ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Security</h2><button class="btn sm sec" data-a="sheet" data-s="security">${ic('lock', 'sm')}2-factor login</button></div><span class="hint">${UI.otpOn ? 'On · a login code the first time on each phone' : 'Off · sign in with email and password only'} · passwords change every 30 days</span></div>` : ''}
     ${UI.fbMode ? '' : `<div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2><button class="btn sm sec" data-a="sheet" data-s="pwreset">${ic('ret', 'sm')}Reset a password</button></div><span class="hint">Everyone can change their own password in their profile</span></div>`}
@@ -3381,7 +3395,7 @@ function actionForm(j, me, d) {
         return `<div class="unit"><div class="uh">${h}${tag(u.pn)} bulk × ${u.qty}</div>${fld('How many did you use?', stepper(d, k, 0, u.qty, 'Used'), `${d[k]} used${rest ? ` · ${rest} left over` : ''}`)}${rest > 0 ? (fromHub(j) ? `<span class="hint">The ${rest} you didn’t use go back on the ${esc(HUB_NAME[j.hub] || j.hub)} shelf.</span>` : fld('The ones you didn’t use', segBtns(d, rk, [['return', 'Back to Stock'], ['van', 'Keep in van']]))) : ''}</div>`;
       }).join('');
       const needPhoto = usePhotoNeeded(j, d);
-      return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', needPhoto)}<span class="hint">Return removed and faulty parts within ${returnDays(jobHub(j))} days</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (usePhotoNeeded(j, d) && !(d.photos && d.photos.length)) throw E('Add a photo of the part before you save (needed when a part arrived faulty or a used part goes back).'); return null; }, run: () => techUse(j.id, d) } };
+      return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', needPhoto)}<span class="hint">Return removed and faulty parts within ${daysWord(returnDays(jobHub(j)))}</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (usePhotoNeeded(j, d) && !(d.photos && d.photos.length)) throw E('Add a photo of the part before you save (needed when a part arrived faulty or a used part goes back).'); return null; }, run: () => techUse(j.id, d) } };
     }
     case 'RETURN': {
       if (!d.courier) d.courier = COURIERS[0];
@@ -3668,8 +3682,8 @@ SH.vanuse = d => {
       ${inp(d, 'scn', 'Service Call Number *', 'e.g. SCN-26-04831', { mono: true, auto: 'scn' })}${machineField(d)}${autoHint(d, 'scn', 'machine')}
       <div class="two">${inp(d, 'model', 'Machine model', '')}${inp(d, 'customer', 'Customer / bank', '')}</div>${inp(d, 'site', 'Site', 'Branch or address')}
       ${l.sn ? `<div class="two">${inp(d, 'rpn', 'Removed PN', l.pn, { mono: true })}${inp(d, 'rsn', 'Removed SN *', 'Defective part SN', { mono: true })}</div>` : ''}
-      <span class="hint">Return the old part${l.sn ? '' : 's'} within ${returnDays(myHub())} days</span>${area(d, 'note', 'Note', 'What you found and fixed')}`,
-    op: { label: 'Save', check: () => { checkVanUse(d); return null; }, run: () => vanUse(d), ok: res => `Recorded. Return due in ${returnDays(myHub())} days.${res.rep ? res.rep.status === 'STOCK' ? ' Auto-Rep asked Stock for ' + res.rep.qty + ' more.' : ' Auto-Rep restock sent to the Team Leader.' : ''}` }
+      <span class="hint">Return the old part${l.sn ? '' : 's'} within ${daysWord(returnDays(myHub()))}</span>${area(d, 'note', 'Note', 'What you found and fixed')}`,
+    op: { label: 'Save', check: () => { checkVanUse(d); return null; }, run: () => vanUse(d), ok: res => `Recorded. Return due in ${daysWord(returnDays(myHub()))}.${res.rep ? res.rep.status === 'STOCK' ? ' Auto-Rep asked Stock for ' + res.rep.qty + ' more.' : ' Auto-Rep restock sent to the Team Leader.' : ''}` }
   };
 };
 
@@ -4588,7 +4602,7 @@ function ensureDashLog(from) {
   }
   return covers;   /* the copy already here keeps showing while the newest changes load */
 }
-/* returns from engineers: due 2 days after the install at the Muscat Main Hub, 4 days at the other hubs */
+/* returns from engineers: due a set number of days after the install (Muscat Main Hub and other hubs, Database → Return deadline) */
 function returnsData(jobs, now) {
   now = now || Date.now();
   const out = jobs.filter(j => ['RETURN', 'RETURNING'].includes(j.status) && j.ret);
@@ -4686,7 +4700,7 @@ function returnsCard(R, showEngineers) {
   const engs = R.engineers.slice(0, showEngineers || 0);
   return `<div class="card ret-card${late ? ' has-late' : ''}">
     ${cardH('Returns from engineers', R.waiting.length ? `${R.waiting.length} part${R.waiting.length === 1 ? '' : 's'} to come back` : '')}
-    <div class="rule-chips"><span class="chip plain">${ic('clock', 'sm')}Muscat Main Hub · ${returnDays('MMH')} days</span><span class="chip plain">${ic('clock', 'sm')}Other hubs · ${RETURN_DAYS_OTHER} days</span><span class="t3 muted">counted from the install</span></div>
+    <div class="rule-chips"><span class="chip plain">${ic('clock', 'sm')}Muscat Main Hub · ${daysWord(returnDays('MMH'))}</span><span class="chip plain">${ic('clock', 'sm')}Other hubs · ${daysWord(RETURN_DAYS_OTHER)}</span><span class="t3 muted">counted from the install</span></div>
     <div class="ret-top"><div class="${late ? 'is-late' : ''}"><div class="hero-n">${late}</div><div class="hero-l">${late ? ic('alert', 'sm') + 'overdue' : ic('check', 'sm') + 'none overdue'}</div></div>
       <div class="ret-stats"><div class="kpi"><span class="k">Not back yet</span><span class="v">${nf(R.notBack)}</span></div><div class="kpi ${R.soon.length ? 'warn' : ''}"><span class="k">Due in 24 h</span><span class="v">${R.soon.length}</span></div><div class="kpi"><span class="k">On the way</span><span class="v">${R.transit.length}</span></div></div></div>
     ${segThin([['Overdue', late, 'st-bad'], ['Due within 24 h', R.soon.length, 'st-warn'], ['On time', R.fine.length, 'st-ok'], ['On the way to Stock', R.transit.length, 'st-mute']])}
@@ -4742,7 +4756,7 @@ function repReturns() {
       ${tbl(['Engineer', 'Hub', 'Waiting', 'Overdue', 'Most late'], R.engineers.map(e => `<tr class="${e.late ? 'flag' : ''}"><td>${e.late ? '<b>' + esc(e.name) + '</b>' : esc(e.name)}</td><td>${esc(e.hub)}</td><td class="r">${e.n}</td><td class="r">${e.late ? `<b>${e.late}</b>` : '–'}</td><td>${e.late ? esc(durDH(e.worst)) : 'on time'}</td></tr>`), 'No returns waiting.')}</div>
     <div class="stats4"><div class="kpi stat"><span class="k">Average time to return</span><span class="v">${R.avg == null ? '–' : esc(durDH(R.avg))}</span><span class="delta">from the install to sending it</span></div><div class="kpi stat"><span class="k">Sent back on time</span><span class="v">${R.onTime == null ? '–' : Math.round(R.onTime * 100) + '%'}</span><span class="delta">of returns already sent</span></div></div>
     <section class="blk"><div class="sec-h"><h2>Returns not yet at Stock</h2><span class="t3 muted">Most urgent first</span></div>${list.length ? `<div class="list">${list.map(row).join('')}</div>` : emptyBox('No returns outstanding', 'Every removed or unused part is back at Stock.')}</section>
-    <p class="note">The deadline counts from when the engineer recorded the install: ${returnDays('MMH')} days at the Muscat Main Hub, ${RETURN_DAYS_OTHER} days at every other hub. A reminder appears on the engineer’s screen with the return.</p>
+    <p class="note">The deadline counts from when the engineer recorded the install: ${daysWord(returnDays('MMH'))} at the Muscat Main Hub, ${daysWord(RETURN_DAYS_OTHER)} at every other hub. A reminder appears on the engineer’s screen with the return.</p>
   </div>`;
 }
 
@@ -5937,6 +5951,7 @@ const A = {
   adjDecide() { const s = UI.sheet; if (!s || s.busy) return; const id = s.p.id; s.d._err = ''; s.d._confirm = { text: 'Reject this change? The stock stays as it is and Stock sees your note.', danger: true, yes: 'Yes, reject', run: () => decideAdj(id, false, s.d), ok: 'Change rejected' }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   async remind(ds) { try { const j = await remindReturn(ds.id); render(); if (UI.sheet) renderSheet(); toast(`Reminder sent to ${j.techName}`); } catch (e) { toast(e.message, 'bad'); } },
   async saveRate() { try { await setRate($('#rate').value); await flushLog(); delete UI.drafts.rate; render(); toast('Workshop rate saved'); } catch (e) { toast(e.message, 'bad'); } },
+  async saveReturns() { try { await setReturnDeadline($('#rd-mmh').value, $('#rd-other').value); await flushLog(); delete UI.drafts.rdMmh; delete UI.drafts.rdOther; render(); toast('Return deadline saved'); } catch (e) { toast(e.message, 'bad'); } },
   async savePolicy() { try { await setPolicy($('#p-autoMaxValue').value, $('#p-autoMaxQty').value); await flushLog(); delete UI.drafts.autoMaxValue; delete UI.drafts.autoMaxQty; render(); toast('Auto-Rep limits saved'); } catch (e) { toast(e.message, 'bad'); } },
   excel() { exportExcel(); },
   impTemplate() { downloadTemplate(); },
