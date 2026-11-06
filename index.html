@@ -3,23 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="SPMS Field: spare parts for ATM and CDM field service · CNS Middle East">
+<meta name="description" content="SPMS Oman: spare parts for ATM and CDM field service · CNS Middle East">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="favicon-64.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="SPMS">
+<meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261105114048">
-<title>SPMS Field App</title>
+<meta name="spms-build" content="20261106174120">
+<title>SPMS Oman</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
 /* ==========================================================================
-   SPMS Field · CNS Middle East — a phone-first field app.
+   SPMS Oman · CNS Middle East — a phone-first field app.
    Crimson (the CNS tile) is the one bold colour: the home card, primary buttons, the active tab.
    Steel grey (the hook) and white (the crescent) carry everything else. Outfit echoes the round CNS letters.
    ========================================================================== */
@@ -899,7 +899,7 @@ const CNS_WORD_W = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJEAAABICAYAAA
 const STAFF = [];
 'use strict';
 /* ==========================================================================
-   SPMS Field — spare parts lifecycle from SOW v1.00
+   SPMS Oman — spare parts lifecycle from SOW v1.00
    Requests (Engineer → Team Leader → Stock → Engineer → return → Stock → Workshop → Stock),
    engineer van stock with Auto-Rep, hub stock with min/max levels, approval-based inventory
    changes, an inventory log for audit and serial-number tracing, reports and Excel export.
@@ -915,7 +915,7 @@ const TEST_ACCOUNTS = FIREBASE_BUILD && !FB_TEST ? [] : [
 let ACCOUNTS = TEST_ACCOUNTS.concat(FIREBASE_BUILD ? [] : STAFF);
 let USERS = [];   /* Firebase build: everyone in the users collection, active or not (the Team Leader's Accounts screen) */
 const idFromEmail = e => String(e || '').trim().toLowerCase().split('@')[0].replace(/[^a-z0-9.]/g, '');
-const ROLE = { TECH: 'Engineer', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver' };
+const ROLE = { TECH: 'Engineer', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver', MGR: 'Operations Manager' };
 /* what the person is called on screen: the full-access manager (Mohamed Said) shows his title, "Technical Manager - BFSI" */
 const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || SAID_TITLE) : (me ? ROLE[me.role] || '' : '');
 /* Mohamed Said's built-in, locked account (role Team Leader). His title is always "Technical Manager - BFSI", whatever
@@ -926,8 +926,7 @@ const TEST_PW = 'Test#2026';
 const RETURN_HOURS = 48, DEFAULT_RATE = 5, PAGE = 300;
 /* Hubs come from settings/hubs (Stock or the Team Leader add them); these two are the starting set. */
 const DEFAULT_HUBS = [{ code: 'MMH', name: 'Muscat Main Hub', country: 'Oman' }, { code: 'MH', name: 'Al Musanaah Hub', country: 'Oman' }, { code: 'SLH', name: 'Salalah Hub', country: 'Oman' },
-  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' },
-  { code: 'DMH', name: 'Dubai Main Hub', country: 'UAE' }, { code: 'AH', name: 'Abu Dhabi Hub', country: 'UAE' }, { code: 'FH', name: 'Fujairah Hub', country: 'UAE' }];
+  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' }];
 const HUBS = [], HUB_NAME = {}, HUB_INFO = [];
 function setHubs(list) {
   const ok = (Array.isArray(list) ? list : []).filter(h => h && /^[A-Z]{2,6}$/.test(h.code) && h.name);
@@ -937,12 +936,10 @@ function setHubs(list) {
 }
 setHubs(DEFAULT_HUBS);
 /* Countries guessed from a place name, so nobody has to pick what the name already says. */
-const PLACES = { Oman: ['muscat', 'seeb', 'nizwa', 'sohar', 'salalah', 'sur', 'ibri', 'buraimi', 'duqm', 'barka', 'rustaq', 'ibra', 'bahla', 'khasab', 'saham', 'shinas', 'adam', 'oman'], UAE: ['dubai', 'abu dhabi', 'abudhabi', 'sharjah', 'ajman', 'fujairah', 'ras al khaimah', 'rak', 'al ain', 'alain', 'umm al quwain', 'uaq', 'jebel ali', 'uae', 'emirates'] };
+const PLACES = { Oman: ['muscat', 'seeb', 'nizwa', 'sohar', 'salalah', 'sur', 'ibri', 'buraimi', 'duqm', 'barka', 'rustaq', 'ibra', 'bahla', 'khasab', 'saham', 'shinas', 'adam', 'oman'] };
 /* where the towns are, so a GPS position can be matched to the nearest hub */
 const CITY_LL = { muscat: [23.588, 58.3829], seeb: [23.6703, 58.1891], nizwa: [22.9333, 57.5333], sohar: [24.347, 56.7093], salalah: [17.0151, 54.0924], sur: [22.5667, 59.5289],
-  ibri: [23.2257, 56.5157], buraimi: [24.25, 55.7933], duqm: [19.6706, 57.7071], barka: [23.68, 57.88], rustaq: [23.3908, 57.4244], ibra: [22.6906, 58.5334], bahla: [22.964, 57.2976], khasab: [26.1799, 56.2477],
-  dubai: [25.2048, 55.2708], 'abu dhabi': [24.4539, 54.3773], sharjah: [25.3463, 55.4209], ajman: [25.4052, 55.5136], fujairah: [25.1288, 56.3265], 'ras al khaimah': [25.8007, 55.9762], 'al ain': [24.2075, 55.7447],
-  'umm al quwain': [25.5647, 55.5552], 'jebel ali': [25.0108, 55.0617] };
+  ibri: [23.2257, 56.5157], buraimi: [24.25, 55.7933], duqm: [19.6706, 57.7071], barka: [23.68, 57.88], rustaq: [23.3908, 57.4244], ibra: [22.6906, 58.5334], bahla: [22.964, 57.2976], khasab: [26.1799, 56.2477] };
 function hubLL(code) {
   const h = HUB_INFO.find(x => x.code === code); if (!h) return null;
   if (isFinite(h.lat) && isFinite(h.lng)) return [+h.lat, +h.lng];
@@ -2521,7 +2518,7 @@ async function vanUse(d) {
 /* ---------- engineer: send parts back to the Main Hub in one go (before leave, or to clear the van / his outside hub's
    shelf). The parts leave his van or hub at once and are "on the way" until Stock at the Main Hub confirms them; anything
    Stock doesn't tick as arrived goes back where it came from, so nothing disappears from the inventory. ---------- */
-/* the main hub of a hub's country: Muscat Main Hub in Oman, Dubai Main Hub in the UAE */
+/* the main hub of a hub's country: the Muscat Main Hub */
 const mainHubFor = h => { const c = hubCountry(h), m = HUB_INFO.find(x => x.country === c && /main hub/i.test(x.name || '')); return m ? m.code : MAIN_HUB; };
 /* where an engineer can send parts back from: his van, and the shelf of his own outside hub */
 function backSources(me) {
@@ -2774,7 +2771,8 @@ const TABS = {
   TL: [['todo', 'Approvals', 'check'], ['all', 'All requests', 'list'], ['rep', 'Reports', 'chart'], ['db', 'Database', 'db']],
   STOCK: [['todo', 'To do', 'inbox'], ['inv', 'Inventory', 'box'], ['all', 'All requests', 'list']],
   WS: [['todo', 'To do', 'inbox'], ['all', 'Repairs', 'wrench']],
-  DRIVER: [['todo', 'To do', 'inbox'], ['all', 'All requests', 'list']]
+  DRIVER: [['todo', 'To do', 'inbox'], ['all', 'All requests', 'list']],
+  MGR: [['rep', 'Reports', 'chart']]   /* the Operations Manager: the dashboard and reports, read only */
 };
 function myJobs(me) { return me.role === 'TECH' ? JOBS.filter(j => j.techId === me.id) : me.role === 'WS' ? JOBS.filter(j => j.status === 'WORKSHOP' ? inMyHub(stepHub(j), me) : j.ws && (j.ws.byId ? j.ws.byId === me.id : j.ws.by === me.name)) : JOBS; }
 function myTodo(me) {
@@ -2811,7 +2809,7 @@ function render() {
   if (!me) { if (!$('#si-form')) renderSignIn(); return; }
   if (UI.gate === 'otp') { if (!$('#otp-form')) renderOtpGate(); return; }
   if (UI.gate === 'pw') { if (!$('#pwg-form')) renderPwGate(); return; }
-  const tabs = TABS[me.role]; if (!tabs.some(t => t[0] === UI.tab)) UI.tab = 'todo';
+  const tabs = TABS[me.role]; if (!tabs.some(t => t[0] === UI.tab)) UI.tab = tabs[0][0];
   const f = grabFocus($('#app')); const scr = $('#scr'); const top = scr.scrollTop;
   $('#app').classList.remove('out'); $('#bar').hidden = false; $('#tabs').hidden = false;
   const n = todoCount(me), home = UI.tab === 'todo';
@@ -2822,7 +2820,7 @@ function render() {
     + `<button class="avatar" data-a="sheet" data-s="profile" aria-label="Profile and sign out">${esc(initials(me.name))}</button>`;
   $('#tabs').style.gridTemplateColumns = `repeat(${tabs.length},1fr)`;
   $('#tabs').innerHTML = tabs.map(([id, l, i]) => `<button class="${UI.tab === id ? 'on' : ''}" data-a="tab" data-v="${id}"${UI.tab === id ? ' aria-current="page"' : ''}>${ic(i)}<span>${esc(l)}</span>${id === 'todo' && n ? `<span class="badge" aria-label="${n} to do">${n}</span>` : ''}</button>`).join('');
-  $('#tabs').insertAdjacentHTML('afterbegin', `<div class="side-head"><img src="${CNS_MARK}" alt="CNS"><span>SPMS Field<small>Spare parts management</small></span></div>`);
+  $('#tabs').insertAdjacentHTML('afterbegin', `<div class="side-head"><img src="${CNS_MARK}" alt="CNS"><span>SPMS Oman<small>Spare parts management</small></span></div>`);
   $('#tabs').insertAdjacentHTML('beforeend', `<div class="side-foot"><img src="${CNS_LOGO}" alt="CNS Middle East · Your Innovation &amp; Technology Partner"></div>`);
   if (!UI.loaded) { scr.innerHTML = `<div class="splash"><span class="logo">${LOGO}</span><b>Loading SPMS…</b></div>`; return; }
   let body = pageTitle(me) + storeBanner();
@@ -3476,7 +3474,7 @@ const autoHint = (d, ...kinds) => { const h = kinds.map(k => d['_hint_' + k]).fi
 
 /* ---------- engineer: new request ---------- */
 /* Read coordinates the way phones copy them: "23.588, 58.383", "23.588 58.383", "23.58845° N, 58.38291° E",
-   23°35'18.4"N 58°22'58.5"E, Arabic digits, and full Google Maps links. Swapped numbers are put right for Oman/UAE. */
+   23°35'18.4"N 58°22'58.5"E, Arabic digits, and full Google Maps links. Swapped numbers are put right for Oman. */
 const inGulf = (lat, lng) => lat >= 16 && lat <= 27.5 && lng >= 51 && lng <= 60.5;
 const isShortMapLink = t => /(maps\.app\.goo\.gl|goo\.gl\/maps|maps\.apple\/)/i.test(String(t || ''));
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -3510,7 +3508,7 @@ function gpsPreview(d) {
   const g = parseCoords(t);
   if (!g) return `<div class="err" style="font-weight:500">${isShortMapLink(t) ? 'Short share links don’t include the numbers. Copy the coordinates instead (steps above).' : 'Can’t read this yet. Copy the numbers, like 23.588, 58.383'}</div>`;
   const far = !inGulf(g.lat, g.lng);
-  return `<div class="${far ? 'upd' : 'autohint'}" role="status">${ic(far ? 'alert' : 'check', 'sm')}<span>${far ? 'This point is outside Oman and the UAE. Check the numbers. ' : g.swapped ? 'Read as latitude, longitude (swapped): ' : 'Read as '}<b class="mono">${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}</b> · <a href="${mapsUrl(g)}" target="_blank" rel="noopener">Check on map</a></span></div>`;
+  return `<div class="${far ? 'upd' : 'autohint'}" role="status">${ic(far ? 'alert' : 'check', 'sm')}<span>${far ? 'This point is outside Oman. Check the numbers. ' : g.swapped ? 'Read as latitude, longitude (swapped): ' : 'Read as '}<b class="mono">${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}</b> · <a href="${mapsUrl(g)}" target="_blank" rel="noopener">Check on map</a></span></div>`;
 }
 /* step-by-step help, opened by itself when GPS fails: a looping demo phone + the same four steps + video links */
 const GPS_HELP = {
@@ -3919,7 +3917,7 @@ SH.hubs = d => {
   const guess = guessCountry(d.hname);
   const form = can ? box(`<div class="sec-h" style="padding:0"><h2>${d.hedit ? 'Edit ' + esc(d.hedit) : 'Add a hub'}</h2></div>
     <div class="two">${d.hedit ? fld('Code', `<input class="inp mono" value="${esc(d.hedit)}" disabled>`) : inp(d, 'hcode', 'Code *', 'e.g. SOH', { mono: true })}${inp(d, 'hname', 'Name *', 'e.g. Sohar Hub', { live: 'rr' })}</div>
-    ${fld('Country', segBtns(d, 'hcountry', [['', guess ? 'From the name: ' + guess : 'Not set'], ['Oman', 'Oman'], ['UAE', 'UAE']]), '')}
+    ${fld('Country', segBtns(d, 'hcountry', [['', guess ? 'From the name: ' + guess : 'Not set'], ['Oman', 'Oman']]), '')}
 `) : '';
   return { title: 'Hubs', sub: 'Where hub stock is kept', body: list + form,
     op: can ? { label: d.hedit ? 'Save hub' : 'Add hub', run: () => saveHub(d), stay: true, ok: c => `Hub ${c} saved` } : null,
@@ -4475,11 +4473,11 @@ SH.help = d => {
   };
 };
 /* ==========================================================================
-   Team Leader reports (on screen) and the Excel workbook
+   Reports for the Team Leader and the Operations Manager (on screen) and the Excel workbook
    ========================================================================== */
 const REPORTS = [['dash', 'Dashboard'], ['returns', 'Returns'], ['stock', 'Stock levels'], ['eng', 'Engineers'], ['moves', 'Movements'], ['cons', 'Consumption'], ['cost', 'Repair cost'], ['trace', 'Serial trace'], ['audit', 'Audit log']];
 function reportsView(me) {
-  if (me.role !== 'TL') return '<div class="err">Only the Team Leader can see reports.</div>';
+  if (!['TL', 'MGR'].includes(me.role)) return '<div class="err">Only the Team Leader or the Operations Manager can see reports.</div>';
   const r = REPORTS.some(x => x[0] === UI.report) ? UI.report : 'dash';
   return `<div class="filters" role="group" aria-label="Report">${REPORTS.map(([v, l]) => `<button class="${r === v ? 'on' : ''}" aria-pressed="${r === v}" data-a="report" data-v="${v}">${l}</button>`).join('')}</div><div id="live-rep" class="blk" style="gap:18px">${REPORT_FN[r]()}</div>`;
 }
@@ -4749,7 +4747,7 @@ function repDash() {
 function repReturns() {
   const R = returnsData(JOBS), now = R.now;
   const list = R.out.slice().sort((a, b) => ((a.status === 'RETURNING') - (b.status === 'RETURNING')) || (retDue(a) - retDue(b)));
-  const row = j => { const late = isLate(j), due = retDue(j); return `<div class="row${late ? ' is-late-row' : ''}"><span class="lead ${late ? 'bad' : j.status === 'RETURNING' ? 'info' : due - now < DAY ? 'warn' : 'ok'}">${ic(j.status === 'RETURNING' ? 'truck' : late ? 'alert' : 'ret', 'sm')}</span><button class="main rowbtn" data-a="sheet" data-s="job" data-id="${esc(j.id)}"><span class="t1">${tag(j.ret.pn)} ${j.ret.sn ? `<span class="mono">SN ${esc(j.ret.sn)}</span>` : '× ' + (j.ret.qty || 1)} ${lateChip(j)}</span><span class="t2">${esc(j.techName)} · ${esc(HUB_NAME[jobHub(j)] || jobHub(j))} · ${j.ret.type === 'defective' ? 'defective' : 'unused'}</span><span class="t3">${j.status === 'RETURNING' ? `On the way · sent ${rel(j.ret.shippedAt)}` : esc(dueText(due))}${(j.reminders || []).length ? ` · reminded ${j.reminders.length}×, last ${rel(j.reminders[j.reminders.length - 1].at)}` : ''}</span></button>${j.status === 'RETURN' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}Remind</button>` : ''}</div>`; };
+  const row = j => { const late = isLate(j), due = retDue(j); return `<div class="row${late ? ' is-late-row' : ''}"><span class="lead ${late ? 'bad' : j.status === 'RETURNING' ? 'info' : due - now < DAY ? 'warn' : 'ok'}">${ic(j.status === 'RETURNING' ? 'truck' : late ? 'alert' : 'ret', 'sm')}</span><button class="main rowbtn" data-a="sheet" data-s="job" data-id="${esc(j.id)}"><span class="t1">${tag(j.ret.pn)} ${j.ret.sn ? `<span class="mono">SN ${esc(j.ret.sn)}</span>` : '× ' + (j.ret.qty || 1)} ${lateChip(j)}</span><span class="t2">${esc(j.techName)} · ${esc(HUB_NAME[jobHub(j)] || jobHub(j))} · ${j.ret.type === 'defective' ? 'defective' : 'unused'}</span><span class="t3">${j.status === 'RETURNING' ? `On the way · sent ${rel(j.ret.shippedAt)}` : esc(dueText(due))}${(j.reminders || []).length ? ` · reminded ${j.reminders.length}×, last ${rel(j.reminders[j.reminders.length - 1].at)}` : ''}</span></button>${j.status === 'RETURN' && (ME() || {}).role === 'TL' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}Remind</button>` : ''}</div>`; };
   return `<div class="dash">
     ${returnsCard(R, 0)}
     <div class="card">${cardH('Engineers with a return waiting', R.engineers.length ? `${R.engineers.filter(e => e.late).length} late` : '')}
@@ -4966,7 +4964,7 @@ function addDashCharts(X, data, sheetName, blocks) {
 }
 let exporting = false;
 async function exportExcel() {
-  const me = ME(); if (!me || me.role !== 'TL') return toast('Only the Team Leader can export the database.', 'bad');
+  const me = ME(); if (!me || !['TL', 'MGR'].includes(me.role)) return toast('Only the Team Leader or the Operations Manager can export the database.', 'bad');
   if (!DL) return toast('Excel download works in the published app.', 'bad');
   if (exporting) return; exporting = true;
   try {
@@ -5056,11 +5054,15 @@ async function fbSecondaryAuth() {
 const BUILTIN_TL = [
   { email: 'mohamed.said@cns-me.com', name: 'Mohamed Said', title: 'Technical Manager - BFSI', hub: 'MMH', full: true },
   { email: 'madhu.kuriakose@cns-me.com', name: 'Madhu Kuriakose', title: 'Team Leader · Oman', hub: 'MMH' },
-  { email: 'mohamed.fawzy@cns-me.com', name: 'Mohamed Fawzy', title: 'Team Leader · Oman', hub: 'MMH' },
-  { email: 'asim.butt@cns-me.com', name: 'Asim Butt', title: 'Team Leader · UAE', hub: 'DMH' },
-  { email: 'praveen.kannoly@cns-me.com', name: 'Praveen Kannoly Pushpan', title: 'Team Leader · UAE', hub: 'DMH' }
+  { email: 'mohamed.fawzy@cns-me.com', name: 'Mohamed Fawzy', title: 'Team Leader · Oman', hub: 'MMH' }
 ];
 const builtinTL = email => BUILTIN_TL.find(t => t.email === String(email || '').trim().toLowerCase()) || null;
+/* the Operations Manager built into SPMS (firestore.rules and the sender carry the same list): read-only access to the
+   dashboard and reports. He gets his password by email the same way as a built-in Team Leader. */
+const BUILTIN_MGR = [
+  { email: 'hany.khalifa@cns-me.com', name: 'Hany Khalifa', title: 'Regional Operations Manager', hub: 'MMH' }
+];
+const builtinMgr = email => BUILTIN_MGR.find(t => t.email === String(email || '').trim().toLowerCase()) || null;
 /* where the link in a password email brings people back to: this copy of SPMS */
 const mailLink = () => ({ url: location.origin + location.pathname.replace(/index\.html$/, '') });
 function randomPw() { const a = new Uint8Array(24); crypto.getRandomValues(a); return 'x' + Array.from(a, b => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 56]).join(''); }
@@ -5070,7 +5072,7 @@ async function fbSendPwMail(raw) {
   const email = String(raw || '').trim().toLowerCase();
   if (!EMAIL_RE.test(email)) throw E('Enter your work email.');
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
-  if (builtinTL(email)) {
+  if (builtinTL(email) || builtinMgr(email)) {
     const a2 = await fbSecondaryAuth();
     try { await a2.createUserWithEmailAndPassword(email, randomPw()); }
     catch (e) { if (!/email-already-in-use/.test(String(e && e.code))) throw mapAuthErr(e, true); }
@@ -5103,7 +5105,7 @@ async function fbSendResetFor(email) {
 }
 
 /* ---------- staff accounts (Team Leader) ---------- */
-const ROLE_WORDS = { TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'] };
+const ROLE_WORDS = { TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'], MGR: ['operations manager', 'regional operations manager', 'ops manager', 'mgr'] };
 function roleOf(v) {
   const t = String(v || '').trim().toLowerCase(); if (ROLE[t.toUpperCase()]) return t.toUpperCase(); for (const [k, ws] of Object.entries(ROLE_WORDS)) if (ws.includes(t)) return k;
   /* the Team sheet's Role column: "request part from Sohar HUB", "Teamleader approval", "Stock approval", "Workshop approval" */
@@ -5119,15 +5121,18 @@ function hubFromRole(v) {
   const hit = HUB_INFO.filter(x => lev(core, x.name.toUpperCase().replace(/[^A-Z]/g, '').replace(/HUB$/, '')) <= 1);
   return hit.length === 1 ? hit[0].code : '';
 }
-const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', DRIVER: 'Driver', TL: 'Team Leader' };
+const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', DRIVER: 'Driver', TL: 'Team Leader', MGR: 'Operations Manager' };
 function acctHub(v) {
   const h = hubOf(v); if (h) return h;
-  const c = guessCountry(v) || (/\bUAE\b|EMIRATES/i.test(String(v || '')) ? 'UAE' : /\bOMAN\b/i.test(String(v || '')) ? 'Oman' : '');
+  const c = guessCountry(v) || (/\bOMAN\b/i.test(String(v || '')) ? 'Oman' : '');
   const byC = c && HUB_INFO.find(x => x.country === c); return byC ? byC.code : HUBS[0];
 }
 const acctTitle = (role, hub) => `${ROLE_TITLE[role]} · ${role === 'STOCK' ? HUB_NAME[hub] || hub : (HUB_INFO.find(h => h.code === hub) || {}).country || HUB_NAME[hub] || hub}`;
+/* SPMS Oman is for Oman only: a row placed in the UAE (Location, hub or team column) is not imported */
+const NOT_OMAN = /\b(UAE|U\.A\.E\.?|EMIRATES|DUBAI|ABU ?DHABI|SHARJAH|AJMAN|FUJAIRAH|AL ?AIN|RAS AL KHAIMAH|DMH|AH|FH)\b/i;
 function checkAcct(a) {
   if (!a.name) return 'Name missing';
+  if (a.uae) return 'UAE staff are not in SPMS Oman';
   if (!EMAIL_RE.test(a.email)) return 'Email or username missing or not valid (a username uses only letters, numbers, . _ -)';
   if (!ROLE[a.role]) return `Role “${a.rawRole || ''}” is not used in SPMS`;
   if (!a.pw) return 'Password missing';
@@ -5158,7 +5163,7 @@ async function fbCreateAccount(a, opt) {
   /* the login exists: does it already have this password? (then nothing needs changing) */
   if (!made) { try { await auth2.signInWithEmailAndPassword(a.email, fbPw(a.pw)); same = true; } catch (e) { /* a different password */ } finally { try { await auth2.signOut(); } catch (e) { /* already signed out */ } } }
   const me = ME(), now = Date.now(), old = USERS.find(u => (u.email || u.id) === a.email);
-  const role = (old && old.role === 'TL') || builtinTL(a.email) ? 'TL' : a.role;
+  const role = (old && old.role === 'TL') || builtinTL(a.email) ? 'TL' : builtinMgr(a.email) ? 'MGR' : a.role;
   /* the short id (van, requests) must be unique: ahmed@cns-me.com and the username ahmed would otherwise share one */
   let sid = (old && old.sid) || idFromEmail(a.email);
   if (!old) { const base = sid; for (let n = 2; USERS.some(u => (u.email || u.id) !== a.email && (u.sid || idFromEmail(u.email || u.id)) === sid); n++) sid = base + n; }   /* an import never demotes a Team Leader (built-in ones stay Team Leader) */
@@ -5220,7 +5225,7 @@ const ACC_ALIASES = {
 function budgetCell(v) {
   if (typeof v === 'number') return v >= 0 ? Math.round(v * 1000) / 1000 : false;
   const t = String(v == null ? '' : v).trim(); if (!t) return null;
-  const n = t.replace(/,/g, '').replace(/^(omr|ro|r\.o\.?|aed)\s*/i, '').replace(/\s*(omr|ro|aed)$/i, '');
+  const n = t.replace(/,/g, '').replace(/^(omr|ro|r\.o\.?)\s*/i, '').replace(/\s*(omr|ro)$/i, '');
   return /^\d+(\.\d+)?$/.test(n) ? Math.round(+n * 1000) / 1000 : false;
 }
 function parseAccounts(X, wb) {
@@ -5252,7 +5257,7 @@ function parseAccounts(X, wb) {
         let pw = get('pw'); if (/^\d+\.0+$/.test(pw)) pw = pw.replace(/\.0+$/, '');
         const role = roleOf(get('role')), hub = hubFromRole(get('role')) || acctHub(get('hub'));
         const budget = col.budget == null ? null : budgetCell(row[col.budget]);
-        rows.push({ row: r + 1, name, email, role, rawRole: get('role'), hub, pw, title: get('title'), budget });
+        rows.push({ row: r + 1, name, email, role, rawRole: get('role'), hub, pw, title: get('title'), budget, uae: NOT_OMAN.test([get('hub'), get('role'), get('title')].join(' ')) });
       }
       return { sheet: sn, rows };
     }
@@ -5276,13 +5281,13 @@ async function downloadAccountsTemplate() {
     const ws = X.utils.aoa_to_sheet([head, ['Example Engineer', 'first.last@cns-me.com', 'Engineer', HUBS[0], 'Start#2026a', '', 5000], ['Example Stock', 'store.keeper@cns-me.com', 'Stock', HUBS[0], 'Begin#2026b', '', '']]);
     ws['!cols'] = [{ wch: 26 }, { wch: 32 }, { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 26 }, { wch: 16 }];
     X.utils.book_append_sheet(wb, ws, 'Accounts');
-    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login. No email? Put a username instead (letters, numbers, . _ -) — they sign in with it.'], ['Role', 'Engineer, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), hub name, or Oman / UAE'], ['Password', 'First password. ' + PW_RULE + ' Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman'], ['Engineer Budget', 'Engineers only: yearly budget in OMR, e.g. 5000. Optional. What he has used so far is kept.']]);
+    const help = X.utils.aoa_to_sheet([['Column', 'What to put in it'], ['Name', 'Full name'], ['Email', 'Work email: this is the login. No email? Put a username instead (letters, numbers, . _ -) — they sign in with it.'], ['Role', 'Engineer, Stock, Workshop, Driver or Team Leader (CS, Logistics and WS also work)'], ['Hub', 'Hub code (' + HUBS.join(', ') + '), or hub name'], ['Password', 'First password. ' + PW_RULE + ' Everyone can change it later in their profile.'], ['Title', 'Optional, e.g. CS Engineer · Oman'], ['Engineer Budget', 'Engineers only: yearly budget in OMR, e.g. 5000. Optional. What he has used so far is kept.']]);
     help['!cols'] = [{ wch: 16 }, { wch: 100 }]; X.utils.book_append_sheet(wb, help, 'How to fill');
     savedToast(await DL.save({ filename: 'SPMS-accounts-template.xlsx', data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Template saved');
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
 }
 function accProgress(n, total) { const t = $('#acc-prog'); if (t) t.innerHTML = `<div class="prog-line"><i style="width:${Math.round(n / total * 100)}%"></i></div><span class="hint">Creating ${n} of ${total}…</span>`; }
-const ROLE_ORDER = { TL: 0, TECH: 1, STOCK: 2, WS: 3, DRIVER: 4 };
+const ROLE_ORDER = { TL: 0, MGR: 1, TECH: 2, STOCK: 3, WS: 4, DRIVER: 5 };
 SH.accounts = d => {
   const me = ME(); if (!me || me.role !== 'TL') return { title: 'Staff accounts', body: '<div class="err">Only the Team Leader manages accounts.</div>' };
   if (!d.mode) d.mode = USERS.length > 1 ? 'list' : 'excel';
@@ -5314,7 +5319,7 @@ SH.accounts = d => {
   } else if (d.mode === 'add') {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
     body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email or username *', 'first.last@cns-me.com or a username', { hint: 'No email? Type a username (letters, numbers, . _ -). They sign in with that username and password.' })}
-      ${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}
+      ${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader'], ['MGR', 'Operations Manager']]))}${fld('Hub', hubSeg(d, 'hub'))}
       ${inp(d, 'pw', 'First password *', 'e.g. Start#2026a', { hint: PW_RULE + ' They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
     op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: toLogin(d.email), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a, { force: true }); }, stay: true,
       ok: r => r.skip ? 'Mohamed Said’s account is built in and can’t be changed.' : r.made ? 'Account created' : r.pw === 'same' ? 'Saved. This login already had this password.' : r.pw === 'set' ? 'Saved. This login already existed — its password is now the one you typed.' : 'Saved, but this login already existed and SPMS couldn’t change its password. Open the person and tap “Send password email”.' };
@@ -5352,7 +5357,7 @@ SH.acct = (d, p) => {
       <span class="hint">Each request he sends is added to “used”. Rejected, cancelled, faulty or unused parts are given back, and van parts count when he uses them. Change “used so far” only to start from your own figure.</span></div>`;
   return {
     title: u.name, sub: esc(loginShow(u.email || u.id)) + (isUserLogin(u.email || u.id) ? ' · signs in with a username' : ''),
-    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
+    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader'], ['MGR', 'Operations Manager']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
       ${budBox}
       <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div>${isUserLogin(u.email || u.id) ? `<p class="note" style="padding:0">This person signs in with the username <b class="mono">${esc(loginShow(u.email || u.id))}</b> and has no email, so SPMS can’t send them a password link. If they forget their password, remove this account and add them again with a new username.</p>` : `<p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button>`}</div>
@@ -5602,8 +5607,8 @@ async function otpLoginCheck(code) {
 async function resetSend(email) {
   email = String(email || '').trim().toLowerCase(); if (!EMAIL_RE.test(email)) throw E('Enter your work email.');
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
-  /* a built-in Team Leader with no login yet: make one (random password) so a code can set its real password */
-  if (builtinTL(email)) {
+  /* a built-in Team Leader or Operations Manager with no login yet: make one (random password) so a code can set its real password */
+  if (builtinTL(email) || builtinMgr(email)) {
     const a2 = await fbSecondaryAuth();
     try { await a2.createUserWithEmailAndPassword(email, randomPw()); }
     catch (e) { if (!/email-already-in-use/.test(String(e && e.code))) throw mapAuthErr(e, true); }
@@ -5682,7 +5687,7 @@ SH.security = d => {
 function renderSignIn() {
   $('#app').classList.add('out'); $('#bar').hidden = true; $('#tabs').hidden = true;
   $('#scr').innerHTML = `<div class="signin">
-    <div class="si-head"><img class="wm" src="${CNS_SWIRL}" alt=""><div class="si-brand"><img class="sw" src="${CNS_SWIRL}" alt=""><img class="wd" src="${CNS_WORD_W}" alt="CNS"></div><span class="si-me">MIDDLE EAST</span><h1>SPMS Field</h1><p>Spare parts for ATM and CDM field service · Oman &amp; UAE</p></div>
+    <div class="si-head"><img class="wm" src="${CNS_SWIRL}" alt=""><div class="si-brand"><img class="sw" src="${CNS_SWIRL}" alt=""><img class="wd" src="${CNS_WORD_W}" alt="CNS"></div><span class="si-me">MIDDLE EAST</span><h1>SPMS Oman</h1><p>Spare parts for ATM and CDM field service · Oman</p></div>
     <form id="si-form" class="card" novalidate>
       <div class="fld"><label class="lbl" for="si-email">Work email or username</label><input class="inp" id="si-email" type="text" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@cns-me.com or username" value=""></div>
       <div class="fld"><label class="lbl" for="si-pw">Password</label><div class="pw"><input class="inp" id="si-pw" type="password" autocomplete="off" value=""><button type="button" class="pw-t" data-a="pwToggle" aria-label="Show password">Show</button></div></div>
@@ -5698,7 +5703,7 @@ function renderSignIn() {
 function gateShell(inner) {
   $('#app').classList.add('out'); $('#bar').hidden = true; $('#tabs').hidden = true;
   $('#scr').innerHTML = `<div class="signin">
-    <div class="si-head"><img class="wm" src="${CNS_SWIRL}" alt=""><div class="si-brand"><img class="sw" src="${CNS_SWIRL}" alt=""><img class="wd" src="${CNS_WORD_W}" alt="CNS"></div><span class="si-me">MIDDLE EAST</span><h1>SPMS Field</h1></div>
+    <div class="si-head"><img class="wm" src="${CNS_SWIRL}" alt=""><div class="si-brand"><img class="sw" src="${CNS_SWIRL}" alt=""><img class="wd" src="${CNS_WORD_W}" alt="CNS"></div><span class="si-me">MIDDLE EAST</span><h1>SPMS Oman</h1></div>
     ${inner}
     <p class="si-foot">CNS Middle East · Computer Network Systems</p></div>`;
 }
@@ -5740,7 +5745,7 @@ function renderOffline() {
   const [t1, t2, steps] = OFF_TEXT[UI.offReason] || OFF_TEXT.claude;
   $('#app').classList.add('out'); $('#bar').hidden = true; $('#tabs').hidden = true;
   $('#scr').innerHTML = `<div class="signin">
-    <div class="si-head"><img class="wm" src="${CNS_SWIRL}" alt=""><div class="si-brand"><img class="sw" src="${CNS_SWIRL}" alt=""><img class="wd" src="${CNS_WORD_W}" alt="CNS"></div><span class="si-me">MIDDLE EAST</span><h1>SPMS Field</h1><p>Spare parts for ATM and CDM field service · Oman &amp; UAE</p></div>
+    <div class="si-head"><img class="wm" src="${CNS_SWIRL}" alt=""><div class="si-brand"><img class="sw" src="${CNS_SWIRL}" alt=""><img class="wd" src="${CNS_WORD_W}" alt="CNS"></div><span class="si-me">MIDDLE EAST</span><h1>SPMS Oman</h1><p>Spare parts for ATM and CDM field service · Oman</p></div>
     <div class="card" id="off-card" role="alert"><div style="display:flex;gap:12px;align-items:center"><span class="lead bad">${ic('wifi')}</span><div><b style="font-family:var(--font-display);font-size:19px">${t1}</b><div class="t3 muted" style="font-size:13.5px">${t2}</div></div></div>
       <ol class="howto">${steps.map(x => `<li><span>${x}</span></li>`).join('')}</ol>
       <button class="btn block" data-a="reload">${ic('ret', 'sm')}Reload</button></div>
@@ -5767,7 +5772,7 @@ async function fbSignInTry(email, pw) {
   catch (e) { first = e; const c = String((e && e.code) || ''); if (!/wrong-password|invalid-credential|invalid-login-credentials|user-not-found|invalid-password/.test(c)) throw mapAuthErr(e); }
   if (pw.length >= 6) { try { await FB.auth.signInWithEmailAndPassword(email, pw); return; } catch (e) { /* a password set outside the app; keep trying */ } }
   /* a built-in Team Leader with no login yet: create it now with the password they typed (direct sign-in, no email step) */
-  if (builtinTL(email)) {
+  if (builtinTL(email) || builtinMgr(email)) {
     try { await FB.auth.createUserWithEmailAndPassword(email, fbPw(pw)); return; }
     catch (e2) { if (!/email-already-in-use/.test(String((e2 && e2.code) || ''))) throw mapAuthErr(e2, true); }   /* the account already exists → the password is wrong */
   }
@@ -5781,11 +5786,11 @@ async function fbAuthChanged(user) {
   const email = (user.email || '').toLowerCase();
   try {
     const doc = await FB.fs.collection('users').doc(email).get(); let d = doc.exists ? fixTitle(doc.data()) : null;
-    const bt = builtinTL(email);
+    const bt = builtinTL(email), bm = builtinMgr(email);
     /* a built-in Team Leader signing in for the first time: add them to the staff list (the rules allow it only once their
        email is confirmed, which the password email does) */
-    if (!d && bt) {
-      const now = Date.now(); d = { id: email, email, sid: idFromEmail(email), name: bt.name, role: 'TL', title: bt.title, hub: bt.hub, active: true, createdAt: now, createdBy: 'SPMS (built-in Team Leader)', pwAt: now };
+    if (!d && (bt || bm)) {
+      const b = bt || bm, now = Date.now(); d = { id: email, email, sid: idFromEmail(email), name: b.name, role: bt ? 'TL' : 'MGR', title: b.title, hub: b.hub, active: true, createdAt: now, createdBy: bt ? 'SPMS (built-in Team Leader)' : 'SPMS (built-in Operations Manager)', pwAt: now };
       await FB.fs.collection('users').doc(email).set(d);
     }
     if (!d || !ROLE[d.role] || d.active === false) { fail(d && d.active === false ? 'Your access to SPMS was removed. Ask the Team Leader.' : 'Your login works, but you aren’t on the SPMS staff list yet. Ask the Team Leader to add you.'); await FB.auth.signOut().catch(() => {}); return; }

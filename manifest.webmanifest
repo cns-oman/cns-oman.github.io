@@ -1,7 +1,7 @@
 {
-  "name": "SPMS Field · CNS Middle East",
-  "short_name": "SPMS",
-  "description": "Spare parts for ATM and CDM field service in Oman and the UAE: requests, approvals, dispatch, returns, repairs and stock.",
+  "name": "SPMS Oman · CNS Middle East",
+  "short_name": "SPMS Oman",
+  "description": "Spare parts for ATM and CDM field service in Oman: requests, approvals, dispatch, returns, repairs and stock.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
