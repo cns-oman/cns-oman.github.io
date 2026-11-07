@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261107152154">
+<meta name="spms-build" content="20261107154446">
 <title>SPMS Oman</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2433,10 +2433,19 @@ async function techFixSn(id, d) {
     return doc;
   });
 }
+/* a faulty part goes back with a link to the machine logs the engineer uploaded (required) */
+const LOGS_MSG = 'Add the link to the logs you uploaded for this faulty part.';
+function logsLink(v) {
+  const s = String(v || '').trim(); if (!s) throw E(LOGS_MSG);
+  if (!/^https?:\/\/[^\s/]+\.[^\s]+$/i.test(s) || s.length > 1000) throw E('The logs link must be a web link starting with https:// (copy it from where you uploaded the logs).');
+  return s;
+}
+const safeLink = v => /^https?:\/\//i.test(String(v || '')) ? String(v) : '';
 async function techShip(id, d) {
   return jobStep(id, 'RETURN', 'TECH', async (j, me) => {
     const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), courier = d.courier || COURIERS[0];
-    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref, courier }) }));
+    const logs = j.ret.type === 'defective' ? logsLink(d.logs) : '';
+    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref, courier }, logs ? { logs } : {}) }));
     log({ t: 'Return sent', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: me.name, to: 'Stock', ref: j.id, note: `${courier} · ${ref}` });
     return doc;
   });
@@ -3400,6 +3409,7 @@ SH.job = (d, p) => {
       (j.backorders || []).length && ['Back-orders', j.backorders.map(jobLink).join(' ')], (j.splits || []).length && ['Separate returns', j.splits.map(jobLink).join(' ')],
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
       r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
+      r.logs && ['Logs', safeLink(r.logs) ? `<a href="${esc(safeLink(r.logs))}" target="_blank" rel="noopener noreferrer">Open the logs</a> <span class="t3">${esc(r.logs.length > 60 ? r.logs.slice(0, 57) + '…' : r.logs)}</span>` : esc(r.logs)],
       (j.tmAsk || j.tm) && ['Technical Manager', [j.tmAsk && `Asked by ${esc(j.tmAsk.by)}, ${fmtDT(j.tmAsk.at)}: ${esc(j.tmAsk.note)}`, j.tm && `${j.tm.ok ? 'Approved' : '<b>Rejected</b>'} by ${esc(j.tm.by)}, ${fmtDT(j.tm.at)}${j.tm.note ? ': ' + esc(j.tm.note) : ''}`].filter(Boolean).join('<br>')],
       (j.reminders || []).length && ['Reminders', j.reminders.map(x => `${fmtDT(x.at)} · ${esc(x.by)}`).join('<br>')],
       w.total != null && w.doneAt && ['Repair', `${esc(w.outcome)} · ${money(w.total)}`], j.outcome && ['Outcome', esc(eng(j.outcome))]])}</div></details>`;
@@ -3581,7 +3591,7 @@ function actionForm(j, me, d) {
     }
     case 'RETURN': {
       if (!d.courier) d.courier = COURIERS[0];
-      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', run: () => techShip(j.id, d) } };
+      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>${r.type === 'defective' ? inp(d, 'logs', 'Link to the logs *', 'https://…', { hint: 'Upload the machine logs for this faulty part (for example to OneDrive or SharePoint) and paste the link here.' }) : ''}${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', run: () => techShip(j.id, d) } };
     }
     case 'RETURNING': {
       if (!d.diff) d.diff = 'no'; if (!d.miss) d.miss = 'no'; if (!d.dmg) d.dmg = 'no';
