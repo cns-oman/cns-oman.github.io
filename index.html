@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261106174120">
+<meta name="spms-build" content="20261107065119">
 <title>SPMS Oman</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -880,6 +880,58 @@ button.grp:hover h2 { color: var(--brand-on); }
 @keyframes d-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @keyframes d-arc { from { stroke-dasharray: 0 100; } }
 @keyframes d-pop { from { opacity: 0; transform: translate(-50%, -50%) scale(.3); } }
+/* ---------- dashboard in depth: hub and engineer pickers, all hubs, speed, returns on time, machines, stock, money ---------- */
+.dh-filt { display: flex; flex-wrap: wrap; gap: 8px; }
+.dh-sel { position: relative; display: inline-flex; align-items: center; gap: 7px; flex: 1 1 150px; min-width: 0; max-width: 280px; min-height: 38px; padding: 0 30px 0 12px; border-radius: 12px; background: rgba(255,255,255,.13); box-shadow: inset 0 0 0 1px rgba(255,255,255,.22); color: #fff; }
+.dh-sel:focus-within { box-shadow: inset 0 0 0 2px #fff; }
+.dh-sel .ic { width: 16px; height: 16px; opacity: .85; }
+.dh-sel::after { content: ""; position: absolute; right: 13px; top: 50%; width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-75%) rotate(45deg); opacity: .85; pointer-events: none; }
+.dh-sel select { appearance: none; -webkit-appearance: none; border: 0; background: none; color: inherit; font: inherit; font-size: 13.5px; font-weight: 600; flex: 1; width: 100%; min-width: 0; padding: 9px 0; cursor: pointer; text-overflow: ellipsis; outline: none; }
+.dh-sel select option { color: var(--ink); background: var(--surface); }
+.dh-clear { border: 0; font: inherit; font-size: 13px; font-weight: 600; color: #9E2328; background: #fff; padding: 0 13px; min-height: 38px; border-radius: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.dh-clear:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.dh-clear .ic { width: 15px; height: 15px; }
+.glance .tbl th { white-space: normal; vertical-align: bottom; min-width: 78px; font-size: 12px; line-height: 1.25; }
+.glance .tbl th:first-child, .glance .tbl td:first-child { position: sticky; left: 0; z-index: 1; min-width: 0; }
+.glance .tbl td:first-child { background: var(--surface); }
+.glance .tbl tr[data-a]:hover td:first-child, .glance .tbl tr.tot td:first-child { background: var(--surface-2); }
+.tbl tr.tot td { font-weight: 700; background: var(--surface-2); border-top: 1.5px solid var(--line); }
+.tbl td.bad-c { color: var(--bad); font-weight: 700; } .tbl td.warn-c { color: var(--warn); font-weight: 700; } .tbl td.muted { color: var(--ink-3); }
+.eng .lead { width: 36px; height: 36px; border-radius: 12px; }
+.eng.static { cursor: default; } .eng.static:hover { background: var(--surface-2); } .eng.static.late:hover { background: var(--bad-soft); }
+.eng .eng-st b { font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 13.5px; }
+.spd-top { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
+.spd-top .mini-n { font-size: 30px; }
+.mk3, .mk4 { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mk4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 760px) { .mk4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.mk3 .kpi, .mk4 .kpi { background: var(--surface-2); box-shadow: none; padding: 10px 12px; border-radius: var(--r-sm); gap: 2px; }
+.mk3 .kpi .v, .mk4 .kpi .v { font-size: 22px; }
+.mk3 .kpi .delta, .mk4 .kpi .delta { font-size: 12px; color: var(--ink-3); }
+.mcols { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.mc { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+.mc b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.mtr { width: 100%; max-width: 46px; height: 92px; display: flex; align-items: flex-end; border-radius: 9px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.mtr i { display: block; width: 100%; border-radius: 8px 8px 0 0; }
+.mtr i.ok { background: linear-gradient(180deg, color-mix(in srgb, var(--ok) 55%, #fff), var(--ok)); }
+.mtr i.warn { background: linear-gradient(180deg, color-mix(in srgb, var(--warn) 55%, #fff), var(--warn)); }
+.mtr i.bad { background: linear-gradient(180deg, color-mix(in srgb, var(--bad) 55%, #fff), var(--bad)); }
+.mc span { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.mc em { font-style: normal; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.ring.warn .rg-track { stroke: var(--warn-soft); } .ring.warn .rg-arc { stroke: var(--warn); }
+.ring.bad .rg-track { stroke: var(--bad-soft); } .ring.bad .rg-arc { stroke: var(--bad); }
+.buds { display: flex; flex-direction: column; gap: 12px; }
+.bd { display: flex; flex-direction: column; gap: 6px; }
+.bd-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13.5px; }
+.bd-h span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-h b { font-variant-numeric: tabular-nums; } .bd-h b.ok { color: var(--ok); } .bd-h b.warn { color: var(--warn); } .bd-h b.bad { color: var(--bad); }
+.dcard .dgrid { gap: 18px 22px; }
+.engs.wrap .t1, .engs.wrap .t3 { white-space: normal; overflow-wrap: anywhere; }
+.bd-s { font-size: 12.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+@media (min-width: 760px) { .narrow-only { display: none; } }
+.dcard .blk { min-width: 0; }
+@media (prefers-reduced-motion: no-preference) { .dash.anim .mtr i { transform-origin: bottom center; animation: d-up .9s .3s cubic-bezier(.2, .8, .2, 1) both; } }
+@keyframes d-up { from { transform: scaleY(0); } }
 </style>
 
 </head>
@@ -4677,9 +4729,9 @@ function donut(parts, label, unit) {
     <ul class="dn-leg">${parts.map((p, i) => `<li class="${p[1] ? '' : 'zero'}"><i class="key s${i + 1}"></i><span>${esc(p[0])}</span><b>${nf(p[1])}</b><em>${Math.round(p[1] / t * 100)}%</em></li>`).join('')}</ul></div>`;
 }
 /* one share as a ring, the figure in the middle */
-function ring(pct, label) {
+function ring(pct, label, tone) {
   const p = Math.max(0, Math.min(100, pct));
-  return `<div class="ring" role="img" aria-label="${esc(label)}: ${Math.round(p)}%"><svg viewBox="0 0 42 42"><circle class="rg-track" cx="21" cy="21" r="15.9155"></circle><circle class="rg-arc" cx="21" cy="21" r="15.9155" style="stroke-dasharray:${p.toFixed(2)} ${(100 - p).toFixed(2)};stroke-dashoffset:25"></circle></svg><div class="rg-c"><b>${Math.round(p)}%</b><span>${esc(label)}</span></div></div>`;
+  return `<div class="ring${tone && tone !== 'ok' ? ' ' + tone : ''}" role="img" aria-label="${esc(label)}: ${Math.round(p)}%"><svg viewBox="0 0 42 42"><circle class="rg-track" cx="21" cy="21" r="15.9155"></circle><circle class="rg-arc" cx="21" cy="21" r="15.9155" style="stroke-dasharray:${p.toFixed(2)} ${(100 - p).toFixed(2)};stroke-dashoffset:25"></circle></svg><div class="rg-c"><b>${Math.round(p)}%</b><span>${esc(label)}</span></div></div>`;
 }
 /* the readout follows the pointer, a tap, or keyboard focus (text only, built with textContent) */
 function lcShow(c) {
@@ -4709,36 +4761,45 @@ function returnsCard(R, showEngineers) {
   </div>`;
 }
 /* the band on top: the period (presets or any dates) and the four headline numbers, each against the period before */
-function dashHero(M, r) {
+function dashHero(M, r, S) {
   const days = rangeDays(r), prev = `previous ${nf(days)} day${days === 1 ? '' : 's'}`;
   const tile = t => { const d = t.v - t.prev; return `<div class="dh-tile"><div class="dh-tk"><span class="dh-ic">${ic(t.icon, 'sm')}</span><span>${esc(t.label)}</span></div><div class="dh-vr"><span class="dh-v">${nf(t.v)}</span><span class="dh-chip">${d === 0 ? '=' : `${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d))}`}</span></div><div class="dh-d">${d === 0 ? 'same as the' : 'vs the'} ${prev}</div>${spark(t.trend)}</div>`; };
   const today = ymd(Date.now());
   return `<section class="dhero" aria-label="Overview"><img class="wm" src="${CNS_SWIRL}" alt="">
-    <div class="dh-top"><div><span class="dh-k">Overview · units of parts</span><h2 class="dh-t">${esc(rangeTitle(r))}</h2><span class="dh-s">${esc(rangeText(r))}</span></div></div>
+    <div class="dh-top"><div><span class="dh-k">${esc(S.name)} · units of parts</span><h2 class="dh-t">${esc(rangeTitle(r))}</h2><span class="dh-s">${esc(rangeText(r))}</span></div></div>
     <div class="dh-range" role="group" aria-label="Period">${DASH_PRESETS.map(([v, l]) => `<button type="button" class="${r.mode === v ? 'on' : ''}" aria-pressed="${r.mode === v}" data-a="dashMode" data-v="${v}">${v === 'custom' ? ic('clock', 'sm') : ''}${l}</button>`).join('')}</div>
     ${r.mode === 'custom' ? `<div class="dh-dates"><label><span>From</span><input type="date" id="dash-from" data-dash="from" value="${ymd(r.start)}" max="${today}"></label><label><span>To</span><input type="date" id="dash-to" data-dash="to" value="${ymd(addDays(r.end, -1))}" max="${today}"></label></div>` : ''}
+    ${dashFilters(S)}
     <div class="dh-kpis">${M.tiles.map(tile).join('')}</div></section>`;
 }
 function repDash() {
-  const r = dashRange();
-  if (!ensureDashLog(r.start - (r.end - r.start))) return UI.ledgerErr ? `<div class="err">${esc(UI.ledgerErr)}</div>` : `<div class="infobox" role="status">Loading the inventory log…</div>`;
-  const M = dashModel(JOBS, dashLog.rows, r), R = returnsData(JOBS);
+  const r = dashRange(), S = dashScope();
+  /* the log for this period and the one before it (the comparison), and at least the last 90 days (stock not moving) */
+  if (!ensureDashLog(Math.min(r.start - (r.end - r.start), dayStart(Date.now()) - SLOW_DAYS * DAY))) return UI.ledgerErr ? `<div class="err">${esc(UI.ledgerErr)}</div>` : `<div class="infobox" role="status">Loading the inventory log…</div>`;
+  const jobs = S.all ? JOBS : JOBS.filter(j => inScope(j, S)), led = scopeLed(dashLog.rows, S);
+  const M = dashModel(jobs, led, r), R = returnsData(jobs);
   const any = M.series.some(x => x.taken || x.back || x.scrap), dec = sum(M.decisions, d => d[1]), ws = M.repaired + M.wsScrapped;
-  const key = `${r.mode}:${r.start}:${r.end}`, anim = UI._dashKey !== key; UI._dashKey = key;   /* the entrance animation plays when the period changes, not on every update */
+  const key = `${r.mode}:${r.start}:${r.end}:${S.hub}:${S.eng}`, anim = UI._dashKey !== key; UI._dashKey = key;   /* the entrance animation plays when the period or the hub / engineer changes, not on every update */
   const none = t => `<p class="note" style="padding:0">${t}</p>`;
   return `<div class="dash${anim ? ' anim' : ''}">
-    ${dashHero(M, r)}
+    ${dashHero(M, r, S)}
+    ${S.all ? glanceCard(JOBS, r) : ''}
     ${returnsCard(R, 5)}
     <div class="card dcard">${cardH('Parts moving', STEP_WORD[M.kind])}
       ${any ? lineChart(M.series, DASH_SERIES, `Parts taken from stock, back in stock and scrapped, ${rangeText(r)}`) : none('No parts moved in this period.')}
       <details class="fold inset" data-fold="dash-weeks"><summary>${ic('list', 'sm')}The numbers</summary><div class="fold-b">${tbl([STEP_COL[M.kind], 'Taken from stock', 'Installed', 'Back in stock', 'Scrapped'], M.series.slice().reverse().map((x, i) => `<tr><td>${esc(bucketLabel(x.b))}</td><td class="r">${x.taken}</td><td class="r">${M.tiles[1].trend[M.series.length - 1 - i]}</td><td class="r">${x.back}</td><td class="r">${x.scrap}</td></tr>`))}</div></details></div>
     <div class="dgrid">
-      <div class="card dcard">${cardH('Requests in progress', `${M.open} open now`)}${M.open ? pipeline(M.phases) : none('No open requests.')}</div>
-      <div class="card dcard">${cardH('Most sent parts', M.top.length ? `top ${M.top.length}` : '')}${M.top.length ? ranked(M.top) : none('No parts sent in this period.')}</div>
+      <div class="card dcard">${cardH('Requests in progress', `${M.open} open now`)}${M.open ? pipeline(M.phases.map(x => x[0] === 'Waiting for your approval' && (ME() || {}).role !== 'TL' ? ['Waiting for the Team Leader', x[1]] : x)) : none('No open requests.')}</div>
+      ${stuckCard(jobs)}
+      ${speedCard(jobs, r, S)}
+      ${returnPerfCard(jobs, r)}
       <div class="card dcard">${cardH('Returned parts: what Stock decided', dec ? nf(dec) + ' units' : '')}${donut(M.decisions, 'Returned parts', dec === 1 ? 'unit' : 'units')}</div>
       <div class="card dcard">${cardH('Workshop', ws ? `${ws} finished` : '')}${ws ? `<div class="ws-box">${ring(M.repaired / ws * 100, 'repaired')}<div class="ws-nums"><div><b>${nf(M.repaired)}</b><span>repaired</span></div><div><b>${nf(M.wsScrapped)}</b><span>could not be repaired</span></div><div><b>${money(M.repairCost)}</b><span>repair cost</span></div></div></div>` : none('No repairs finished in this period.')}</div>
     </div>
-    ${M.partial ? '<p class="note">Returned parts and Workshop count the requests loaded on this phone, which may not reach back to the start of this period. The Excel file counts every record.</p>' : ''}
+    ${machinesCard(jobs, r, M)}
+    ${stockCard(S, dashLog.rows)}
+    ${moneyCard(jobs, r, S)}
+    ${M.partial ? '<p class="note">Some sections count the requests loaded on this phone, which may not reach back to the start of this period. The Excel file counts every record.</p>' : ''}
     <div class="card dcard xl-card"><span class="lead info">${ic('sheet')}</span><div class="main"><b>Excel workbook</b><span class="hint">The first sheet, “Dashboard”, has the numbers with graphs. It counts every record.</span></div><button class="btn sm" data-a="excel">${ic('download', 'sm')}Download</button></div>
   </div>`;
 }
@@ -4995,6 +5056,257 @@ async function exportExcel() {
     savedToast(await DL.save({ filename, data }), 'Saved ' + filename);
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Export failed', 'bad'); }
   finally { exporting = false; }
+}
+/* ==========================================================================
+   Dashboard in depth: narrow it to one hub or one engineer, every hub side by side, how fast requests move, returns
+   on time, machines, stock health and money. Everything is worked out on the phone from the data SPMS already loads.
+   ========================================================================== */
+const SLOW_DAYS = 90;   /* stock that has not left its hub for this many days counts as not moving */
+const isUse = j => !['rep', 'hubrep', 'ret'].includes(j.type);   /* requests and van use, not restocks or refills */
+const dur = ms => ms < HOUR ? `${Math.max(1, Math.round(ms / 60000))} min` : durDH(ms);
+const omr = v => Math.round(+v || 0).toLocaleString('en-GB');
+const toneOf = pct => pct >= 90 ? 'ok' : pct >= 70 ? 'warn' : 'bad';
+
+/* ---------- the hub and engineer the dashboard is narrowed to ---------- */
+function engHub(id) {
+  const h = accHub(ACC(id)); if (h) return h;
+  const j = JOBS.find(x => x.techId === id); return j ? jobHub(j) : '';
+}
+function dashScope() {
+  const hub = HUBS.includes(UI.dashHub) ? UI.dashHub : '';
+  let eng = UI.dashEng && techList().some(t => t.id === UI.dashEng) ? UI.dashEng : '';
+  if (eng && hub && engHub(eng) !== hub) eng = '';
+  return { hub, eng, all: !hub && !eng, name: eng ? techName(eng) : hub ? HUB_NAME[hub] : 'All hubs' };
+}
+const inScope = (j, S) => (!S.hub || jobHub(j) === S.hub) && (!S.eng || j.techId === S.eng);
+/* the log entries that belong to the hub or engineer: through their request, else the hub, the vans or the names on them */
+function scopeLed(rows, S) {
+  if (S.all) return rows;
+  const byId = new Map(JOBS.map(j => [j.id, j])), vans = new Set(), names = new Set();
+  for (const t of techList()) if (S.eng ? t.id === S.eng : engHub(t.id) === S.hub) { vans.add(vanLoc(t.id)); names.add(t.name); }
+  return rows.filter(e => {
+    const j = e.ref && byId.get(e.ref);
+    if (j) return inScope(j, S);
+    if (!S.eng && (e.from === S.hub || e.to === S.hub)) return true;
+    return vans.has(e.from) || vans.has(e.to) || names.has(e.from) || names.has(e.to);
+  });
+}
+/* the two pickers on the dashboard band */
+function dashFilters(S) {
+  const techs = techList().filter(t => !S.hub || engHub(t.id) === S.hub).sort((a, b) => cmpVal(a.name, b.name));
+  return `<div class="dh-filt" role="group" aria-label="Show">
+    <label class="dh-sel">${ic('hub', 'sm')}<select data-dashf="hub" aria-label="Hub"><option value="">All hubs</option>${HUBS.map(h => `<option value="${esc(h)}"${S.hub === h ? ' selected' : ''}>${esc(HUB_NAME[h])}</option>`).join('')}</select></label>
+    <label class="dh-sel">${ic('user', 'sm')}<select data-dashf="eng" aria-label="Engineer"><option value="">${S.hub ? 'All engineers here' : 'All engineers'}</option>${techs.map(t => `<option value="${esc(t.id)}"${S.eng === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
+    ${S.all ? '' : `<button type="button" class="dh-clear" data-a="dashClear">${ic('x', 'sm')}Show everything</button>`}
+  </div>`;
+}
+
+/* ---------- shared numbers ---------- */
+/* what the installed parts are worth: the price on the request or on the dispatched unit, else the parts list */
+function partsValue(j) {
+  if (!j.use || !isUse(j) || j.split) return 0;
+  const up = +(j.unit != null ? j.unit : part(j.pn).price) || 0, items = (j.dispatch && j.dispatch.items) || [];
+  const priceOf = it => it && +it.price > 0 ? +it.price : up;
+  if (Array.isArray(j.use.units) && j.use.units.length) {
+    let v = 0;
+    j.use.units.forEach((u, i) => { const it = u.sn ? items.find(t => normSN(t.sn) === normSN(u.sn)) || items[i] : items[i] || items[0]; if (u.bulk) v += (+u.used || 0) * priceOf(it); else if (u.used) v += priceOf(it); });
+    return r3(v);
+  }
+  return j.use.replaced ? r3(up * (+(j.qtyApproved || j.qty) || 0)) : 0;
+}
+/* returns that fell due in a period (and are already due): on time when sent by the deadline; late when sent after it or
+   still not sent. A return that was never sent and is no longer waiting (cancelled, handed over) is left out. */
+function retDueIn(js, r, now) {
+  const end = Math.min(r.end, now || Date.now()), out = { n: 0, ok: 0, items: [] };
+  for (const j of js) {
+    if (!j.ret || !isUse(j) || !(j.use && j.use.at)) continue;
+    const due = retDue(j); if (!(due >= r.start && due < end)) continue;
+    const sent = +j.ret.shippedAt || 0;
+    if (!sent && j.status !== 'RETURN') continue;
+    const late = !(sent && sent <= due);
+    out.n++; if (!late) out.ok++; out.items.push({ j, due, late, by: late ? (sent || end) - due : 0 });
+  }
+  return out;
+}
+/* simple horizontal bars: [label, value, note] */
+function hbars(rows, fmt) {
+  const max = Math.max(1, ...rows.map(r => +r[1] || 0));
+  return `<div class="hbars">${rows.map(([k, v, sub]) => `<div class="hb"><div class="bh"><span>${esc(k)}${sub ? ` <span class="t3 muted">${esc(sub)}</span>` : ''}</span><b>${esc(fmt ? fmt(v) : nf(v))}</b></div><div class="tr"><i style="width:${Math.max(2, (+v || 0) / max * 100).toFixed(1)}%"></i></div></div>`).join('')}</div>`;
+}
+const miniKpi = (k, v, cls, sub) => `<div class="kpi ${cls || ''}"><span class="k">${k}</span><span class="v">${v}</span>${sub ? `<span class="delta">${sub}</span>` : ''}</div>`;
+const noneNote = t => `<p class="note" style="padding:0">${t}</p>`;
+
+/* ---------- every hub side by side (the Operations Manager's one-page view) ---------- */
+function hubRow(js, r, hub) {
+  const now = Date.now(), inP = t => t >= r.start && t < r.end;
+  const inst = js.filter(j => isUse(j) && j.use && inP(j.use.at));
+  const tat = js.filter(j => j.type === 'req' && !j.parent && j.createdAt && j.use && inP(j.use.at));
+  const due = retDueIn(js, r, now), low = lowStock().filter(x => x.kind === 'low' && (!hub || x.hub === hub));
+  return {
+    open: js.filter(j => isOpenStatus(j.status)).length, late: js.filter(isLate).length,
+    onTime: due.n ? due.ok / due.n : null, speed: tat.length ? sum(tat, j => j.use.at - j.createdAt) / tat.length : null,
+    units: sum(inst, usedUnits), cost: sum(inst, partsValue) + sum(js.filter(j => j.ws && j.ws.doneAt && inP(j.ws.doneAt)), j => +j.ws.total || 0), low: low.length
+  };
+}
+function glanceCard(jobs, r) {
+  const rows = HUBS.map(h => [h, hubRow(jobs.filter(j => jobHub(j) === h), r, h)]), tot = hubRow(jobs, r, '');
+  const cells = x => `<td class="r${x.open ? '' : ' muted'}">${nf(x.open)}</td><td class="r${x.late ? ' bad-c' : ' muted'}">${x.late ? nf(x.late) : '–'}</td><td class="r${x.onTime != null && x.onTime < .9 ? (x.onTime < .7 ? ' bad-c' : ' warn-c') : x.onTime == null ? ' muted' : ''}">${x.onTime == null ? '–' : Math.round(x.onTime * 100) + '%'}</td><td class="r${x.speed == null ? ' muted' : ''}">${x.speed == null ? '–' : esc(dur(x.speed))}</td><td class="r${x.units ? '' : ' muted'}">${nf(x.units)}</td><td class="r${x.cost ? '' : ' muted'}">${omr(x.cost)}</td><td class="r${x.low ? ' bad-c' : ' muted'}">${x.low ? nf(x.low) : '–'}</td>`;
+  return `<div class="card dcard glance">${cardH('All hubs at a glance', 'tap a hub to see only it')}
+    ${tbl(['Hub', 'Open requests', 'Overdue returns', 'Returned on time', 'Request → installed', 'Parts installed', 'Cost (OMR)', 'Below minimum'],
+      rows.map(([h, x]) => `<tr data-a="dashHub" data-v="${esc(h)}" tabindex="0"><td><b>${esc(HUB_NAME[h])}</b></td>${cells(x)}</tr>`).concat([`<tr class="tot"><td>All hubs</td>${cells(tot)}</tr>`]))}
+    <p class="note narrow-only" style="padding:0">Swipe the table sideways to see every column.</p>
+    ${noneNote(`Open requests, overdue returns and parts below the minimum are as of now. The other columns cover ${esc(rangeText(r))}. Cost is parts installed plus Workshop repairs.`)}</div>`;
+}
+
+/* ---------- requests waiting longest at their current step ---------- */
+const waitingSince = j => { const h = j.history || []; return (h.length && +h[h.length - 1].at) || +j.updatedAt || +j.createdAt || 0; };
+function stuckCard(jobs) {
+  const now = Date.now(), tone = a => a > 2 * DAY ? 'bad' : a > DAY ? 'warn' : 'ok';
+  const list = jobs.filter(j => isOpenStatus(j.status) && j.status !== 'RETURN' && j.type !== 'van').map(j => ({ j, age: now - waitingSince(j) })).sort((a, b) => b.age - a.age);
+  return `<div class="card dcard">${cardH('Waiting longest', list.length ? `${nf(list.length)} at a step now` : '')}
+    ${list.length ? `<div class="engs wrap">${list.slice(0, 6).map(({ j, age }) => `<button class="eng" data-a="sheet" data-s="job" data-id="${esc(j.id)}"><span class="lead ${tone(age)}">${ic('clock', 'sm')}</span><span class="main"><span class="t1">${esc(stLabel(j))}</span><span class="t3">${esc(j.pn)} · ${esc(j.techName || HUB_NAME[j.to] || '')} · ${esc(HUB_NAME[jobHub(j)] || jobHub(j))}${stWho(j) ? ` · next: ${esc(ROLE[stWho(j)] || '')}` : ''}</span></span><span class="eng-st"><span class="chip ${tone(age)}">${esc(dur(age))}</span></span></button>`).join('')}</div>` : noneNote('No requests waiting at a step.')}
+    ${list.length ? noneNote('Time since the last step. Returns the engineer still has to send are in the returns card.') : ''}</div>`;
+}
+
+/* ---------- how fast requests move: the average time of each step ---------- */
+const SPEED = [
+  ['Request → Team Leader approves', j => j.createdAt, j => j.tl && !j.tl.rejected && j.tl.by !== 'Auto-Rep' ? j.tl.at : 0],
+  ['Approved → part sent or taken from the hub', j => j.tl && j.tl.at, j => j.dispatch && j.dispatch.at],
+  ['Sent → engineer receives it', j => !fromHub(j) && j.dispatch && j.dispatch.at, j => j.receivedAt],
+  ['Received → installed', j => j.receivedAt, j => j.use && j.use.at],
+  ['Installed → faulty or unused part sent back', j => j.use && j.use.at, j => j.ret && j.ret.shippedAt],
+  ['Sent back → at Stock', j => j.ret && j.ret.shippedAt, j => j.ret && j.ret.hubAt]
+];
+function speedData(jobs, r) {
+  const inP = t => t >= r.start && t < r.end, reqs = jobs.filter(j => j.type === 'req' && !j.parent);
+  const steps = SPEED.map(([label, a, b]) => {
+    const v = []; for (const j of reqs) { const s = +a(j) || 0, e = +b(j) || 0; if (s && e && e >= s && inP(e)) v.push(e - s); }
+    return [label, v.length ? sum(v, x => x) / v.length : null, v.length];
+  });
+  const tot = reqs.filter(j => j.createdAt && j.use && j.use.at && inP(j.use.at)).map(j => j.use.at - j.createdAt);
+  return { steps, total: tot.length ? sum(tot, x => x) / tot.length : null, n: tot.length };
+}
+/* the steps in order, each with its average time and how many requests it counts */
+function stepTimes(rows) {
+  const max = Math.max(1, ...rows.map(r => r[1] || 0));
+  return `<ol class="pipe">${rows.map(([k, v, n], i) => `<li class="${v == null ? 'zero' : ''}"><span class="pp-n">${i + 1}</span><div class="pp-m"><div class="pp-h"><span>${esc(k)}${n ? ` <span class="t3 muted">(${nf(n)})</span>` : ''}</span><b>${v == null ? '–' : esc(dur(v))}</b></div><div class="pp-tr">${v ? `<i style="width:${Math.max(3, v / max * 100).toFixed(1)}%"></i>` : ''}</div></div></li>`).join('')}</ol>`;
+}
+function speedCard(jobs, r, S) {
+  const D = speedData(jobs, r);
+  const hubs = S.all ? HUBS.map(h => { const x = speedData(jobs.filter(j => jobHub(j) === h), r); return [HUB_NAME[h], x.total, x.n]; }).filter(x => x[2]).sort((a, b) => b[1] - a[1]) : [];
+  return `<div class="card dcard">${cardH('How fast requests move', D.n ? `${nf(D.n)} installed in this period` : '')}
+    <div class="spd-top"><span class="mini-n">${D.total == null ? '–' : esc(dur(D.total))}</span><span class="t3">on average from the request to the part installed</span></div>
+    ${stepTimes(D.steps)}
+    ${hubs.length > 1 ? `<div class="sub-h">Request → installed, by hub · slowest first</div>${hbars(hubs.map(([k, v, n]) => [k, v, `${n} request${n === 1 ? '' : 's'}`]), dur)}` : ''}
+    ${noneNote('Each step is the average for the requests that finished it in this period (how many in brackets).')}</div>`;
+}
+
+/* ---------- returns on time ---------- */
+function monthCols(ms) {
+  const label = ms.map(m => `${new Date(m.s).toLocaleDateString('en-GB', { month: 'long' })} ${m.pct == null ? 'none due' : Math.round(m.pct) + '%'}`).join(', ');
+  return `<div class="mcols" role="img" aria-label="${esc('Returns on time by month: ' + label)}">${ms.map(m => `<div class="mc"><b>${m.pct == null ? '–' : Math.round(m.pct) + '%'}</b><div class="mtr">${m.pct == null ? '' : `<i class="${toneOf(m.pct)}" style="height:${Math.max(3, m.pct).toFixed(1)}%"></i>`}</div><span>${esc(new Date(m.s).toLocaleDateString('en-GB', { month: 'short' }))}</span><em>${m.n ? nf(m.n) + ' due' : 'none'}</em></div>`).join('')}</div>`;
+}
+function returnPerfCard(jobs, r) {
+  const now = Date.now(), R = retDueIn(jobs, r, now), pct = R.n ? R.ok / R.n * 100 : null, lates = R.items.filter(x => x.late);
+  const last = new Date(Math.min(r.end, now) - 1), months = [];
+  for (let i = 5; i >= 0; i--) {
+    const s = new Date(last.getFullYear(), last.getMonth() - i, 1).getTime(), e = new Date(last.getFullYear(), last.getMonth() - i + 1, 1).getTime();
+    const x = retDueIn(jobs, { start: s, end: e }, now); months.push({ s, n: x.n, pct: x.n ? x.ok / x.n * 100 : null });
+  }
+  const eng = new Map();
+  for (const x of R.items) { const k = x.j.techId || x.j.techName, e = eng.get(k) || { name: x.j.techName || '(unknown)', hub: jobHub(x.j), n: 0, late: 0 }; e.n++; if (x.late) e.late++; eng.set(k, e); }
+  const worst = [...eng.values()].filter(e => e.late).sort((a, b) => (b.late - a.late) || (b.late / b.n - a.late / a.n)).slice(0, 5);
+  return `<div class="card dcard">${cardH('Returns on time', R.n ? `${nf(R.n)} due in this period` : '')}
+    ${R.n ? `<div class="ws-box">${ring(pct, 'on time', toneOf(pct))}<div class="ws-nums"><div><b>${nf(R.ok)}</b><span>sent back on time</span></div><div><b>${nf(R.n - R.ok)}</b><span>late or still out</span></div><div><b>${lates.length ? esc(dur(sum(lates, x => x.by) / lates.length)) : '–'}</b><span>late by, on average</span></div></div></div>` : noneNote('No returns fell due in this period.')}
+    <div class="sub-h">Last 6 months</div>${monthCols(months)}
+    ${worst.length ? `<div class="sub-h">Most often late</div><div class="engs wrap">${worst.map(e => `<div class="eng late static"><span class="avatar mini">${esc(initials(e.name))}</span><span class="main"><span class="t1">${esc(e.name)}</span><span class="t3"><b class="bad-t">${e.late} late</b> of ${e.n} · ${esc(HUB_NAME[e.hub] || e.hub)}</span></span><span class="eng-st"><span class="chip bad">${Math.round((e.n - e.late) / e.n * 100)}% on time</span></span></div>`).join('')}</div>` : ''}
+    ${noneNote('A return is on time when the engineer sends it by the deadline (counted from the install).')}</div>`;
+}
+
+/* ---------- parts and machines ---------- */
+function machineData(jobs, r) {
+  const inP = t => t >= r.start && t < r.end, items = jobs.filter(j => isUse(j) && j.use && inP(j.use.at) && usedUnits(j) > 0), m = new Map();
+  for (const j of items) {
+    const key = normSN(j.machine || j.machineSn); if (!key) continue;
+    const x = m.get(key) || { id: j.machine || j.machineSn, model: '', customer: '', calls: new Set(), units: 0, last: 0, pns: new Set() };
+    x.model = x.model || j.model || ''; x.customer = x.customer || j.customer || '';
+    x.calls.add(j.scn || j.id); x.units += usedUnits(j); x.last = Math.max(x.last, j.use.at); x.pns.add(j.pn); m.set(key, x);
+  }
+  const all = [...m.values()];
+  return { all, items, calls: new Set(items.map(j => j.scn || j.id)).size, repeat: all.filter(x => x.calls.size >= 2).sort((a, b) => (b.calls.size - a.calls.size) || (b.last - a.last)),
+    byModel: groupSum(items, j => j.model, usedUnits).slice(0, 5), byBank: groupSum(items, j => j.customer, usedUnits).slice(0, 5) };
+}
+function machinesCard(jobs, r, M) {
+  const D = machineData(jobs, r), units = v => `${nf(v)} unit${v === 1 ? '' : 's'}`;
+  return `<div class="card dcard">${cardH('Parts and machines', D.all.length ? `${nf(D.all.length)} machine${D.all.length === 1 ? '' : 's'} got parts` : '')}
+    <div class="mk3">${miniKpi('Machines', nf(D.all.length))}${miniKpi('Service calls', nf(D.calls))}${miniKpi('Repeat failures', nf(D.repeat.length), D.repeat.length ? 'bad' : '')}</div>
+    <div class="dgrid">
+      <div class="blk"><div class="sub-h">Repeat failures · 2 or more calls with parts</div>${D.repeat.length ? `<div class="engs wrap">${D.repeat.slice(0, 6).map(x => `<div class="eng static${x.calls.size >= 3 ? ' late' : ''}"><span class="lead ${x.calls.size >= 3 ? 'bad' : 'warn'}">${ic('alert', 'sm')}</span><span class="main"><span class="t1">${esc(x.id)}${x.model ? ` · ${esc(x.model)}` : ''}</span><span class="t3">${esc(x.customer || 'bank not recorded')} · ${esc([...x.pns].slice(0, 3).join(', '))} · last ${esc(fmtD(x.last))}</span></span><span class="eng-st"><span class="chip ${x.calls.size >= 3 ? 'bad' : 'warn'}">${x.calls.size} calls</span></span></div>`).join('')}</div>` : noneNote('No machine needed parts on two different calls in this period.')}</div>
+      <div class="blk"><div class="sub-h">Most sent parts</div>${M.top.length ? ranked(M.top) : noneNote('No parts sent in this period.')}</div>
+      <div class="blk"><div class="sub-h">Parts installed by machine model</div>${D.byModel.length ? hbars(D.byModel, units) : noneNote('No parts installed in this period.')}</div>
+      <div class="blk"><div class="sub-h">Parts installed by bank</div>${D.byBank.length ? hbars(D.byBank, units) : noneNote('No parts installed in this period.')}</div>
+    </div></div>`;
+}
+
+/* ---------- stock health (as of now) ---------- */
+function stockHealth(S, led) {
+  const now = Date.now(), since = now - SLOW_DAYS * DAY, price = pn => +part(pn).price || 0, val = ls => sum(ls, l => qtyOf(l) * price(l.pn));
+  const hubs = S.eng ? [] : S.hub ? [S.hub] : HUBS.slice(), techs = techList().filter(t => S.eng ? t.id === S.eng : !S.hub || engHub(t.id) === S.hub);
+  const vans = new Set(techs.map(t => vanLoc(t.id))), hubL = LINES.filter(l => hubs.includes(l.loc)), vanL = LINES.filter(l => vans.has(l.loc));
+  const low = lowStock().filter(x => x.kind === 'low' && hubs.includes(x.hub)).sort((a, b) => ((b.min - b.qty) / b.min - (a.min - a.qty) / a.min) || cmpVal(a.pn, b.pn));
+  const vanShort = techs.map(t => ({ t, list: vanLow(t.id) })).filter(x => x.list.length);
+  const moved = new Set();
+  for (const e of led) if (e.at >= since && e.pn && hubs.includes(e.from)) moved.add(e.from + '|' + normPN(e.pn));
+  const groups = new Map();
+  for (const l of hubL) { const k = l.loc + '|' + l.pn, g = groups.get(k) || { hub: l.loc, pn: l.pn, qty: 0, oldest: Infinity }; g.qty += qtyOf(l); g.oldest = Math.min(g.oldest, +l.addedAt || 0); groups.set(k, g); }
+  const slow = [...groups.values()].filter(g => g.qty > 0 && g.oldest < since && !moved.has(g.hub + '|' + g.pn)).map(g => Object.assign(g, { value: g.qty * price(g.pn) })).sort((a, b) => (b.value - a.value) || (b.qty - a.qty));
+  const byPlace = hubs.map(h => [HUB_NAME[h], val(hubL.filter(l => l.loc === h))]).concat(vans.size ? [[S.eng ? `${techName(S.eng)}’s van` : 'Engineers’ vans', val(vanL)]] : []).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
+  return { hubs, value: val(hubL) + val(vanL), low, vanShort, slow, slowValue: sum(slow, g => g.value), slowUnits: sum(slow, g => g.qty), byPlace };
+}
+function stockCard(S, led) {
+  const D = stockHealth(S, led), o = v => `OMR ${omr(v)}`;
+  const lowRows = D.low.slice(0, 8).map(x => `<div class="eng static"><span class="lead bad">${ic('box', 'sm')}</span><span class="main"><span class="t1">${tag(x.pn)} ${esc(x.name || '')}</span><span class="t3">${esc(HUB_NAME[x.hub] || x.hub)} · ${nf(x.qty)} in stock, minimum ${nf(x.min)}</span></span><span class="eng-st"><span class="chip bad">${nf(x.min - x.qty)} short</span></span></div>`);
+  const vanRows = D.vanShort.slice(0, 8).map(({ t, list }) => `<div class="eng static"><span class="avatar mini">${esc(initials(t.name))}</span><span class="main"><span class="t1">${esc(t.name)}’s van</span><span class="t3">${esc(list.slice(0, 3).map(x => `${x.pn} ${x.qty}/${x.min}`).join(' · '))}</span></span><span class="eng-st"><span class="chip warn">${list.length} part${list.length === 1 ? '' : 's'} low</span></span></div>`);
+  const slowRows = D.slow.slice(0, 8).map(g => `<div class="eng static"><span class="lead warn">${ic('clock', 'sm')}</span><span class="main"><span class="t1">${tag(g.pn)} ${esc(partName(g.pn) !== g.pn ? partName(g.pn) : '')}</span><span class="t3">${esc(HUB_NAME[g.hub] || g.hub)} · ${nf(g.qty)} unit${g.qty === 1 ? '' : 's'}${g.oldest ? ` · in stock since ${esc(fmtD(g.oldest))}` : ''}</span></span><span class="eng-st"><b>${esc(o(g.value))}</b></span></div>`);
+  return `<div class="card dcard">${cardH('Stock health', 'as of now')}
+    <div class="mk4">${miniKpi('Stock value', `${omr(D.value)}<small>OMR</small>`, '', S.eng ? 'in the van' : 'hubs and vans')}${S.eng ? '' : miniKpi('Below minimum', nf(D.low.length), D.low.length ? 'bad' : '', 'parts at hubs')}${S.eng ? '' : miniKpi(`Not moved in ${SLOW_DAYS} days`, nf(D.slowUnits), D.slowUnits ? 'warn' : '', `worth OMR ${omr(D.slowValue)}`)}${miniKpi('Vans below minimum', nf(D.vanShort.length), D.vanShort.length ? 'warn' : '', 'engineers')}</div>
+    <div class="dgrid">
+      ${S.eng ? '' : `<div class="blk"><div class="sub-h">Below the minimum · most short first</div>${lowRows.length ? `<div class="engs wrap">${lowRows.join('')}</div>` : noneNote('Every hub is at or above its minimum.')}</div>`}
+      ${S.eng ? '' : `<div class="blk"><div class="sub-h">Not moved in ${SLOW_DAYS} days · highest value first</div>${slowRows.length ? `<div class="engs wrap">${slowRows.join('')}</div>` : noneNote(`Every part at the hubs moved in the last ${SLOW_DAYS} days.`)}</div>`}
+      <div class="blk"><div class="sub-h">Vans below their minimum</div>${vanRows.length ? `<div class="engs wrap">${vanRows.join('')}</div>` : noneNote('Every van is at or above its minimum.')}</div>
+      <div class="blk"><div class="sub-h">Stock value by place</div>${D.byPlace.length ? hbars(D.byPlace, o) : noneNote('No priced stock here.')}</div>
+    </div></div>`;
+}
+
+/* ---------- money ---------- */
+function moneyData(jobs, r) {
+  const B = dashBuckets(r), inR = (t, s, e) => t >= s && t < e, pStart = r.start - (r.end - r.start);
+  const inst = jobs.filter(j => isUse(j) && j.use && j.use.at), reps = jobs.filter(j => j.ws && j.ws.doneAt && j.ws.total != null);
+  const pv = (s, e) => sum(inst.filter(j => inR(j.use.at, s, e)), partsValue), rv = (s, e) => sum(reps.filter(j => inR(j.ws.doneAt, s, e)), j => +j.ws.total || 0);
+  const parts = pv(r.start, r.end), repair = rv(r.start, r.end);
+  return { parts, repair, total: parts + repair, prev: pv(pStart, r.start) + rv(pStart, r.start), charge: sum(inst.filter(j => j.chargeable && inR(j.use.at, r.start, r.end)), partsValue),
+    series: B.map(b => ({ b, parts: Math.round(pv(b.s, b.e)), repair: Math.round(rv(b.s, b.e)) })), kind: B[0].kind };
+}
+function budgetList(techs) {
+  const rows = techs.map(t => ({ t, b: budgetInfo(t.id) })).filter(x => x.b.set).sort((a, b) => b.b.pct - a.b.pct);
+  if (!rows.length) return noneNote('No engineer budgets are set for this year (Database → Staff accounts).');
+  const tone = p => p >= 1 ? 'bad' : p >= .8 ? 'warn' : 'ok', used = sum(rows, x => x.b.used), amt = sum(rows, x => x.b.amount);
+  return `<div class="buds">${rows.slice(0, 8).map(({ t, b }) => `<div class="bd"><div class="bd-h"><span>${esc(t.name)}</span><b class="${tone(b.pct)}">${Math.round(b.pct * 100)}%</b></div><div class="bud-bar ${tone(b.pct)}"><i style="width:${Math.min(100, b.pct * 100).toFixed(1)}%"></i></div><div class="bd-s">${omr(b.used)} of ${omr(b.amount)} OMR${b.left < 0 ? ` · <b class="bad-t">${omr(-b.left)} OMR over</b>` : ''}</div></div>`).join('')}</div>
+    ${noneNote(`${rows.length > 8 ? `${rows.length - 8} more not shown. ` : ''}Together ${omr(used)} of ${omr(amt)} OMR (${amt ? Math.round(used / amt * 100) : 0}%). Most used first.`)}`;
+}
+function moneyCard(jobs, r, S) {
+  const D = moneyData(jobs, r), d = D.total - D.prev, days = rangeDays(r);
+  const techs = techList().filter(t => S.eng ? t.id === S.eng : !S.hub || engHub(t.id) === S.hub);
+  const hubs = S.all ? HUBS.map(h => { const x = moneyData(jobs.filter(j => jobHub(j) === h), r); return [HUB_NAME[h], x.total, `parts ${omr(x.parts)} · repairs ${omr(x.repair)}`]; }).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]) : [];
+  const any = D.series.some(x => x.parts || x.repair);
+  return `<div class="card dcard">${cardH('Money', 'parts installed and Workshop repairs')}
+    <div class="mk4">${miniKpi('Total', `${omr(D.total)}<small>OMR</small>`, '', d === 0 ? `same as the previous ${nf(days)} days` : `${d > 0 ? '▲' : '▼'} ${omr(Math.abs(d))} vs the previous ${nf(days)} days`)}${miniKpi('Parts installed', `${omr(D.parts)}<small>OMR</small>`)}${miniKpi('Workshop repairs', `${omr(D.repair)}<small>OMR</small>`)}${miniKpi('Paid by customers', `${omr(D.charge)}<small>OMR</small>`, '', 'chargeable cases')}</div>
+    ${any ? lineChart(D.series, [['parts', 'Parts installed'], ['repair', 'Workshop repairs']], `Cost in OMR, ${STEP_WORD[D.kind]}, ${rangeText(r)}`) : noneNote('No parts installed or repairs finished in this period.')}
+    <div class="dgrid">
+      ${hubs.length ? `<div class="blk"><div class="sub-h">By hub · OMR</div>${hbars(hubs, omr)}</div>` : ''}
+      <div class="blk${hubs.length ? '' : ' wide'}"><div class="sub-h">Engineer budgets · ${budYear()}</div>${budgetList(techs)}</div>
+    </div>
+    ${noneNote('Parts are valued at the price on the request (else the parts list); chargeable cases are paid by the customer, so they don’t use the engineer’s budget.')}</div>`;
 }
 /* ==========================================================================
    Firebase build (Google AI Studio or any web host): passwords, built-in Team Leaders, staff accounts,
@@ -5868,6 +6180,9 @@ const A = {
     const v = String(ds.v); if (v === 'custom' && UI.dashMode !== 'custom') { const r = dashRange(); UI.dashFrom = ymd(r.start); UI.dashTo = ymd(addDays(r.end, -1)); }   /* Custom starts from the period on screen */
     UI.dashMode = v; const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; else render();
   },
+  /* the dashboard narrowed to one hub (a row of "All hubs at a glance") or back to everything */
+  dashHub(ds) { UI.dashHub = ds.v; UI.dashEng = ''; const c = $('#live-rep'); if (c && UI.tab === 'rep') { c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; $('#scr').scrollTop = 0; } else render(); },
+  dashClear() { UI.dashHub = ''; UI.dashEng = ''; const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; else render(); },
   sheet(ds) { openSheet(ds.s, { id: ds.id }); },
   close() { closeSheet(); },
   set(ds) { const d = sd(); if (ds.k === 'mode' && d.mode !== ds.v) delete d.reason; if (ds.k === 'line' && d.line !== ds.v) d.uqty = 1; d[ds.k] = ds.v; (d._picked = d._picked || {})[ds.k] = 1; d._err = ''; d._confirm = null; renderSheet(); },
@@ -6005,6 +6320,10 @@ document.addEventListener('change', e => {
     if (!el.value) return; const k = el.dataset.dash === 'from' ? 'dashFrom' : 'dashTo'; UI[k] = el.value; UI.dashMode = 'custom';
     if (UI.dashFrom && UI.dashTo && UI.dashFrom > UI.dashTo) UI[k === 'dashFrom' ? 'dashTo' : 'dashFrom'] = el.value;
     const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; return;
+  }
+  if (el.dataset && el.dataset.dashf) {   /* the dashboard's Hub / Engineer pickers */
+    if (el.dataset.dashf === 'hub') { UI.dashHub = el.value; if (UI.dashEng && el.value && engHub(UI.dashEng) !== el.value) UI.dashEng = ''; } else UI.dashEng = el.value;
+    const c = $('#live-rep'); if (c && UI.tab === 'rep') { c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; const f = c.querySelector(`[data-dashf="${el.dataset.dashf}"]`); if (f) f.focus({ preventScroll: true }); } return;
   }
   if (el.id === 'f-file' && el.files && el.files[0]) { readImportFile(el.files[0]); el.value = ''; return; }
   if (el.id === 'f-accfile' && el.files && el.files[0]) { readAccountsFile(el.files[0]); return; }
