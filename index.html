@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261107065119">
+<meta name="spms-build" content="20261107101731">
 <title>SPMS Oman</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -3472,10 +3472,10 @@ function actionForm(j, me, d) {
       const timer = `<div style="display:flex;align-items:center;gap:12px"><span class="lead ${tm === 'running' ? 'ok' : 'warn'}">${ic('clock', 'sm')}</span><div><div class="t3 muted">${tm === 'new' ? 'Repair not started' : tm === 'running' ? 'Repair in progress' : 'Repair paused'}</div><div class="num" style="font-family:var(--font-display);font-size:32px;font-weight:600;line-height:1.1" data-timer="${esc(j.id)}" role="timer">${fmtDur(repairMs(j))}</div></div></div>`;
       const done = wsParts(j), doneList = done.length ? `<div class="list">${done.map(p => `<div class="row"><div class="main"><div class="t1">${tag(p.pn)} ${esc(p.name || '')}</div><div class="t3">${p.sn ? 'SN ' + esc(p.sn) : '× ' + p.qty} · ${esc(p.from === SCRAP ? 'scrap pool' : p.from)} · ${esc(fmtDT(p.at))}</div></div><b class="num">${money(p.cost)}</b></div>`).join('')}</div>` : '';
       if (!d.used) d.used = [];
-      const picker = `<div id="live-used">${usedBox(d)}</div><div class="searchbox">${ic('search')}<input class="inp" id="f-uq" data-d="uq" data-live="usesug" placeholder="Search hub stock or scrap: number or name" value="${esc(d.uq || '')}" autocomplete="off" aria-label="Search hub stock or scrap"></div><div id="live-usesug">${useSuggest(d)}</div>`;
+      const picker = `<div id="live-used">${usedBox(d)}</div><div class="sub-h">${d.used.length ? 'Add another part' : 'Add a spare part'}</div><div class="searchbox">${ic('search')}<input class="inp" id="f-uq" data-d="uq" data-live="usesug" placeholder="Search hub stock or scrap: number or name" value="${esc(d.uq || '')}" autocomplete="off" aria-label="Search hub stock or scrap"></div><div id="live-usesug">${useSuggest(d)}</div>`;
       if (d.mode !== 'finish') {
-        const n = d.used.length;
-        const parts = `<div class="card" style="gap:8px"><div class="sec-h" style="padding:0"><h2>Spare parts used</h2>${done.length ? `<span class="t3 muted">${done.length} · ${money(sum(done, p => +p.cost || 0))}</span>` : ''}</div>${doneList || '<span class="hint">None yet. Add each spare part as you use it.</span>'}${picker}${n ? `<button class="btn" data-a="wsUse" id="ws-use">${ic('check', 'sm')}Take ${n} part${n === 1 ? '' : 's'} from stock</button>` : ''}<span class="hint">From hub stock or the scrap pool (free). They leave the stock when you press Take.</span></div>`;
+        const n = sum(usedLines(d), l => l.qty);   /* units, so 2 × grease counts as 2 */
+        const parts = `<div class="card" style="gap:8px"><div class="sec-h" style="padding:0"><h2>Spare parts used</h2>${done.length ? `<span class="t3 muted">${done.length} · ${money(sum(done, p => +p.cost || 0))}</span>` : ''}</div>${doneList || (n ? '' : '<span class="hint">None yet. Add each spare part as you use it.</span>')}${picker}${n ? `<button class="btn" data-a="wsUse" id="ws-use">${ic('check', 'sm')}Take ${n} part${n === 1 ? '' : 's'} from stock</button>` : ''}<span class="hint">Add as many parts as you need, from hub stock or the scrap pool (free). They leave the stock when you press Take.</span></div>`;
         return { form: box(timer + `<span class="hint">Time counts only while the timer runs</span>`) + parts, op: null };
       }
       if (!d.outcome) d.outcome = 'fixed';
@@ -3501,10 +3501,15 @@ function usedBox(d) {
 }
 function useSuggest(d) {
   const q = (d.uq || '').trim().toLowerCase(); const avail = LINES.filter(l => HUBS.includes(l.loc) || l.loc === SCRAP);
-  if (!q) return avail.length ? '' : '<span class="hint">There is nothing in hub stock or the scrap pool.</span>';
-  const picked = (d.used || []).map(u => u.id);
-  const hits = avail.filter(l => !picked.includes(l.key) && lineText(l).includes(q)).slice(0, 8);
-  return hits.length ? `<div class="snchips">${hits.map(l => { const scrap = l.loc === SCRAP; return `<button class="snchip" data-a="useAdd" data-id="${esc(l.key)}"><span class="mono">${esc(l.pn)}${l.sn ? ' · ' + esc(l.sn) : ''}</span><small>${esc(l.name || partName(l.pn))} · ${scrap ? 'Scrap pool · free' : l.loc + ' · ' + qtyOf(l) + ' × ' + money(part(l.pn).price)}</small></button>`; }).join('')}</div>` : '<span class="hint">No matching parts in hub stock or scrap.</span>';
+  if (!q) return !avail.length ? '<span class="hint">There is nothing in hub stock or the scrap pool.</span>' : (d.used || []).length ? '<span class="hint">Type to find the next part. For more of the same part, press + or tap it again.</span>' : '';
+  /* a part already picked stays in the list: tapping it again adds one more (a part with a serial number only once) */
+  const used = new Map((d.used || []).map(u => [u.id, u]));
+  const hits = avail.filter(l => !(l.sn && used.has(l.key)) && lineText(l).includes(q)).slice(0, 8);
+  return hits.length ? `<div class="snchips">${hits.map(l => {
+    const scrap = l.loc === SCRAP, u = used.get(l.key), have = qtyOf(l), n = u ? Math.max(1, Math.min(have, +u.qty || 1)) : 0;
+    const what = `${esc(l.name || partName(l.pn))} · ${scrap ? 'Scrap pool · free' : l.loc + ' · ' + have + ' × ' + money(part(l.pn).price)}`;
+    return `<button class="snchip${u ? ' on' : ''}" data-a="useAdd" data-id="${esc(l.key)}"${u && n >= have ? ' disabled' : ''}><span class="mono">${esc(l.pn)}${l.sn ? ' · ' + esc(l.sn) : ''}</span><small>${u ? `Added × ${n} · ${n >= have ? 'all in stock' : 'tap for one more'}` : what}</small></button>`;
+  }).join('')}</div>` : '<span class="hint">No matching parts in hub stock or scrap.</span>';
 }
 function costBox(d, j) { const k = repairCost(d, j); return `<div class="okbox" style="background:var(--surface-2);color:var(--ink)"><b>Total ${money(k.total)}</b><div class="t3 muted">Time ${fmtDur(repairMs(j))} (${k.h} h) × ${money(k.rate)} per hour = ${money(k.lab)} · parts ${money(k.m)}</div></div>`; }
 
@@ -5416,6 +5421,33 @@ async function fbSendResetFor(email) {
   return email;
 }
 
+/* the Team Leader sends the password email to many people in one go. Each person gets their own email from Firebase,
+   which sends at most 150 password emails a day on the free plan. People with a username (no email) or no access are skipped. */
+const PW_MAIL_DAY = 150, PW_DAY_MSG = `Tick at most ${PW_MAIL_DAY} people. Firebase sends up to ${PW_MAIL_DAY} password emails a day.`;
+async function fbSendResetMany(ids, progress) {
+  mustRole('TL');
+  if (ids.length > PW_MAIL_DAY) throw E(PW_DAY_MSG);
+  const res = { sent: [], skipped: [], failed: [] }, nameOf = id => { const u = USERS.find(x => (x.email || x.id) === id); return u ? u.name : loginShow(id); };
+  for (let i = 0; i < ids.length; i++) {
+    const id = String(ids[i] || '').toLowerCase(), u = USERS.find(x => (x.email || x.id) === id), name = nameOf(id);
+    if (progress) progress(i, ids.length);
+    if (isUserLogin(id) || !EMAIL_RE.test(id)) { res.skipped.push(`${name} (username, no email)`); continue; }
+    if (u && u.active === false) { res.skipped.push(`${name} (no access)`); continue; }
+    try {
+      if (builtinTL(id) || builtinMgr(id)) await fbSendPwMail(id); else await fbSendResetFor(id);   /* a built-in account gets its login first */
+      res.sent.push(name);
+    } catch (e) {
+      res.failed.push(`${name} (${String(e.message || 'not sent').replace(/\.$/, '')})`);
+      if (/too many|wait/i.test(String(e.message))) { ids.slice(i + 1).forEach(x => res.failed.push(`${nameOf(String(x).toLowerCase())} (not tried: try again later)`)); break; }   /* Firebase asked to slow down */
+    }
+    if (i < ids.length - 1) await new Promise(r => setTimeout(r, 300));
+  }
+  if (progress) progress(ids.length, ids.length);
+  if (!res.sent.length && !res.failed.length) throw E('Nobody to email: ' + res.skipped.join(', ') + '.');
+  return res;
+}
+function pwProgress(n, total) { const t = $('#acc-prog'); if (t) t.innerHTML = `<div class="prog-line"><i style="width:${Math.round(n / total * 100)}%"></i></div><span class="hint">Sending ${Math.min(n + 1, total)} of ${total}…</span>`; }
+
 /* ---------- staff accounts (Team Leader) ---------- */
 const ROLE_WORDS = { TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'], MGR: ['operations manager', 'regional operations manager', 'ops manager', 'mgr'] };
 function roleOf(v) {
@@ -5609,25 +5641,38 @@ SH.accounts = d => {
     const q = (d.aq || '').trim().toLowerCase();
     const list = USERS.filter(u => !q || [u.name, u.email, ROLE[u.role], u.hub].join(' ').toLowerCase().includes(q)).sort((a, b) => ((a.active === false) - (b.active === false)) || (ROLE_ORDER[a.role] - ROLE_ORDER[b.role]) || String(a.name).localeCompare(b.name));
     const SAID = 'mohamed.said@cns-me.com', selOn = !!d.selOn, sel = d.selIds || (d.selIds = {});
-    const picked = Object.keys(sel).filter(k => sel[k]);
-    const selList = selOn ? list.map(u => u.email || u.id).filter(id => id !== SAID) : [];
+    if (selOn && !d.selAct) d.selAct = 'pw';
+    const toPw = selOn && d.selAct === 'pw';
+    /* who can be ticked: anyone but Mohamed Said; for a password email only people with an email address and access */
+    const noPick = u => { const id = u.email || u.id; return id === SAID ? 'Locked' : toPw && isUserLogin(id) ? 'No email' : toPw && u.active === false ? 'No access' : ''; };
+    const okIds = new Set(USERS.filter(u => !noPick(u)).map(u => u.email || u.id));
+    const picked = Object.keys(sel).filter(k => sel[k] && okIds.has(k));
+    const selList = selOn ? list.map(u => u.email || u.id).filter(id => okIds.has(id)) : [];
     d._accSel = selList;
     const allSel = selList.length && selList.every(id => sel[id]);
-    body = `<div style="display:flex;gap:8px;align-items:center">
+    const pr = !selOn && UI.sheet && UI.sheet.p && UI.sheet.p.pwRes, notSent = pr ? pr.skipped.concat(pr.failed) : [];
+    const prBox = !pr ? '' : notSent.length ? `<div class="alert warn wrap"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>Password email sent to ${pr.sent.length} of ${pr.sent.length + notSent.length}</b><span class="s">Not sent: ${esc(notSent.join(' · '))}</span></div></div>`
+      : `<div class="infobox">${ic('check', 'sm')}Password email sent to ${pr.sent.length} ${pr.sent.length === 1 ? 'person' : 'people'}. They open the link in it and choose a password.</div>`;
+    body = `${prBox}<div style="display:flex;gap:8px;align-items:center">
         <div class="searchbox" style="flex:1;margin:0">${ic('search')}<input class="inp" id="f-aq" data-d="aq" data-live="rr" placeholder="Search name, email, role" value="${esc(d.aq || '')}" autocomplete="off" aria-label="Search staff"></div>
         <button class="btn sm ${selOn ? '' : 'sec'}" data-a="accSelMode">${selOn ? 'Cancel' : 'Select'}</button></div>
-      ${selOn ? `<div style="display:flex;gap:8px;align-items:center;padding:2px 2px 0"><p class="note" style="padding:0;margin:0;flex:1">Tick the accounts to remove, then press Remove.</p>${selList.length ? `<button class="btn sm ${allSel ? 'sec' : ''}" data-a="accAll" style="flex:none">${allSel ? 'Clear' : 'Select all'}</button>` : ''}</div>` : ''}
+      ${selOn ? `${segBtns(d, 'selAct', [['pw', 'Send password email'], ['remove', 'Remove']])}<div style="display:flex;gap:8px;align-items:center;padding:2px 2px 0"><p class="note" style="padding:0;margin:0;flex:1">${toPw ? 'Tick the people, then press Send. Each one gets an email with a link to choose a password.' : 'Tick the accounts to remove, then press Remove.'}</p>${selList.length ? `<button class="btn sm ${allSel ? 'sec' : ''}" data-a="accAll" style="flex:none">${allSel ? 'Clear' : 'Select all'}</button>` : ''}</div><div id="acc-prog" aria-live="polite"></div>` : ''}
       <div class="list">${list.map(u => {
         const id = u.email || u.id, role = `<span class="chip plain">${esc(ROLE[u.role] || u.role)}${u.hub ? ' · ' + esc(u.hub) : ''}</span>`;
         const nm = `<div class="main"><div class="t1">${esc(u.name)}${u.active === false ? ' <span class="chip bad">No access</span>' : ''}</div><div class="t3 mono">${esc(loginShow(id))}${isUserLogin(id) ? ' · username' : ''}</div></div>`;
         if (selOn) {
-          if (id === SAID) return `<div class="row" style="opacity:.55"><span class="pickbox"></span>${nm}<span class="chip plain">Locked</span></div>`;
+          const why = noPick(u);
+          if (why) return `<div class="row" style="opacity:.55"><span class="pickbox"></span>${nm}<span class="chip plain">${why}</span></div>`;
           const on = !!sel[id];
           return `<button class="row ${on ? 'on' : ''}" data-a="accPick" data-id="${esc(id)}"><span class="pickbox${on ? ' on' : ''}">${on ? ic('check', 'sm') : ''}</span>${nm}${role}</button>`;
         }
         return `<button class="row" data-a="sheet" data-s="acct" data-id="${esc(id)}"><span class="avatar mini">${esc(initials(u.name))}</span>${nm}${role}</button>`;
       }).join('') || '<div class="empty">No matches</div>'}</div>`;
-    if (selOn && picked.length) op = { label: `Remove ${picked.length} account${picked.length === 1 ? '' : 's'}`, danger: true, yes: 'Yes, remove', check: () => `Remove ${picked.length} account${picked.length === 1 ? '' : 's'}? They can no longer sign in. Their history stays.`, run: () => fbDeleteAccountsMany(picked), stay: true, after: () => { d.selOn = false; d.selIds = {}; }, ok: n => `${n} account${n === 1 ? '' : 's'} removed` };
+    const k = picked.length, ppl = k === 1 ? 'person' : 'people';
+    if (selOn && k && toPw) op = { label: `Send to ${k} ${ppl}`, yes: 'Yes, send', check: () => { if (k > PW_MAIL_DAY) throw E(PW_DAY_MSG); return `Email ${k} ${ppl} a link to choose a password?`; },
+      run: () => fbSendResetMany(picked, pwProgress), stay: true, after: r => { if (UI.sheet) UI.sheet.p = Object.assign({}, UI.sheet.p, { pwRes: r }); },
+      ok: r => `Password email sent to ${r.sent.length} ${r.sent.length === 1 ? 'person' : 'people'}${r.skipped.length + r.failed.length ? ` · ${r.skipped.length + r.failed.length} not sent` : ''}` };
+    else if (selOn && k) op = { label: `Remove ${picked.length} account${picked.length === 1 ? '' : 's'}`, danger: true, yes: 'Yes, remove', check: () => `Remove ${picked.length} account${picked.length === 1 ? '' : 's'}? They can no longer sign in. Their history stays.`, run: () => fbDeleteAccountsMany(picked), stay: true, after: () => { d.selOn = false; d.selIds = {}; }, ok: n => `${n} account${n === 1 ? '' : 's'} removed` };
   } else if (d.mode === 'add') {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
     body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email or username *', 'first.last@cns-me.com or a username', { hint: 'No email? Type a username (letters, numbers, . _ -). They sign in with that username and password.' })}
@@ -6203,7 +6248,7 @@ const A = {
   acctReset(ds) { const s = UI.sheet; if (!s || s.busy) return; const u = USERS.find(x => (x.email || x.id) === ds.id); s.d._err = ''; s.d._confirm = { text: `Email ${u ? u.name : ds.id} a link to choose a new password?`, yes: 'Yes, send', run: () => fbSendResetFor(ds.id), stay: true, ok: e => `Password email sent to ${e}` }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   acctDelete(ds) { const s = UI.sheet; if (!s || s.busy) return; const u = USERS.find(x => (x.email || x.id) === ds.id); if (!u) return; s.d._err = ''; s.d._confirm = { text: `Remove ${u.name} from SPMS? They can no longer sign in. Their request history stays.`, danger: true, yes: 'Yes, remove', run: () => fbDeleteAccount(ds.id), after: () => { toast('Account removed'); openSheet('accounts', {}); } }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   partDelete(ds) { const s = UI.sheet; if (!s || s.busy) return; const pn = ds.id, pp = part(pn), n = LINES.filter(l => l.pn === pn).length; s.d._err = ''; s.d._confirm = { text: `Remove part ${pp && pp.name ? pp.name + ' (' + pn + ')' : pn} from the parts list?${n ? ` It still has stock in ${n} place${n === 1 ? '' : 's'} — that stock is removed too.` : ''}`, danger: true, yes: 'Yes, remove', run: () => fbDeletePart(pn), after: () => { toast('Part removed'); closeSheet(); } }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
-  accSelMode() { const d = sd(); d.selOn = !d.selOn; d.selIds = {}; d._confirm = null; d._err = ''; renderSheet(); },
+  accSelMode() { const d = sd(); d.selOn = !d.selOn; d.selIds = {}; d._confirm = null; d._err = ''; if (UI.sheet && UI.sheet.p) UI.sheet.p = Object.assign({}, UI.sheet.p, { pwRes: null }); renderSheet(); },
   accPick(ds) { const d = sd(); d.selIds = d.selIds || {}; d.selIds[ds.id] = !d.selIds[ds.id]; d._err = ''; renderSheet(); },
   partPick(ds) { const d = sd(); d.sel = d.sel || {}; d.sel[ds.id] = !d.sel[ds.id]; d._err = ''; renderSheet(); },
   partsAll() { const d = sd(); const pns = d._pns || []; d.sel = d.sel || {}; const on = pns.length && pns.every(pn => d.sel[pn]); pns.forEach(pn => d.sel[pn] = !on); d._err = ''; renderSheet(); },
@@ -6252,7 +6297,11 @@ const A = {
   pickPn(ds) { const d = sd(); d.pn = ds.pn; if (UI.sheet.name === 'new') d.desc = d.desc || ds.nm; else d.name = d.name || ds.nm; renderSheet(); },
   allItems() { const d = sd(), all = d._all || []; d.items = (d.items || []).length === all.length ? [] : all.slice(); d._err = ''; renderSheet(); },
   togItem(ds) { const d = sd(); d.items = d.items || []; const i = d.items.indexOf(ds.id); if (i >= 0) d.items.splice(i, 1); else d.items.push(ds.id); d._err = ''; renderSheet(); },
-  useAdd(ds) { const d = sd(); d.used = (d.used || []).concat([{ id: ds.id, qty: 1 }]); d.uq = ''; renderSheet(); const q = $('#f-uq'); if (q) q.focus(); },
+  useAdd(ds) {   /* add a part, or one more of a part already added; the search stays open for the next part */
+    const d = sd(); d.used = d.used || []; const u = d.used.find(x => x.id === ds.id), l = LINES.find(x => x.key === ds.id);
+    if (!u) d.used = d.used.concat([{ id: ds.id, qty: 1 }]); else if (l && !l.sn) u.qty = Math.max(1, Math.min(qtyOf(l), (+u.qty || 1) + 1));
+    renderSheet();
+  },
   useDel(ds) { const d = sd(); d.used = (d.used || []).filter(u => u.id !== ds.id); renderSheet(); },
   useQty(ds) { const d = sd(); const u = (d.used || []).find(x => x.id === ds.id), l = LINES.find(x => x.key === ds.id); if (u && l) u.qty = Math.max(1, Math.min(qtyOf(l), (+u.qty || 1) + +ds.delta)); renderSheet(); },
   go() { goOp('#f-go'); },
