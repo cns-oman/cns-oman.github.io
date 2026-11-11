@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261111124648">
+<meta name="spms-build" content="20261111162122">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -2645,11 +2645,15 @@ function logsLink(v) {
   return s;
 }
 const safeLink = v => /^https?:\/\//i.test(String(v || '')) ? String(v) : '';
+/* a replaced or faulty part goes back with a description of the issue (required, 11 Nov 2026) */
+const ISSUE_MSG = 'Describe the issue: what was wrong with this part.';
+function issueText(v) { const s = String(v || '').trim().replace(/\s+/g, ' '); if (!s) throw E(ISSUE_MSG); return s.slice(0, 500); }
 async function techShip(id, d) {
   return jobStep(id, 'RETURN', 'TECH', async (j, me) => {
     const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), via = returnVia(d, me.name), courier = via.courier;
+    const issue = j.ret.type === 'defective' ? issueText(d.issue) : '';
     const logs = j.ret.type === 'defective' && j.ret.arrived ? logsLink(d.logs) : '';
-    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref }, via, logs ? { logs } : {}) }));
+    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}${issue ? ' · Issue: ' + issue : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref }, via, logs ? { logs } : {}, issue ? { issue } : {}) }));
     log({ t: 'Return sent', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: me.name, to: 'Stock', ref: j.id, note: `${courier} · ${ref}` });
     return doc;
   });
@@ -3700,6 +3704,7 @@ SH.job = (d, p) => {
       (j.backorders || []).length && ['Back-orders', j.backorders.map(jobLink).join(' ')], (j.splits || []).length && ['Separate returns', j.splits.map(jobLink).join(' ')],
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
       r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
+      r.issue && ['Issue', esc(r.issue)],
       r.logs && ['Logs', safeLink(r.logs) ? `<a href="${esc(safeLink(r.logs))}" target="_blank" rel="noopener noreferrer">Open the logs</a> <span class="t3">${esc(r.logs.length > 60 ? r.logs.slice(0, 57) + '…' : r.logs)}</span>` : esc(r.logs)],
       (j.tmAsk || j.tm) && ['Technical Manager', [j.tmAsk && `Asked by ${esc(j.tmAsk.by)}, ${fmtDT(j.tmAsk.at)}: ${esc(j.tmAsk.note)}`, j.tm && `${j.tm.ok ? 'Approved' : '<b>Rejected</b>'} by ${esc(j.tm.by)}, ${fmtDT(j.tm.at)}${j.tm.note ? ': ' + esc(j.tm.note) : ''}`].filter(Boolean).join('<br>')],
       (j.reminders || []).length && ['Reminders', j.reminders.map(x => `${fmtDT(x.at)} · ${esc(x.by)}`).join('<br>')],
@@ -3912,7 +3917,7 @@ function actionForm(j, me, d) {
       return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', needPhoto)}<span class="hint">Return removed and faulty parts within ${daysWord(returnDays(jobHub(j)))}</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (usePhotoNeeded(j, d) && !(d.photos && d.photos.length)) throw E('Add a photo of the part before you save (needed when a part arrived faulty or a used part goes back).'); return null; }, run: () => techUse(j.id, d) } };
     }
     case 'RETURN': {
-      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>${r.type === 'defective' && r.arrived ? inp(d, 'logs', 'Link to the logs *', 'https://…', { hint: 'Upload the machine logs for this faulty part (for example to OneDrive or SharePoint) and paste the link here.' }) : ''}${returnField(d)}${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', check: () => { if (r.type === 'defective' && r.arrived) logsLink(d.logs); returnVia(d); return null; }, run: () => techShip(j.id, d) } };
+      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>${r.type === 'defective' ? area(d, 'issue', 'Issue description *', r.arrived ? 'What is wrong with this part? e.g. arrived dead, error code, noise' : 'What was wrong with the part you removed? e.g. card reader jams, error code') + '<span class="hint">Required for a replaced or faulty part. Stock and the Workshop see it.</span>' : ''}${r.type === 'defective' && r.arrived ? inp(d, 'logs', 'Link to the logs *', 'https://…', { hint: 'Upload the machine logs for this faulty part (for example to OneDrive or SharePoint) and paste the link here.' }) : ''}${returnField(d)}${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', check: () => { if (r.type === 'defective') issueText(d.issue); if (r.type === 'defective' && r.arrived) logsLink(d.logs); returnVia(d); return null; }, run: () => techShip(j.id, d) } };
     }
     case 'RETURNING': {
       if (!d.diff) d.diff = 'no'; if (!d.miss) d.miss = 'no'; if (!d.dmg) d.dmg = 'no';
@@ -5504,8 +5509,8 @@ function buildSheets(jobs, led, adj) {
   S.push(['History', ['Request', 'Type', 'Part number', 'SCN', 'When', 'Role', 'By', 'Step', 'Details'], hist]);
   S.push(['Repairs', ['Request', 'Part number', 'Part name', 'Serial number', 'Machine', 'Model', 'Customer', 'Workshop in', 'Repair started', 'Done', 'Workshop time', 'Hours', 'Rate OMR/h', 'Labour OMR', 'Parts used', 'Materials OMR', 'Total OMR', 'What was wrong', 'How fixed', 'Time corrected', 'Notes', 'Outcome', 'By'],
     jobs.filter(j => j.ws && j.ws.doneAt).map(j => [j.id, (j.ret || {}).pn || j.pn, j.ws.partName || '', j.ws.partSn || (j.ret || {}).sn || '', j.machine || '', j.model || '', j.customer || '', isoDT(j.ws.inAt), isoDT(j.ws.tm && j.ws.tm.startedAt), isoDT(j.ws.doneAt), fmtDur((j.ws.tm && j.ws.tm.acc) || 0), j.ws.hours, j.ws.rate, j.ws.labour, j.ws.materials || '', j.ws.matCost, j.ws.total, j.ws.diagnosis || '', j.ws.fix || '', (j.ws.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${x.why}`).join('; '), j.ws.notes || '', j.ws.outcome, j.ws.doneBy || j.ws.by])]);
-  S.push(['Returns', ['Request', 'Engineer', 'Return type', 'Part number', 'Serial number', 'Qty', 'Replacement recorded', 'Due', 'Sent', 'Hours to return', 'Overdue', 'Reminders', 'Courier', 'Reference', 'At Stock', 'Serial corrected from', 'Arrived with different SN (expected)', 'Missing component', 'Damage on arrival', 'Stock decision', 'Status'],
-    jobs.filter(j => j.ret).map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, isoDT(j.use && j.use.at), isoDT(retDue(j)), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.missing || '', j.ret.damage || '', j.ret.route || '', stLabel(j)])]);
+  S.push(['Returns', ['Request', 'Engineer', 'Return type', 'Part number', 'Serial number', 'Qty', 'Issue description', 'Replacement recorded', 'Due', 'Sent', 'Hours to return', 'Overdue', 'Reminders', 'Courier', 'Reference', 'At Stock', 'Serial corrected from', 'Arrived with different SN (expected)', 'Missing component', 'Damage on arrival', 'Stock decision', 'Status'],
+    jobs.filter(j => j.ret).map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, j.ret.issue || '', isoDT(j.use && j.use.at), isoDT(retDue(j)), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.missing || '', j.ret.damage || '', j.ret.route || '', stLabel(j)])]);
   const rep = []; for (const j of jobs) { if (!j.use || j.type === 'rep') continue; const units = Array.isArray(j.use.units) ? j.use.units : [{ sn: (j.dispatch && j.dispatch.sn) || '', used: j.use.replaced, removedPn: j.use.removedPn, removedSn: j.use.removedSn }];
     for (const u of units) { const n = u.bulk ? u.used : u.used ? 1 : 0; if (!n) continue; rep.push([j.id, isoDT(j.use.at), j.techName, j.customer || '', j.model || '', j.scn || '', j.machine || '', j.pn, u.bulk ? '' : u.sn || '', n, u.bulk ? j.pn : u.removedPn || '', u.bulk ? '' : u.removedSn || '', j.type === 'van' ? 'Van stock' : 'Request']); } }
   S.push(['Parts replaced', ['Request', 'Date', 'Engineer', 'Customer', 'Model', 'SCN', 'Machine', 'Installed PN', 'Installed SN', 'Qty', 'Removed PN', 'Removed SN', 'Source'], rep]);
