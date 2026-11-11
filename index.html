@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261111085659">
+<meta name="spms-build" content="20261111124648">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -1042,6 +1042,8 @@ const FIX_REASONS = ['Wrong entry', 'Count difference', 'Other'];
 const DELIVERY = [['driver', 'By driver'], ['collect', 'Engineer collects'], ['courier', 'By courier']];
 /* how an engineer sends a part back: he brings it himself, a driver takes it, or a courier (with the receipt photo) */
 const RETURN_BY = [['self', 'Self return'], ['driver', 'By driver'], ['courier', 'By courier']];
+/* every driver task (deliveries and returns) goes to Faisal, so nobody types a driver name (11 Nov 2026) */
+const DRIVER_NAME = 'Faisal';
 const COURIER_COS = ['Nool', 'GTC', 'Other'];   /* Other: the user types the company name */
 const isCollect = j => !!(j && j.dispatch && j.dispatch.delivery === 'collect');
 const APP_URL = FIREBASE_BUILD ? location.origin + location.pathname.replace(/index\.html$/, '') : 'https://claude.ai/artifact/Y7qL8qB6YZ5cQtfvLRT3c4';   /* the link staff open; used in WhatsApp messages */
@@ -1957,7 +1959,7 @@ async function fbDeletePartsMany(pns) {
 async function stockSendToVanMany(d) {
   const me = mustRole('STOCK');
   const tech = vanTechs().find(t => t.id === d.tech); if (!tech) throw E(techList().some(t => t.id === d.tech) ? `${techName(d.tech)} works at a regional hub: Send to van is only for Muscat engineers.` : 'Choose the engineer.');
-  const dv = deliveryOf(d);
+  const dv = deliveryOf(d, tech.name);
   const want = (d.picks || []), picks = want.map(p => { const l = LINES.find(x => x.key === p.id); return l && HUBS.includes(l.loc) ? { key: l.key, loc: l.loc, qty: l.sn ? 1 : Math.max(1, Math.min(qtyOf(l), parseInt(p.qty, 10) || 1)) } : null; }).filter(Boolean);
   if (!want.length) throw E('Pick the parts to send.');
   if (picks.length !== want.length) throw E('One of the parts you picked is no longer at the hub. Check the list.');
@@ -1984,7 +1986,7 @@ function checkSendHub(d) {
   const to = d.to; if (!HUBS.includes(to) || to === MAIN_HUB) throw E('Choose the regional hub.');
   if (!hubEngineers(to).some(t => t.id === d.recv)) throw E(hubEngineers(to).length ? `Choose the ${HUB_NAME[to] || to} engineer who receives the parts.` : `${HUB_NAME[to] || to} has no engineer in SPMS to receive the parts.`);
   if (!(d.picks || []).length) throw E('Pick the parts to send.');
-  return deliveryOf(d);
+  return deliveryOf(d, (hubEngineers(to).find(t => t.id === d.recv) || {}).name);
 }
 async function stockSendToHub(d) {
   const me = mustRole('STOCK'), dv = checkSendHub(d), to = d.to, recv = hubEngineers(to).find(t => t.id === d.recv);
@@ -2016,13 +2018,16 @@ function checkPnChange(j, d) {
   if (!String(d.pnwhy || '').trim()) throw E('Write why the part number changes.');
   return npn;
 }
-async function stockChangePn(id, d) {
-  return jobStep(id, ['STOCK'], 'STOCK', async (j, me) => {
+/* Stock at its step, or the Team Leader while approving (11 Nov 2026): the request stays at the same step */
+async function changePn(id, d) {
+  const role = (ME() || {}).role === 'TL' ? 'TL' : 'STOCK';
+  return jobStep(id, [role], role, async (j, me) => {
     const npn = checkPnChange(j, d), old = normPN(j.pn), now = Date.now(), why = String(d.pnwhy).trim();
     const desc = partName(npn) || String(d.ndesc || '').trim() || j.desc, unit = +part(npn).price || 0;
-    return saveJob(nextDoc(j, me, 'STOCK', 'Part number changed by Stock', `${old} → ${npn}: ${why}`, { pn: npn, desc, unit, pnChanges: (j.pnChanges || []).concat([{ from: old, to: npn, by: me.name, at: now, why }]) }));
+    return saveJob(nextDoc(j, me, role, `Part number changed by ${role === 'TL' ? 'the Team Leader' : 'Stock'}`, `${old} → ${npn}: ${why}`, { pn: npn, desc, unit, pnChanges: (j.pnChanges || []).concat([{ from: old, to: npn, by: me.name, at: now, why }]) }));
   });
 }
+const stockChangePn = (id, d) => changePn(id, d);
 async function stockSendToVan(key, d) { const jobs = await stockSendToVanMany({ tech: d.tech, ref: d.ref, deliv: d.deliv, driver: d.driver, picks: [{ id: key, qty: d.mq }] }); return jobs[0]; }
 async function moveLine(key, d) {
   mustRole('STOCK');
@@ -2165,7 +2170,7 @@ function upsertJob(doc) {
 }
 const cleanCopy = j => { const c = Object.assign({}, j); for (const k of ['id', 'history', 'backorders', 'splits', 'reminders', 'ws', 'closedAt', 'outcome', 'reqPhotos', 'rcvPhotos']) delete c[k]; return c; };
 
-async function createJob(d) {
+async function createJob(d, dry) {
   const me = mustRole('TECH');
   const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
   const qty = parseInt(d.qty, 10); if (!(qty >= 1 && qty <= 99)) throw E('Quantity must be between 1 and 99.');
@@ -2190,19 +2195,20 @@ async function createJob(d) {
   const body = { id, type: 'req', forVan, forHub, pn, desc: (d.desc || '').trim() || part(pn).name, qty, unit: +part(pn).price || 0, scn, machine, machineSn: sOnly ? '' : (findMachine(machine) || {}).sn || '', model: sOnly ? '' : (d.model || '').trim(), customer: sOnly ? '' : (d.customer || '').trim(), contract: sOnly ? '' : (d.contract || '').trim(), site, gps: sOnly ? null : d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
     urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', chargeable: !sOnly && d.charge === '1', note: (d.note || '').trim(), reason: forVan ? 'For van stock' : forHub ? 'For hub stock' : '', techId: me.id, techName: me.name, hub, area, grp: d.grp || '', status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
     history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Requested', note: forVan ? `${pn} × ${qty} for van stock` : forHub ? `${pn} × ${qty} for ${HUB_NAME[hub] || hub} stock` : `${pn} × ${qty} for ${scn} · ${machine}${d.charge === '1' ? ' · chargeable case' : ''}` }] };
+  if (dry) return body;   /* the engineer's check before sending: nothing is saved */
   await saveJob(body); return id;
 }
 /* one form, several parts: make one request per part so each is tracked on its own, all sharing a group id (grp) so the
    Team Leader sees them as a single request with approve/reject per part and approve-all / reject-all */
-async function createJobs(d) {
-  mustRole('TECH');
+async function createJobs(d, opt) {
+  mustRole('TECH'); const dry = !!(opt && opt.dry);
   const parts = (d.parts || []).slice();
   const curPn = normPN(d.pn);
   if (curPn && !parts.some(x => normPN(x.pn) === curPn)) parts.push({ pn: d.pn, desc: d.desc, qty: d.qty });
   if (!parts.length) throw E('Add at least one part to the request.');
   const grp = parts.length > 1 ? newId('GRP') : '';
   const ids = [];
-  for (const pt of parts) ids.push(await createJob(Object.assign({}, d, { pn: pt.pn, desc: pt.desc, qty: pt.qty, grp })));
+  for (const pt of parts) ids.push(await createJob(Object.assign({}, d, { pn: pt.pn, desc: pt.desc, qty: pt.qty, grp }), dry));
   return ids;
 }
 /* an engineer adds parts straight into their own van (parts they already hold) */
@@ -2414,24 +2420,28 @@ function courierOf(d) {
   if (!receipt.length) throw E('Add a photo of the courier receipt.');
   return { company, receipt };
 }
-function deliveryOf(d) {
+/* who: the engineer it is for. By driver is always Faisal; when the engineer collects it himself, his own name is
+   recorded as the collector. */
+function deliveryOf(d, who) {
   const v = d && d.deliv; if (!['driver', 'collect', 'courier'].includes(v)) throw E(DELIV_MSG);
   if (v === 'courier') { const c = courierOf(d); return { delivery: v, driver: '', company: c.company, receipt: c.receipt, courier: 'By courier · ' + c.company }; }
-  const driver = v === 'driver' ? oneLine(d.driver) : '';
-  return { delivery: v, driver, courier: v === 'collect' ? 'Collected by the engineer' : 'By driver' + (driver ? ' · ' + driver : '') };
+  if (v === 'driver') return { delivery: v, driver: DRIVER_NAME, courier: 'By driver · ' + DRIVER_NAME };
+  const name = oneLine(who);
+  return { delivery: v, driver: name, courier: name ? 'Collected by ' + name : 'Collected by the engineer' };
 }
 /* the engineer says how a return goes (required): he brings it himself, by driver (name optional), or by courier with
    the receipt photo */
 const RETURN_MSG = 'Choose how the part goes back: self return, by driver, or by courier.';
-function returnVia(d) {
+function returnVia(d, who) {
   const v = d && d.rvia; if (!['self', 'driver', 'courier'].includes(v)) throw E(RETURN_MSG);
   if (v === 'courier') { const c = courierOf(d); return { via: v, driver: '', company: c.company, receipt: c.receipt, courier: 'By courier · ' + c.company }; }
-  const driver = v === 'driver' ? oneLine(d.driver) : '';
-  return { via: v, driver, courier: v === 'self' ? 'Self return' : 'By driver' + (driver ? ' · ' + driver : '') };
+  if (v === 'driver') return { via: v, driver: DRIVER_NAME, courier: 'By driver · ' + DRIVER_NAME };
+  const name = oneLine(who);   /* self return: the engineer's own name */
+  return { via: v, driver: name, courier: name ? 'Self return · ' + name : 'Self return' };
 }
 const viaTxt = x => !x ? '' : x.courier || (x.via === 'self' ? 'Self return' : '');
 function checkDispatch(j, d) {
-  deliveryOf(d);
+  deliveryOf(d, j.techName);
   const p = dispatchPlan(j, d); const who = j.type === 'rep' ? `${j.techName}’s van` : j.type === 'hubrep' ? HUB_NAME[j.to] || j.to : j.techName;
   const what = `${p.send} × ${j.pn}`;
   if (p.rest > 0) return `Only ${p.send} of ${p.need} selected. Send ${p.send} now to ${who}? The other ${p.rest} stay as a back-order for Stock.`;
@@ -2439,7 +2449,7 @@ function checkDispatch(j, d) {
 }
 async function stockDispatch(id, d) {
   return jobStep(id, ['STOCK', 'REPL'], 'STOCK', async (j, me) => {
-    const dv = deliveryOf(d), p = dispatchPlan(j, d), refill = j.type === 'hubrep';
+    const dv = deliveryOf(d, j.techName), p = dispatchPlan(j, d), refill = j.type === 'hubrep';
     let items, taken = null;
     if (p.manual) items = p.sns.map(sn => ({ pn: normPN(j.pn), name: j.desc || partName(j.pn), sn, qty: 1, from: p.from, cond: 'Not in inventory', price: +part(j.pn).price || 0 }));
     else { taken = await takeMany(p.plan); items = assignSns(taken, p.typed); }
@@ -2637,7 +2647,7 @@ function logsLink(v) {
 const safeLink = v => /^https?:\/\//i.test(String(v || '')) ? String(v) : '';
 async function techShip(id, d) {
   return jobStep(id, 'RETURN', 'TECH', async (j, me) => {
-    const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), via = returnVia(d), courier = via.courier;
+    const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), via = returnVia(d, me.name), courier = via.courier;
     const logs = j.ret.type === 'defective' && j.ret.arrived ? logsLink(d.logs) : '';
     const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref }, via, logs ? { logs } : {}) }));
     log({ t: 'Return sent', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: me.name, to: 'Stock', ref: j.id, note: `${courier} · ${ref}` });
@@ -2678,7 +2688,7 @@ function checkRoute(j, d) {
   if (route === 'stock' && !binTxt(d.bin)) throw E(BIN_MSG);
   const rep = d.replace === 'yes' && canReplace(j);
   if (rep && !normSN(d.repSn)) throw E('Enter the serial number of the replacement part you are sending.');
-  if (rep) deliveryOf(d);
+  if (rep) deliveryOf(d, j.techName);
   const repTxt = rep ? ` A replacement (SN ${normSN(d.repSn)}) is sent to ${j.techName}.` : '';
   if (route === 'scrap') return `Scrap ${what}?${repTxt} This can’t be undone.`;
   if (route === 'consume') return `Mark ${what} as consumed?${repTxt} This closes the request.`;
@@ -2717,7 +2727,7 @@ async function sendReplacement(j, d, me, now, repId) {
   let from, cond;
   if (inv) { const t = await takeLine(inv.key, 1, inv.loc); from = t.from; cond = t.cond || 'New'; }
   else { from = HUBS.includes(d.repFrom) ? d.repFrom : jobHub(j); cond = 'Not in inventory'; }
-  const item = { pn, name: j.ret.name || j.desc || partName(pn), sn, qty: 1, from, cond, price: +part(pn).price || 0 }, dv = deliveryOf(d);
+  const item = { pn, name: j.ret.name || j.desc || partName(pn), sn, qty: 1, from, cond, price: +part(pn).price || 0 }, dv = deliveryOf(d, j.techName);
   const rep = Object.assign(cleanCopy(j), {
     id: repId, type: 'req', forVan: false, pn, desc: j.ret.name || j.desc || partName(pn), qty: 1, qtyApproved: 1, unit: item.price, note: '', grp: '',
     replacementFor: j.id, parent: '', backorder: false, split: false, status: 'DISPATCHED', open: true, createdAt: now, updatedAt: now, updatedBy: me.name, use: null, ret: null, tl: j.tl || null,
@@ -2901,7 +2911,7 @@ async function techSendBack(d) {
   const want = [...new Set(d.items || [])], lines = want.map(k => LINES.find(l => l.key === k && l.loc === src));
   if (!want.length) throw E('Tick the parts to send back.');
   if (lines.some(l => !l)) throw E('Some parts have moved since you opened this. Close it and open it again.');
-  const via = returnVia(d);
+  const via = returnVia(d, me.name);
   const taken = await takeMany(lines.map(l => ({ key: l.key, qty: qtyOf(l), loc: src })));
   const now = Date.now(), id = newId('RET'), n = sum(taken, t => t.qty), ref = (d.ref || '').trim(), note = (d.note || '').trim();
   const job = { id, type: 'ret', pn: taken[0].pn, desc: 'Return to ' + (HUB_NAME[to] || to), qty: n, qtyApproved: n, techId: me.id, techName: me.name, hub: to, from: src,
@@ -3600,6 +3610,13 @@ async function busy(sel_, label, fn) { const b = sel_ && $(sel_); const t = b &&
 /* run the panel's main action: validate → (confirm) → save → stay on the next step or close */
 async function goOp(sel_) {
   const s = UI.sheet; if (!s || s.busy || !s.op) return; const op = s.op; s.d._err = '';
+  if (op.next) {   /* check the form, then show the next screen (nothing is saved yet) */
+    s.busy = true; let err = null;
+    await busy(sel_, 'Checking…', async () => { try { await op.next(); } catch (e) { err = e; } });
+    s.busy = false; if (err) return sheetErr(err);
+    if (UI.sheet === s) { renderSheet(); const b = $('#sheet-b'); if (b) b.scrollTop = 0; const t = $('#sheet-title'); if (t) t.focus({ preventScroll: true }); }
+    return;
+  }
   try { const t = op.check ? op.check() : null; if (t) { s.d._confirm = { text: t, danger: op.danger, yes: op.yes }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); return; } }
   catch (e) { return sheetErr(e); }
   await runOp(op, sel_ || '#f-go');
@@ -3630,8 +3647,8 @@ const box = inner => `<div class="card action">${inner}</div>`;
 const chargeField = d => fld('Chargeable case', segBtns(d, 'charge', [['', 'No'], ['1', 'Yes']]), d.charge === '1' ? 'The customer pays: not taken from the engineer’s budget.' : 'Choose Yes when the part was not needed because of the engineer’s work.');
 /* Stock chooses how the part goes (required): a driver takes it, the engineer collects it at Stock, or a courier */
 function deliveryField(d, who) {
-  const hint = d.deliv === 'collect' ? `${who || 'The engineer'} collects it from Stock and confirms in SPMS.` : d.deliv === 'driver' ? `A driver takes it to ${who || 'the engineer'}, who confirms in SPMS.` : d.deliv === 'courier' ? `A courier takes it to ${who || 'the engineer'}, who confirms in SPMS.` : 'Required: by driver, the engineer collects it, or by courier.';
-  return fld('Delivery method *', segBtns(d, 'deliv', DELIVERY), hint) + (d.deliv === 'driver' ? inp(d, 'driver', 'Driver name', 'Optional') : '') + (d.deliv === 'courier' ? courierFields(d) : '');
+  const hint = d.deliv === 'collect' ? `${who || 'The engineer'} collects it from Stock and confirms in SPMS. Collector: ${who || 'the engineer'}.` : d.deliv === 'driver' ? `Driver: ${DRIVER_NAME}. He takes it to ${who || 'the engineer'}, who confirms in SPMS.` : d.deliv === 'courier' ? `A courier takes it to ${who || 'the engineer'}, who confirms in SPMS.` : 'Required: by driver, the engineer collects it, or by courier.';
+  return fld('Delivery method *', segBtns(d, 'deliv', DELIVERY), hint) + (d.deliv === 'courier' ? courierFields(d) : '');
 }
 /* by courier: the company (Nool, GTC or another one typed in) and a photo of the courier receipt (required) */
 function courierFields(d) {
@@ -3640,8 +3657,8 @@ function courierFields(d) {
 }
 /* the engineer chooses how a return goes back (required): self return, by driver, or by courier */
 function returnField(d) {
-  const hint = d.rvia === 'self' ? 'You bring it to Stock yourself.' : d.rvia === 'driver' ? 'A driver takes it to Stock.' : d.rvia === 'courier' ? 'A courier takes it to Stock.' : 'Required: self return, by driver, or by courier.';
-  return fld('How does it go back? *', segBtns(d, 'rvia', RETURN_BY), hint) + (d.rvia === 'driver' ? inp(d, 'driver', 'Driver name', 'Optional') : '') + (d.rvia === 'courier' ? courierFields(d) : '');
+  const me = ME(), hint = d.rvia === 'self' ? `You bring it to Stock yourself (recorded as ${me ? me.name : 'you'}).` : d.rvia === 'driver' ? `Driver: ${DRIVER_NAME}. He takes it to Stock.` : d.rvia === 'courier' ? 'A courier takes it to Stock.' : 'Required: self return, by driver, or by courier.';
+  return fld('How does it go back? *', segBtns(d, 'rvia', RETURN_BY), hint) + (d.rvia === 'courier' ? courierFields(d) : '');
 }
 /* hub picker: buttons for up to 3 hubs, a list beyond that */
 function hubSeg(d, k, except) {
@@ -3719,7 +3736,7 @@ SH.group = (d, p) => {
   const rows = sibs.map(j => {
     const decided = j.status !== 'TL';
     const stTxt = j.status === 'REJECTED' ? '<span class="chip bad">Rejected</span>' : decided ? `<span class="chip ok">Approved${j.qtyApproved && j.qtyApproved !== j.qty ? ' × ' + j.qtyApproved : ''}</span>` : '';
-    const btns = (canAct && !decided) ? `<div class="two" style="gap:6px"><button class="btn sm ok" data-a="grpOne" data-id="${esc(j.id)}" data-m="approve">Approve</button><button class="btn sm danger" data-a="grpOne" data-id="${esc(j.id)}" data-m="reject">Reject</button></div>` : '';
+    const btns = (canAct && !decided) ? `<div class="two" style="gap:6px"><button class="btn sm ok" data-a="grpOne" data-id="${esc(j.id)}" data-m="approve">Approve</button><button class="btn sm danger" data-a="grpOne" data-id="${esc(j.id)}" data-m="reject">Reject</button></div><button class="btn sm sec" data-a="pnFixOpen" data-id="${esc(j.id)}">Change part number</button>` : '';
     return `<div class="card" style="gap:8px"><div class="chips">${tag(j.pn)}<b class="num">× ${j.qty}</b>${stTxt}</div><div class="t3">${esc(j.desc || partName(j.pn) || '')} · in stock: ${esc(availText(j.pn))}</div>${btns}</div>`;
   }).join('');
   const rejectBox = canAct ? `${sel(d, 'reason', 'Reason for any reject', REJECT_REASONS)}${area(d, 'remarks', d.reason === 'Other' ? 'Explain the reject (required)' : 'Remarks (optional)', 'The engineer sees this on rejected parts')}` : '';
@@ -3768,7 +3785,7 @@ function altActions(j, me) {
   if (me.role === 'TL' && (['STOCK', 'USE_OK'].includes(j.status) && ['req', 'rep'].includes(j.type) || (j.status === 'VAN_OK' && j.type === 'van')) && inMyHub(jobHub(j), me)) out.push(['withdraw', 'Withdraw approval']);
   if (me.role === 'TL' && canCharge(j) && !['TL', 'REJECTED', 'CANCELLED'].includes(j.status) && inMyHub(jobHub(j), me)) out.push(['charge', j.chargeable ? 'Remove chargeable case' : 'Mark as chargeable case']);
   if (me.role === 'TL' && j.status === 'RETURN' && inMyHub(jobHub(j), me)) out.push(['remind', 'Send return reminder', 'remind']);
-  if (me.role === 'STOCK' && j.status === 'STOCK' && ['req', 'rep'].includes(j.type) && myTurn(j, me)) out.push(['pnfix', 'Change part number']);
+  if (((me.role === 'STOCK' && j.status === 'STOCK') || (me.role === 'TL' && j.status === 'TL')) && ['req', 'rep'].includes(j.type) && myTurn(j, me)) out.push(['pnfix', 'Change part number']);
   if (me.role === 'TECH' && j.techId === me.id && j.status === 'RETURN' && j.ret && j.ret.type === 'defective') out.push(['fixsn', 'Correct serial number']);
   if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && tmState(j) !== 'new' && d0(j)) out.push(['fixtime', 'Correct repair time']);
   if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && d0(j)) out.push(['scrap', 'Scrap · can’t be repaired']);
@@ -3781,7 +3798,7 @@ function altForm(j, me, d) {
     case 'pnfix': return { title: 'Change part number', form: box(`<p style="margin:0">The request is for <b class="mono">${esc(j.pn)}</b>${j.desc ? ' (' + esc(j.desc) + ')' : ''} × ${j.qtyApproved || j.qty}. Change it when the engineer typed the wrong number or another part number replaces it.</p>
         ${inp(d, 'npn', 'New part number *', 'Type to search', { mono: true, live: 'pnfixsug' })}<div id="live-pnfixsug" aria-live="polite">${pnFixSuggest(d, j)}</div>${partName(normPN(d.npn)) ? '' : inp(d, 'ndesc', 'Part name', 'For a part not in the parts list')}
         ${area(d, 'pnwhy', 'Why does it change? *', 'e.g. Wrong number typed; superseded by the new part number')}<span class="hint">The history keeps the old part number. The price follows the new one.</span>`),
-      op: { label: 'Change part number', check: () => { const n = checkPnChange(j, d); return `Change ${j.pn} to ${n}?`; }, run: () => stockChangePn(j.id, d), stay: true, ok: 'Part number changed' } };
+      op: { label: 'Change part number', check: () => { const n = checkPnChange(j, d); return `Change ${j.pn} to ${n}?`; }, run: () => changePn(j.id, d), stay: true, ok: 'Part number changed', after: () => { if (j.grp && ME().role === 'TL' && JOBS.some(x => x.grp === j.grp && x.id !== j.id)) openSheet('group', { id: j.grp }); } } };
     case 'charge': {
       const on = !j.chargeable;
       return { title: on ? 'Mark as chargeable case' : 'Remove chargeable case', form: box(`<p style="margin:0">${on ? `The customer pays for <b>${esc(j.pn)} × ${jobQty(j)}</b>. It is not taken from ${esc(j.techName)}’s budget. Use this when the part was not needed because of the engineer’s work.` : `<b>${esc(j.pn)} × ${jobQty(j)}</b> is no longer a chargeable case. It is taken from ${esc(j.techName)}’s budget again.`}</p>${area(d, 'chnote', 'Reason *', on ? 'e.g. Damage caused by the customer' : 'e.g. Marked by mistake')}<span class="hint">Saved in the history with your name.</span>`),
@@ -4163,6 +4180,7 @@ function photoView(src) {
 }
 function photoClose() { const v = $('#pv'); if (!v) return; v.remove(); const f = UI.pvFrom; UI.pvFrom = null; if (f && document.contains(f)) f.focus({ preventScroll: true }); }
 SH.new = d => {
+  if (d._review) return newReview(d);
   if (!d.qty) d.qty = 1; if (!d.urgency) d.urgency = 'normal'; if (d.forVan == null) d.forVan = ''; if (!HUBS.includes(d.hub)) { d.hub = myHub(); d._hubGps = false; }
   const noVan = noVanMe(ME()); if (d.forVan) d.forVan = noVan ? 'hub' : '1';   /* a regional engineer asks for his hub, not a van */
   const forVan = !!d.forVan, forHub = d.forVan === 'hub', hn = HUB_NAME[myHub()] || myHub();
@@ -4195,9 +4213,31 @@ SH.new = d => {
       ${fld('Urgency', segBtns(d, 'urgency', [['normal', 'Normal'], ['urgent', 'Urgent (machine down)']]))}
       ${area(d, 'note', 'Note', 'Optional')}
       ${photoField(d, 'photos', 'Photos', false)}`,
-    op: { label: total > 1 ? `Send ${total} requests` : 'Send request', run: () => { if ((!d.gps || d.gps.doubt) && (d.gpsTxt || '').trim()) { const g2 = parseCoords(d.gpsTxt); if (!g2) throw E(isShortMapLink(d.gpsTxt) ? 'Short share links don’t include the coordinates. Copy the numbers from Maps instead (see How to get your coordinates).' : 'Could not read those coordinates. Copy the numbers from Maps, like 23.588, 58.383.'); delete g2.swapped; d.gps = g2; } return createJobs(d); }, after: ids => { UI.tab = 'all'; UI.filter = 'open'; const id = Array.isArray(ids) ? ids[ids.length - 1] : ids; if (id) openSheet('sent', { id }); else closeSheet(); }, ok: ids => Array.isArray(ids) && ids.length > 1 ? `${ids.length} requests sent to the Team Leader` : 'Request sent to the Team Leader' }
+    op: { label: total > 1 ? `Next · ${total} parts` : 'Next', next: async () => { if ((!d.gps || d.gps.doubt) && (d.gpsTxt || '').trim()) { const g2 = parseCoords(d.gpsTxt); if (!g2) throw E(isShortMapLink(d.gpsTxt) ? 'Short share links don’t include the coordinates. Copy the numbers from Maps instead (see How to get your coordinates).' : 'Could not read those coordinates. Copy the numbers from Maps, like 23.588, 58.383.'); delete g2.swapped; d.gps = g2; } d._review = await createJobs(d, { dry: true }); } }
   };
 };
+
+/* the engineer's last check before a request goes to the Team Leader: Back (change it), Cancel (drop it) or Proceed */
+function newReview(d) {
+  const list = d._review, j0 = list[0], n = list.length, sOnly = j0.forVan || j0.forHub;
+  const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
+  const g = j0.gps, price = sum(list, x => (x.unit || 0) * x.qty);
+  const parts = list.map(x => `<div class="row"><span class="lead info">${ic('box', 'sm')}</span><div class="main"><div class="t1">${tag(x.pn)} <span class="num">× ${x.qty}</span></div><div class="t3">${esc(x.desc || '')}</div></div></div>`).join('');
+  const facts = fact('For', j0.forHub ? esc((HUB_NAME[j0.hub] || j0.hub) + ' stock') : j0.forVan ? 'Your van' : 'A machine')
+    + (sOnly ? '' : fact('Service call', `<span class="mono">${esc(j0.scn)}</span>`) + fact('Machine', `<span class="mono">${esc(j0.machine)}</span>`) + fact('Model', esc(j0.model)) + fact('Customer', esc(j0.customer))
+      + fact('Site', esc(j0.site)) + fact('Location', g ? `<span class="mono">${(+g.lat).toFixed(5)}, ${(+g.lng).toFixed(5)}</span>` : ''))
+    + (j0.forHub ? '' : fact('From hub', esc(HUB_NAME[j0.hub] || j0.hub))) + fact('Urgency', j0.urgency === 'urgent' ? 'Urgent (machine down)' : 'Normal')
+    + (j0.chargeable ? fact('Case', 'Chargeable') : '') + fact('Note', esc(j0.note)) + fact('Photos', (j0.reqPhotos || []).length ? String(j0.reqPhotos.length) : '')
+    + (price ? fact('Value', esc(money(price))) : '');
+  return {
+    title: 'Check your request', sub: 'Nothing is sent until you tap Proceed',
+    body: `<div class="sec-h" style="padding:0"><h2>${n} part${n === 1 ? '' : 's'}</h2></div><div class="list card" style="padding:0">${parts}</div>
+      <div class="card"><div class="facts">${facts}</div></div>
+      <span class="hint">Back: change something. Cancel: drop this request. Proceed: send it to the Team Leader.</span>`,
+    foot: `<button class="btn sec" data-a="newBack" id="f-no">Back</button><button class="btn sec" data-a="close" id="f-cancel">Cancel</button><button class="btn" data-a="go" id="f-yes">Proceed</button>`,
+    op: { label: 'Proceed', run: () => { d._review = null; return createJobs(d); }, after: ids => { UI.tab = 'all'; UI.filter = 'open'; const id = Array.isArray(ids) ? ids[ids.length - 1] : ids; if (id) openSheet('sent', { id }); else closeSheet(); }, ok: ids => Array.isArray(ids) && ids.length > 1 ? `${ids.length} requests sent to the Team Leader` : 'Request sent to the Team Leader' }
+  };
+}
 
 /* ---------- engineer: ask to use a part from the van (the Team Leader approves first) ---------- */
 SH.vanuse = d => {
@@ -6833,7 +6873,9 @@ const A = {
   },
   useDel(ds) { const d = sd(); d.used = (d.used || []).filter(u => u.id !== ds.id); renderSheet(); },
   useQty(ds) { const d = sd(); const u = (d.used || []).find(x => x.id === ds.id), l = LINES.find(x => x.key === ds.id); if (u && l) u.qty = Math.max(1, Math.min(qtyOf(l), (+u.qty || 1) + +ds.delta)); renderSheet(); },
-  go() { goOp('#f-go'); },
+  go(ds, el) { goOp(el && el.id ? '#' + el.id : '#f-go'); },
+  newBack() { const d = sd(); d._review = null; d._err = ''; renderSheet(); const g = $('#f-go'); if (g) g.focus(); },
+  pnFixOpen(ds) { openSheet('job', { id: ds.id }); const d = sd(); d.alt = 'pnfix'; renderSheet(); },
   cYes() { const s = UI.sheet; if (!s || !s.d._confirm || s.busy) return; const c = s.d._confirm; s.d._confirm = null; runOp(c.run ? c : s.op, '#f-yes'); },
   cNo() { const d = sd(); d._confirm = null; renderSheet(); const g = $('#f-go') || $('#ws-save'); if (g) g.focus(); },
   alt(ds) { const d = sd(); d.alt = ds.v; d._err = ''; d._confirm = null; renderSheet(); const t = $('#sheet-title'); if (t) t.focus({ preventScroll: true }); },
