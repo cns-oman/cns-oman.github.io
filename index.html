@@ -11,12 +11,16 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261110185028">
+<meta name="spms-build" content="20261111085659">
+<link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
+<link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
+<link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
 <title>SPMS Oman</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap"></noscript>
 <style>
 /* ==========================================================================
    SPMS Oman · CNS Middle East — a phone-first field app.
@@ -990,7 +994,8 @@ const TEST_PW = 'Test#2026';
 const RETURN_HOURS = 48, DEFAULT_RATE = 5, PAGE = 300;
 /* Hubs come from settings/hubs (Stock or the Team Leader add them); these two are the starting set. */
 const DEFAULT_HUBS = [{ code: 'MMH', name: 'Muscat Main Hub', country: 'Oman' }, { code: 'MH', name: 'Al Musanaah Hub', country: 'Oman' }, { code: 'SLH', name: 'Salalah Hub', country: 'Oman' },
-  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' }];
+  { code: 'SOH', name: 'Sohar Hub', country: 'Oman' }, { code: 'SUR', name: 'Sur Hub', country: 'Oman' }, { code: 'IBR', name: 'Ibri Hub', country: 'Oman' }, { code: 'NZW', name: 'Nizwa Hub', country: 'Oman' },
+  { code: 'SUW', name: 'Suwaiq Hub', country: 'Oman' }, { code: 'SNW', name: 'Sinaw Hub', country: 'Oman' }];
 const HUBS = [], HUB_NAME = {}, HUB_INFO = [];
 function setHubs(list) {
   const ok = (Array.isArray(list) ? list : []).filter(h => h && /^[A-Z]{2,6}$/.test(h.code) && h.name);
@@ -1000,10 +1005,11 @@ function setHubs(list) {
 }
 setHubs(DEFAULT_HUBS);
 /* Countries guessed from a place name, so nobody has to pick what the name already says. */
-const PLACES = { Oman: ['muscat', 'seeb', 'nizwa', 'sohar', 'salalah', 'sur', 'ibri', 'buraimi', 'duqm', 'barka', 'rustaq', 'ibra', 'bahla', 'khasab', 'saham', 'shinas', 'adam', 'oman'] };
+const PLACES = { Oman: ['muscat', 'seeb', 'nizwa', 'sohar', 'salalah', 'sur', 'ibri', 'buraimi', 'duqm', 'barka', 'rustaq', 'ibra', 'bahla', 'khasab', 'saham', 'shinas', 'adam', 'suwaiq', 'sinaw', 'oman'] };
 /* where the towns are, so a GPS position can be matched to the nearest hub */
 const CITY_LL = { muscat: [23.588, 58.3829], seeb: [23.6703, 58.1891], nizwa: [22.9333, 57.5333], sohar: [24.347, 56.7093], salalah: [17.0151, 54.0924], sur: [22.5667, 59.5289],
-  ibri: [23.2257, 56.5157], buraimi: [24.25, 55.7933], duqm: [19.6706, 57.7071], barka: [23.68, 57.88], rustaq: [23.3908, 57.4244], ibra: [22.6906, 58.5334], bahla: [22.964, 57.2976], khasab: [26.1799, 56.2477] };
+  ibri: [23.2257, 56.5157], buraimi: [24.25, 55.7933], duqm: [19.6706, 57.7071], barka: [23.68, 57.88], rustaq: [23.3908, 57.4244], ibra: [22.6906, 58.5334], bahla: [22.964, 57.2976], khasab: [26.1799, 56.2477],
+  suwaiq: [23.8494, 57.4386], sinaw: [22.4997, 58.035] };
 function hubLL(code) {
   const h = HUB_INFO.find(x => x.code === code); if (!h) return null;
   if (isFinite(h.lat) && isFinite(h.lng)) return [+h.lat, +h.lng];
@@ -2078,7 +2084,7 @@ const jobHub = j => HUBS.includes(j.hub) ? j.hub : accHub(ACC(j.techId)) || HUBS
 /* Oman hubs outside Muscat: an engineer there takes the part from his own hub's shelf; faulty parts go to the Muscat Main
    Hub, which then refills his hub with the same part. When his hub doesn't have it, the Muscat Main Hub sends it as usual.
    (The security rules carry the same list.) */
-const MAIN_HUB = 'MMH', OUT_HUBS = ['MH', 'SOH', 'SUR', 'IBR', 'NZW', 'SLH'];
+const MAIN_HUB = 'MMH', OUT_HUBS = ['MH', 'SOH', 'SUR', 'IBR', 'NZW', 'SLH', 'SUW', 'SNW'];
 const isOutHub = h => OUT_HUBS.includes(h);
 /* Stock sends parts to the vans of Muscat engineers only; engineers at the regional hubs use their hub's shelf */
 const vanTechs = () => techList().filter(t => (engHub(t.id) || MAIN_HUB) === MAIN_HUB);
@@ -3499,7 +3505,7 @@ function dbView(me) {
     </div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Return deadline</h2></div><div class="two"><div class="fld"><label class="lbl" for="rd-mmh">Muscat Main Hub (days)</label><input class="inp num" id="rd-mmh" data-draft="rdMmh" type="number" min="1" max="60" step="1" inputmode="numeric" value="${esc(draft('rdMmh', RETURN_DAYS.MMH))}"></div><div class="fld"><label class="lbl" for="rd-other">Other hubs (days)</label><input class="inp num" id="rd-other" data-draft="rdOther" type="number" min="1" max="60" step="1" inputmode="numeric" value="${esc(draft('rdOther', RETURN_DAYS_OTHER))}"></div></div><button class="btn sm sec" data-a="saveReturns">Save deadline</button><span class="hint">Counted from the install. When a return is overdue, SPMS emails the engineer, with the Team Leader and the Technical Manager in copy.</span></div>
     ${UI.fbMode ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Staff accounts</h2><button class="btn sm" data-a="sheet" data-s="accounts">${ic('user', 'sm')}Manage</button></div><span class="hint">${USERS.filter(u => u.active !== false).length} people can sign in · ${USERS.filter(u => u.active !== false && u.role === 'TECH').length} engineers</span></div>` : ''}
-    ${UI.fbMode && me.role === 'TL' ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Security</h2><button class="btn sm sec" data-a="sheet" data-s="security">${ic('lock', 'sm')}2-factor login</button></div><span class="hint">${UI.otpOn ? 'On · a login code the first time on each phone' : 'Off · sign in with email and password only'} · passwords change every 30 days</span></div>` : ''}
+    ${UI.fbMode && me.role === 'TL' ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Security</h2><button class="btn sm sec" data-a="sheet" data-s="security">${ic('lock', 'sm')}2-factor login</button></div><span class="hint">${UI.otpOn ? 'On · a login code the first time on each phone' : 'Off · sign in with email and password only'} · passwords change every 90 days</span></div>` : ''}
     ${UI.fbMode ? '' : `<div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2><button class="btn sm sec" data-a="sheet" data-s="pwreset">${ic('ret', 'sm')}Reset a password</button></div><span class="hint">Everyone can change their own password in their profile</span></div>`}
     <div class="card"><div class="sec-h" style="padding:0"><h2>Machine list</h2><button class="btn sm sec" data-a="sheet" data-s="machines">${ic('sheet', 'sm')}${UI.machInfo ? 'Update' : 'Import Excel'}</button></div><span class="hint">${ensureMachines(() => { if (UI.tab === 'db') render(); }) && UI.machInfo ? `${UI.machInfo.n.toLocaleString('en-GB')} machines · engineers type the ATM code or serial number and SPMS fills in the rest` : MACHINES ? 'No machines yet. Import the ATM / CDM list so new requests fill in the machine details.' : 'Loading…'}</span></div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Hubs</h2><button class="btn sm sec" data-a="sheet" data-s="hubs">${ic('edit', 'sm')}Manage hubs</button></div><div class="chips">${HUB_INFO.map(h => `<span class="chip plain" title="${esc(h.name)}"><b>${esc(h.code)}</b>&nbsp;${esc(h.name)}${h.country ? ' · ' + esc(h.country) : ''}</span>`).join('')}</div></div>
@@ -5998,7 +6004,7 @@ async function fbAdminSetPw(email, pw, force) {
 /* add a person, or update them when they are already on the list. Their password is the one given here: a new login
    gets it straight away; a login that already existed gets it through the sender — from an Excel file only while they
    haven't chosen their own password yet, from "Add one" (force) always. mustChange on the staff record says whose
-   password it is: false = they chose it themselves (profile, the 30-day change, reset by code); null = the Team
+   password it is: false = they chose it themselves (profile, the 90-day change, reset by code); null = the Team
    Leader's. Answers { made, pw: 'new' | 'same' | 'set' | 'own' | 'kept', sid, role }. */
 async function fbCreateAccount(a, opt) {
   mustRole('TL'); opt = opt || {};
@@ -6410,12 +6416,12 @@ function openPendingJob() { const id = UI.openJob; if (!id || !UI.loaded || !ME(
 if (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.addEventListener) navigator.serviceWorker.addEventListener('message', e => { const m = e.data || {}; if (m.type === 'open-job' && m.job) { UI.openJob = m.job; openPendingJob(); } });
 try { const q = new URLSearchParams(location.search).get('job'); if (q) { UI.openJob = q; history.replaceState(null, '', location.pathname); } } catch (e) { /* no deep link */ }
 /* ==========================================================================
-   Login codes (one-time, per phone), password reset by code, and the 30-day password change.
+   Login codes (one-time, per phone), password reset by code, and the 90-day password change.
    The codes are made, e-mailed and checked by the free sender (Google Apps Script); this file only talks to it.
    2-factor is opt-in: it does nothing until the Team Leader turns it on (settings/security.otp), and once a phone
    has passed the code once, it is trusted and never asked again on that phone.
    ========================================================================== */
-const DAY_MS = 86400000, PW_MAX_AGE = 30 * DAY_MS, TRUST_KEY = 'spms-device-trusted', WEAK_KEY = 'spms-pw-weak';
+const DAY_MS = 86400000, PW_MAX_AGE = 90 * DAY_MS, TRUST_KEY = 'spms-device-trusted', WEAK_KEY = 'spms-pw-weak';
 /* the password just used to sign in: kept in memory only until the password screen is passed, so the new password can't
    be the same one. Whether it meets the rules is kept for this tab (survives a reload, so the change can't be skipped). */
 let PW_SIGNED = '';
@@ -6443,7 +6449,7 @@ async function loadSecurity() {
   UI.otpOn = false;
   try { const s = await FB.fs.collection('settings').doc('security').get(); if (s.exists && s.data().otp === true) UI.otpOn = true; } catch (e) { /* off */ }
 }
-/* the password is older than 30 days, or the Team Leader marked it to be changed */
+/* the password is older than 90 days, or the Team Leader marked it to be changed */
 function pwMustChange(d) { if (!d) return false; if (d.mustChange === true) return true; const at = +d.pwAt; return at > 0 && Date.now() - at > PW_MAX_AGE; }
 const pwDaysLeft = d => { const at = d && +d.pwAt; return at > 0 ? Math.ceil((at + PW_MAX_AGE - Date.now()) / DAY_MS) : null; };
 
@@ -6510,7 +6516,7 @@ SH.pwmail = d => {
   };
 };
 
-/* ---------- the 30-day password change (shown as a wall after sign-in when due) ---------- */
+/* ---------- the 90-day password change (shown as a wall after sign-in when due) ---------- */
 async function forcePwChange(d) {
   const user = FB.auth.currentUser, me = ME(); if (!user || !me) throw E('Sign in again.');
   const nw = String(d.pnew || ''), weak = pwProblem(nw); if (weak) throw E(weak + '.');
@@ -6538,7 +6544,7 @@ SH.security = d => {
     body: `<div class="infobox">${ic('lock', 'sm')}With 2-factor on, each person types a 6-digit code emailed to them <b>the first time they sign in on a phone</b>. After that the phone is trusted and isn’t asked again. It stops someone using a stolen password on a new phone.</div>
       ${fld('Require a login code (2-factor)', segBtns(d, 'on', [['no', 'Off'], ['yes', 'On']]))}
       ${d.on === 'yes' ? `<p class="hint" style="margin:0">Codes are emailed by SPMS. If email ever stops working, turn this off here and everyone can still sign in with their password.</p>` : ''}
-      <div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2></div><span class="hint">Everyone must change their password every 30 days; SPMS asks them when it is due. ${esc(PW_RULE)} Someone whose password doesn’t meet this is asked for a new one when they sign in.</span></div>`,
+      <div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2></div><span class="hint">Everyone must change their password every 90 days; SPMS asks them when it is due. ${esc(PW_RULE)} Someone whose password doesn’t meet this is asked for a new one when they sign in.</span></div>`,
     op: { label: 'Save', run: () => setSecurity(d.on === 'yes'), ok: d.on === 'yes' ? '2-factor is on' : '2-factor is off' }
   };
 };
@@ -6582,12 +6588,12 @@ function renderOtpGate() {
   </form>`);
   const i = $('#otp-code'); if (i) i.focus();
 }
-/* the 30-day password change (shown as a wall after sign-in) */
+/* the 90-day password change (shown as a wall after sign-in) */
 function renderPwGate() {
   const d = UI.gateD || (UI.gateD = {}), left = pwDaysLeft(UI.pwDoc);
   gateShell(`<form id="pwg-form" class="card" novalidate>
     <div class="sec-h" style="padding:0"><h2 style="margin:0">Choose a new password</h2></div>
-    <p class="hint" style="margin:2px 0 4px">${UI.pwDoc && UI.pwDoc.mustChange ? 'Your Team Leader asked you to set a new password.' : pwWeakNow() ? 'SPMS now needs stronger passwords. Choose a new one to continue.' : 'Passwords are changed every 30 days. Please set a new one to continue.'} After this, SPMS signs you out so you sign in with the new password.</p>
+    <p class="hint" style="margin:2px 0 4px">${UI.pwDoc && UI.pwDoc.mustChange ? 'Your Team Leader asked you to set a new password.' : pwWeakNow() ? 'SPMS now needs stronger passwords. Choose a new one to continue.' : 'Passwords are changed every 90 days. Please set a new one to continue.'} After this, SPMS signs you out so you sign in with the new password.</p>
     <div class="fld"><label class="lbl" for="pw-new">New password</label><div class="pw"><input class="inp" id="pw-new" type="password" autocomplete="new-password" value=""><button type="button" class="pw-t" data-a="pwgToggle" aria-label="Show password">Show</button></div><span class="hint">${esc(PW_RULE)}</span></div>
     <div class="fld"><label class="lbl" for="pw-new2">New password again</label><input class="inp" id="pw-new2" type="password" autocomplete="new-password" value=""></div>
     <div id="gate-err" class="err" role="alert"${d._err ? '' : ' hidden'}>${esc(d._err || '')}</div>
@@ -6646,6 +6652,7 @@ async function fbAuthChanged(user) {
   if (!user) { markSignInPw(''); UI.profile = null; ACCOUNTS = TEST_ACCOUNTS.slice(); USERS = []; UI.authReady = true; if (!UI.sheet || UI.sheet.name !== 'pwmail') closeSheet(); $('#scr').innerHTML = ''; render(); return; }
   const email = (user.email || '').toLowerCase();
   try {
+    let sec = loadSecurity();   /* is 2-factor turned on? read at the same time as the profile, to open faster */
     const doc = await FB.fs.collection('users').doc(email).get(); let d = doc.exists ? fixTitle(doc.data()) : null;
     const bt = builtinTL(email), bm = builtinMgr(email);
     /* a built-in Team Leader signing in for the first time: add them to the staff list (the rules allow it only once their
@@ -6653,18 +6660,19 @@ async function fbAuthChanged(user) {
     if (!d && (bt || bm)) {
       const b = bt || bm, now = Date.now(); d = { id: email, email, sid: idFromEmail(email), name: b.name, role: bt ? 'TL' : 'MGR', title: b.title, hub: b.hub, active: true, createdAt: now, createdBy: bt ? 'SPMS (built-in Team Leader)' : 'SPMS (built-in Operations Manager)', pwAt: now };
       await FB.fs.collection('users').doc(email).set(d);
+      sec = loadSecurity();   /* read again now that the staff entry exists (the rules let only staff read it) */
     }
     if (!d || !ROLE[d.role] || d.active === false) { fail(d && d.active === false ? 'Your access to SPMS was removed. Ask the Team Leader.' : 'Your login works, but you aren’t on the SPMS staff list yet. Ask the Team Leader to add you.'); await FB.auth.signOut().catch(() => {}); return; }
     UI.profile = { id: d.sid || idFromEmail(email), email, role: d.role, name: d.name || email, title: d.title || ROLE[d.role], hub: d.hub || '', full: !!(bt && bt.full && d.role === 'TL'), baseRole: d.role };
     UI.pwDoc = d;
-    await loadSecurity();   /* is 2-factor turned on? */
-    /* older accounts with no password date yet: start the 30-day clock now (the rules let a person set only their own pwAt/mustChange) */
+    await sec;
+    /* older accounts with no password date yet: start the 90-day clock now (the rules let a person set only their own pwAt/mustChange) */
     if (d.pwAt == null && d.mustChange !== true) { try { await FB.fs.collection('users').doc(email).set({ pwAt: Date.now(), mustChange: false }, { merge: true }); d.pwAt = Date.now(); } catch (e) { /* set next time */ } }
   } catch (e) { console.error(e); fail(/permission/.test(String(e && e.code)) ? 'SPMS refused to load your profile. The app owner must publish the security rules (firestore.rules).' : 'Could not load your profile. Check the internet and try again.'); await FB.auth.signOut().catch(() => {}); return; }
   UI.siErr = '';
   Object.assign(UI, { tab: 'todo', q: '', iq: '', filter: 'open', report: 'dash', drafts: {}, traceq: '', traceRes: null, auditq: '' });
   UI.authReady = true;
-  /* gates, in order: first the one-time login code on a new phone, then the 30-day password change */
+  /* gates, in order: first the one-time login code on a new phone, then the 90-day password change */
   if (otpRequired() && !isUserLogin(email)) { UI.gate = 'otp'; UI.gateD = {}; render(); startOtpGate(); return; }   /* username logins have no email to receive a code */
   if (pwMustChange(UI.pwDoc) || pwWeakNow()) { UI.gate = 'pw'; UI.gateD = {}; render(); return; }
   UI.gate = null; PW_SIGNED = '';   /* no password screen: the typed password isn't needed any more */

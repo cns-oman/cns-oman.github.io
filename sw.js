@@ -1,5 +1,5 @@
 /* SPMS offline support: the app opens even with a weak signal. Saving still needs the internet; the app says so. */
-const V = 'spms-20261110185028';
+const V = 'spms-20261111085659', NET_WAIT = 3000;
 const SHELL = ['./', 'index.html', 'firebase-config.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon-64.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(V).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, { cache: 'reload' })).catch(() => {})))).then(() => self.skipWaiting()));
@@ -15,9 +15,16 @@ self.addEventListener('fetch', e => {
   if (/firebaseapp\.com$|firebaseio\.com$/.test(u.hostname)) return;
   const same = u.origin === self.location.origin;
   if (same && (r.mode === 'navigate' || /\.(html|js|webmanifest)$/.test(u.pathname) || u.pathname.endsWith('/'))) {
-    /* the app itself: the newest copy from the network, the saved copy when offline */
-    e.respondWith(fetch(r).then(res => { if (res.ok) { const c = res.clone(); caches.open(V).then(x => x.put(r, c)); } return res; })
-      .catch(() => caches.match(r).then(m => m || caches.match('index.html'))));
+    /* the app itself: the newest copy from the network. On a weak signal SPMS doesn't wait more than 3 seconds: it opens
+       the saved copy and keeps fetching the new one in the background for the next open. Offline: the saved copy. */
+    const saved = () => caches.match(r).then(m => m || caches.match('index.html'));
+    const net = fetch(r);
+    e.waitUntil(net.then(res => { if (res.ok) { const c = res.clone(); return caches.open(V).then(x => x.put(r, c)); } }).catch(() => {}));
+    e.respondWith(new Promise(resolve => {
+      let done = false; const give = x => { if (!done && x) { done = true; resolve(x); } };
+      const t = setTimeout(() => saved().then(give, () => {}), NET_WAIT);
+      net.then(res => { clearTimeout(t); give(res); }, () => { clearTimeout(t); saved().then(m => { give(m); if (!done) { done = true; resolve(Response.error()); } }, () => { if (!done) { done = true; resolve(Response.error()); } }); });
+    }));
     return;
   }
   if (same || /^(www\.gstatic\.com|fonts\.googleapis\.com|fonts\.gstatic\.com|cdnjs\.cloudflare\.com)$/.test(u.hostname)) {
