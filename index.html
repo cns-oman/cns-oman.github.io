@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261110122306">
+<meta name="spms-build" content="20261110185028">
 <title>SPMS Oman</title>
 <meta name="theme-color" content="#F4F5F7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -655,6 +655,15 @@ button.grp:hover h2 { color: var(--brand-on); }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb .x { position: absolute; top: 3px; right: 3px; background: rgba(0,0,0,.6); color: #fff; border: 0; border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; cursor: pointer; }
 .thumb .x .ic { width: 14px; height: 14px; }
+button.thumb { padding: 0; background: none; cursor: zoom-in; }
+.thumb img[data-a] { cursor: zoom-in; }
+.pv { position: absolute; inset: 0; z-index: 40; background: rgba(0,0,0,.92); display: flex; }
+.pv-b { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: zoom-in; touch-action: pan-x pan-y pinch-zoom; }
+.pv-b img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.pv-b.zoom { overflow: auto; display: block; cursor: zoom-out; }
+.pv-b.zoom img { max-width: none; max-height: none; }
+.pv-x { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px; width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,.35); display: grid; place-items: center; cursor: pointer; }
+.pv-x .ic { width: 20px; height: 20px; }
 
 /* ---------- dashboard ---------- */
 .dash { display: flex; flex-direction: column; gap: 14px; }
@@ -1022,9 +1031,12 @@ function myHub() {
 const REJECT_REASONS = ['Service call invalid or already closed', 'Engineer already holds this part', 'Duplicate request', 'Part does not fit the machine', 'Hub out of stock, vendor order needed', 'Other'];
 const REMOVE_REASONS = ['Damaged in store', 'Lost', 'Expired', 'Other'];
 const FIX_REASONS = ['Wrong entry', 'Count difference', 'Other'];
-const COURIERS = ['Company van'];   /* every return goes by company van */
-/* how a part leaves Stock: a driver takes it, or the engineer collects it at Stock. Stock chooses every time. */
-const DELIVERY = [['driver', 'By driver'], ['collect', 'Engineer collects']];
+/* how a part leaves Stock: a driver takes it, the engineer collects it at Stock, or a courier takes it (with a photo of
+   the courier receipt). Stock chooses every time. */
+const DELIVERY = [['driver', 'By driver'], ['collect', 'Engineer collects'], ['courier', 'By courier']];
+/* how an engineer sends a part back: he brings it himself, a driver takes it, or a courier (with the receipt photo) */
+const RETURN_BY = [['self', 'Self return'], ['driver', 'By driver'], ['courier', 'By courier']];
+const COURIER_COS = ['Nool', 'GTC', 'Other'];   /* Other: the user types the company name */
 const isCollect = j => !!(j && j.dispatch && j.dispatch.delivery === 'collect');
 const APP_URL = FIREBASE_BUILD ? location.origin + location.pathname.replace(/index\.html$/, '') : 'https://claude.ai/artifact/Y7qL8qB6YZ5cQtfvLRT3c4';   /* the link staff open; used in WhatsApp messages */
 const SESSION_KEY = 'spms-flow-session-v1', LAST_EMAIL = 'spms-last-email', LOCAL_KEY = 'spms-flow-local-v2', LEASE_KEY = 'spms-lease-v1';
@@ -2070,6 +2082,12 @@ const MAIN_HUB = 'MMH', OUT_HUBS = ['MH', 'SOH', 'SUR', 'IBR', 'NZW', 'SLH'];
 const isOutHub = h => OUT_HUBS.includes(h);
 /* Stock sends parts to the vans of Muscat engineers only; engineers at the regional hubs use their hub's shelf */
 const vanTechs = () => techList().filter(t => (engHub(t.id) || MAIN_HUB) === MAIN_HUB);
+/* Only Muscat engineers have a van. An engineer at a regional hub uses his hub's shelf instead ("My hub"): he asks Stock
+   to top it up ("For my hub"), and a part he keeps goes onto that shelf. */
+const hasVan = id => (engHub(id) || MAIN_HUB) === MAIN_HUB;
+const stockReq = j => !!(j && (j.forVan || j.forHub));   /* a request for van or hub stock: no call or machine */
+const notFrom = j => j.type === 'hubrep' ? j.to : j.forHub ? j.hub : '';   /* a hub isn't refilled or topped up from its own shelf */
+const NO_VAN_MSG = 'Engineers outside Muscat have no van: your hub’s shelf is your stock.';
 const fromHub = j => !!j && j.flow === 'hub';
 /* Stock may send a replacement only for a part that arrived faulty on a request Stock sent.
    Parts taken from an outside hub's shelf are refilled on their own, and an installed part needs no replacement. */
@@ -2145,23 +2163,27 @@ async function createJob(d) {
   const me = mustRole('TECH');
   const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
   const qty = parseInt(d.qty, 10); if (!(qty >= 1 && qty <= 99)) throw E('Quantity must be between 1 and 99.');
-  const forVan = !!d.forVan;   /* a part asked only for the engineer's own van stock: no call, machine or site needed */
+  /* a part asked only for stock: a Muscat engineer's own van, or the shelf of a regional engineer's hub (no call, machine
+     or site needed) */
+  const forHub = d.forVan === 'hub', forVan = !!d.forVan && !forHub, sOnly = forVan || forHub;
+  if (forVan && !hasVan(me.id)) throw E(NO_VAN_MSG + ' Ask for your hub instead.');
+  if (forHub && (hasVan(me.id) || !isOutHub(myHub()))) throw E('Only an engineer at a regional hub can ask for hub stock.');
   let scn = '', machine = '', site = '';
-  if (!forVan) {
+  if (!sOnly) {
     scn = (d.scn || '').trim().toUpperCase(); if (!scn) throw E('Enter the Service Call Number. Parts can only be requested against a call.');
     machine = (d.machine || '').trim().toUpperCase(); if (!machine) throw E('Enter the machine ID.');
     site = (d.site || '').trim(); if (!site && !d.gps) throw E('Add your location: use GPS or type the site address.');
-    const dupOf = x => x.type === 'req' && !x.forVan && x.techId === me.id && normPN(x.pn) === pn && (x.scn || '') === scn && isOpenStatus(x.status);
+    const dupOf = x => x.type === 'req' && !stockReq(x) && x.techId === me.id && normPN(x.pn) === pn && (x.scn || '') === scn && isOpenStatus(x.status);
     let dup = JOBS.find(dupOf);
     if (!dup) dup = (await api.query('jobs', { where: [['techId', '==', me.id], ['scn', '==', scn], ['open', '==', true]] })).map(normJob).find(dupOf);
     if (dup) throw E(`You already have an open request for ${pn} on ${scn} (${dup.id}).`);
   }
   const now = Date.now(), id = newId('REQ');
-  const hub = HUBS.includes(d.hub) ? d.hub : myHub();
+  const hub = forHub ? myHub() : HUBS.includes(d.hub) ? d.hub : myHub();
   const area = (d.area === 'inside' || d.area === 'outside') ? d.area : (hub === 'MMH' ? 'inside' : 'outside');   /* inside Muscat (from the Muscat Main Hub) or outside Muscat (from the engineer's own hub) */
-  const body = { id, type: 'req', forVan, pn, desc: (d.desc || '').trim() || part(pn).name, qty, unit: +part(pn).price || 0, scn, machine, machineSn: forVan ? '' : (findMachine(machine) || {}).sn || '', model: forVan ? '' : (d.model || '').trim(), customer: forVan ? '' : (d.customer || '').trim(), contract: forVan ? '' : (d.contract || '').trim(), site, gps: forVan ? null : d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
-    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', chargeable: !forVan && d.charge === '1', note: (d.note || '').trim(), reason: forVan ? 'For van stock' : '', techId: me.id, techName: me.name, hub, area, grp: d.grp || '', status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
-    history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Requested', note: forVan ? `${pn} × ${qty} for van stock` : `${pn} × ${qty} for ${scn} · ${machine}${!forVan && d.charge === '1' ? ' · chargeable case' : ''}` }] };
+  const body = { id, type: 'req', forVan, forHub, pn, desc: (d.desc || '').trim() || part(pn).name, qty, unit: +part(pn).price || 0, scn, machine, machineSn: sOnly ? '' : (findMachine(machine) || {}).sn || '', model: sOnly ? '' : (d.model || '').trim(), customer: sOnly ? '' : (d.customer || '').trim(), contract: sOnly ? '' : (d.contract || '').trim(), site, gps: sOnly ? null : d.gps || null, reqPhotos: (d.photos || []).slice(0, 3),
+    urgency: d.urgency === 'urgent' ? 'urgent' : 'normal', chargeable: !sOnly && d.charge === '1', note: (d.note || '').trim(), reason: forVan ? 'For van stock' : forHub ? 'For hub stock' : '', techId: me.id, techName: me.name, hub, area, grp: d.grp || '', status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
+    history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Requested', note: forVan ? `${pn} × ${qty} for van stock` : forHub ? `${pn} × ${qty} for ${HUB_NAME[hub] || hub} stock` : `${pn} × ${qty} for ${scn} · ${machine}${d.charge === '1' ? ' · chargeable case' : ''}` }] };
   await saveJob(body); return id;
 }
 /* one form, several parts: make one request per part so each is tracked on its own, all sharing a group id (grp) so the
@@ -2179,7 +2201,8 @@ async function createJobs(d) {
 }
 /* an engineer adds parts straight into their own van (parts they already hold) */
 async function vanAdd(d) {
-  const me = mustRole('TECH'); const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
+  const me = mustRole('TECH'); if (!hasVan(me.id)) throw E(NO_VAN_MSG);
+  const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
   const loc = vanLoc(me.id), name = (d.name || '').trim() || partName(pn), note = (d.note || '').trim(), cond = d.cond || 'New', sns = parseSNs(d.sns);
   if (sns.length) {
     if (sns.length !== new Set(sns).size) throw E('The same serial number is listed twice.');
@@ -2216,7 +2239,7 @@ function checkTl(j, d) {
 }
 /* chargeable case: the customer pays, so the part is not taken from the engineer's budget. The engineer can say so on
    the request; the Team Leader can set it (or take it off) when he approves, and later on any request. */
-const canCharge = j => !!j && ['req', 'van'].includes(j.type) && !j.forVan && !j.split;
+const canCharge = j => !!j && ['req', 'van'].includes(j.type) && !stockReq(j) && !j.split;
 function chargeAt(j, d, me, now) {
   if (!canCharge(j) || d.charge == null) return null;
   const on = d.charge === '1'; if (on === !!j.chargeable) return null;
@@ -2251,17 +2274,17 @@ async function tlAddParts(id, adds, charge) {
   }
   if (!list.length) throw E('Pick the parts to add.');
   /* not a part this engineer already has open on the same call (for a van request: in the same request) */
-  const same = x => x.type === 'req' && x.techId === j0.techId && isOpenStatus(x.status) && (j0.forVan ? x.id === j0.id || (!!j0.grp && x.grp === j0.grp) : !x.forVan && (x.scn || '') === (j0.scn || ''));
+  const same = x => x.type === 'req' && x.techId === j0.techId && isOpenStatus(x.status) && (stockReq(j0) ? x.id === j0.id || (!!j0.grp && x.grp === j0.grp) : !stockReq(x) && (x.scn || '') === (j0.scn || ''));
   let open = JOBS.filter(same);
-  if (!j0.forVan && j0.scn) open = open.concat((await api.query('jobs', { where: [['techId', '==', j0.techId], ['scn', '==', j0.scn], ['open', '==', true]] })).map(normJob).filter(same));
-  for (const a of list) { const dup = open.find(x => normPN(x.pn) === a.pn); if (dup) throw E(`${a.pn} is already requested ${j0.forVan ? 'in this request' : 'on ' + j0.scn} (${dup.id}).`); }
+  if (!stockReq(j0) && j0.scn) open = open.concat((await api.query('jobs', { where: [['techId', '==', j0.techId], ['scn', '==', j0.scn], ['open', '==', true]] })).map(normJob).filter(same));
+  for (const a of list) { const dup = open.find(x => normPN(x.pn) === a.pn); if (dup) throw E(`${a.pn} is already requested ${stockReq(j0) ? 'in this request' : 'on ' + j0.scn} (${dup.id}).`); }
   /* the request becomes (or stays) a group, so the parts show together */
   let grp = j0.grp;
   if (!grp) { grp = newId('GRP'); await jobStep(id, 'TL', 'TL', async j => saveJob(Object.assign({}, j, { grp, updatedAt: Date.now(), updatedBy: me.name }))); }
   const ids = [];
   for (const a of list) {
     const now = Date.now(), nid = newId('REQ'), step = (action, note) => ({ at: now, by: me.name, byId: me.id || '', role: ROLE.TL, action, note });
-    const doc = { id: nid, type: 'req', forVan: !!j0.forVan, pn: a.pn, desc: part(a.pn).name || a.pn, qty: a.qty, unit: +part(a.pn).price || 0,
+    const doc = { id: nid, type: 'req', forVan: !!j0.forVan, forHub: !!j0.forHub, pn: a.pn, desc: part(a.pn).name || a.pn, qty: a.qty, unit: +part(a.pn).price || 0,
       scn: j0.scn || '', machine: j0.machine || '', machineSn: j0.machineSn || '', model: j0.model || '', customer: j0.customer || '', contract: j0.contract || '', site: j0.site || '', gps: j0.gps || null, reqPhotos: [],
       urgency: j0.urgency === 'urgent' ? 'urgent' : 'normal', chargeable: charge == null ? !!j0.chargeable : charge === '1', note: `Added by ${me.name} (Team Leader)`, reason: j0.reason || '',
       techId: j0.techId, techName: j0.techName, hub: j0.hub, area: j0.area || '', grp, addedBy: me.name, open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
@@ -2294,7 +2317,7 @@ async function tmDecide(id, d) {
   });
 }
 /* an outside-hub engineer's request for a machine, and his own hub has enough on the shelf */
-const hubUse =(j, q) => j.type === 'req' && !j.forVan && isOutHub(j.hub) && j.hub === accHub(ACC(j.techId)) && qtyAt(j.hub, j.pn) >= (q || j.qtyApproved || j.qty);
+const hubUse =(j, q) => j.type === 'req' && !stockReq(j) && isOutHub(j.hub) && j.hub === accHub(ACC(j.techId)) && qtyAt(j.hub, j.pn) >= (q || j.qtyApproved || j.qty);
 function checkWithdraw(j, d) { if (!(d.wnote || '').trim()) throw E('Explain why you are withdrawing the approval.'); return j.type === 'van' ? 'Withdraw the approval? The engineer can no longer use this part from his van.' : 'Withdraw the approval? Stock will not send this part.'; }
 async function tlWithdraw(id, d) {
   return jobStep(id, ['STOCK', 'USE_OK', 'VAN_OK'], 'TL', async (j, me) => {
@@ -2344,7 +2367,7 @@ async function budgetCharge(j, on) {
 /* every part that leaves Stock must carry a serial number: stock lines that have one provide it; bulk stock and parts not
    in the inventory need the serial number typed in. Without enough serial numbers the request stays pending (nothing is sent). */
 function dispatchPlan(j, d) {
-  const need = j.qtyApproved || j.qty; const avail = hubLines(j.pn).filter(l => !(j.type === 'hubrep' && l.loc === j.to));   /* a hub isn't refilled from itself */
+  const need = j.qtyApproved || j.qty; const avail = hubLines(j.pn).filter(l => l.loc !== notFrom(j));   /* a hub isn't refilled from itself */
   const typed = parseSNs(d.msns);
   if (new Set(typed).size !== typed.length) throw E('The same serial number is listed twice.');
   if (avail.length) {
@@ -2373,13 +2396,34 @@ function assignSns(taken, typed) {
   }
   return out;
 }
-/* Stock says how each part goes (required): a driver takes it (driver name optional), or the engineer collects it at Stock */
-const DELIV_MSG = 'Choose the delivery method: by driver, or the engineer collects it.';
+/* Stock says how each part goes (required): a driver takes it (driver name optional), the engineer collects it at Stock,
+   or a courier takes it (Nool, GTC or another company) with a photo of the courier receipt (required) */
+const DELIV_MSG = 'Choose the delivery method: by driver, the engineer collects it, or by courier.';
+const RCPT_MAX = 1;   /* one photo of the courier receipt */
+const oneLine = (v, n) => String(v || '').trim().replace(/\s+/g, ' ').slice(0, n || 60);
+function courierOf(d) {
+  const c = d && d.cco; if (!COURIER_COS.includes(c)) throw E('Choose the courier company: Nool, GTC or Other.');
+  const company = c === 'Other' ? oneLine(d.ccoName) : c; if (!company) throw E('Type the name of the courier company.');
+  const receipt = ((d && d.rcpt) || []).filter(x => /^data:image\//.test(x)).slice(0, RCPT_MAX);
+  if (!receipt.length) throw E('Add a photo of the courier receipt.');
+  return { company, receipt };
+}
 function deliveryOf(d) {
-  const v = d && d.deliv; if (v !== 'driver' && v !== 'collect') throw E(DELIV_MSG);
-  const driver = v === 'driver' ? String(d.driver || '').trim().replace(/\s+/g, ' ').slice(0, 60) : '';
+  const v = d && d.deliv; if (!['driver', 'collect', 'courier'].includes(v)) throw E(DELIV_MSG);
+  if (v === 'courier') { const c = courierOf(d); return { delivery: v, driver: '', company: c.company, receipt: c.receipt, courier: 'By courier · ' + c.company }; }
+  const driver = v === 'driver' ? oneLine(d.driver) : '';
   return { delivery: v, driver, courier: v === 'collect' ? 'Collected by the engineer' : 'By driver' + (driver ? ' · ' + driver : '') };
 }
+/* the engineer says how a return goes (required): he brings it himself, by driver (name optional), or by courier with
+   the receipt photo */
+const RETURN_MSG = 'Choose how the part goes back: self return, by driver, or by courier.';
+function returnVia(d) {
+  const v = d && d.rvia; if (!['self', 'driver', 'courier'].includes(v)) throw E(RETURN_MSG);
+  if (v === 'courier') { const c = courierOf(d); return { via: v, driver: '', company: c.company, receipt: c.receipt, courier: 'By courier · ' + c.company }; }
+  const driver = v === 'driver' ? oneLine(d.driver) : '';
+  return { via: v, driver, courier: v === 'self' ? 'Self return' : 'By driver' + (driver ? ' · ' + driver : '') };
+}
+const viaTxt = x => !x ? '' : x.courier || (x.via === 'self' ? 'Self return' : '');
 function checkDispatch(j, d) {
   deliveryOf(d);
   const p = dispatchPlan(j, d); const who = j.type === 'rep' ? `${j.techName}’s van` : j.type === 'hubrep' ? HUB_NAME[j.to] || j.to : j.techName;
@@ -2416,6 +2460,11 @@ async function techReceive(id) {
     if (j.type === 'rep' || j.forVan) {
       for (const t of items) { await putLine(vanLoc(me.id), t.pn, { sn: t.sn, qty: t.qty, cond: t.cond === 'Not in inventory' ? 'New' : t.cond, name: t.name, source: (j.forVan ? 'Van request ' : 'Restock ') + j.id }); log({ t: 'Received into van', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: vanLoc(me.id), ref: j.id }); }
       return saveJob(nextDoc(j, me, 'CLOSED', j.forVan ? 'Van part received into van' : 'Restock received into van', items.map(t => t.sn || 'bulk × ' + t.qty).join(', '), { receivedAt: now, outcome: 'Added to van stock' }));
+    }
+    if (j.forHub) {   /* hub stock a regional engineer asked for: onto his hub's shelf */
+      const h = j.hub; if (h !== myHub()) throw E(`These parts are for ${HUB_NAME[h] || h}. The engineer of that hub confirms them.`);
+      for (const t of items) { await putLine(h, t.pn, { sn: t.sn, qty: t.qty, cond: t.cond === 'Not in inventory' ? 'New' : t.cond, name: t.name, source: 'Hub request ' + j.id }); log({ t: 'Received at hub', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: h, ref: j.id }); }
+      return saveJob(nextDoc(j, me, 'CLOSED', 'Received onto the hub shelf', `${items.map(t => t.sn || 'bulk × ' + t.qty).join(', ')} into ${HUB_NAME[h] || h}`, { receivedAt: now, outcome: 'Added to hub stock' }));
     }
     for (const t of items) log({ t: 'Received by technician', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: me.name, ref: j.id });
     return saveJob(nextDoc(j, me, 'RECEIVED', 'Receipt confirmed', (j.dispatch && j.dispatch.sn) || '', { receivedAt: now }));
@@ -2470,6 +2519,7 @@ function unitsOf(j) {
 }
 function planUse(j, d) {
   const us = unitsOf(j), installed = us.filter(u => u.sn).map(u => u.sn), seen = new Set(), rets = [], useUnits = [], vanAdds = [], hubBack = [], hub = fromHub(j);
+  const keepHub = !hasVan(j.techId) && isOutHub(myHub()) ? myHub() : '';   /* a regional engineer keeps a part on his hub's shelf, not in a van */
   us.forEach((u, i) => {
     const tagI = us.length > 1 ? ` (part ${i + 1})` : '';
     if (u.kind === 'sn') {
@@ -2487,6 +2537,9 @@ function planUse(j, d) {
       } else if (hub) {   /* from his own hub, not used: back on the hub's shelf */
         hubBack.push({ pn: u.pn, sn: u.sn, qty: 1, name: u.name || j.desc, cond: (u.item && u.item.cond) || 'New' });
         useUnits.push({ sn: u.sn, used: false, toHub: true });
+      } else if (out === 'van' && keepHub) {
+        hubBack.push({ pn: u.pn, sn: u.sn, qty: 1, name: u.name || j.desc, cond: 'New', to: keepHub });
+        useUnits.push({ sn: u.sn, used: false, toHub: true });
       } else if (out === 'van') {
         vanAdds.push({ pn: u.pn, sn: u.sn, qty: 1, name: u.name || j.desc });
         useUnits.push({ sn: u.sn, used: false, toVan: true });
@@ -2501,10 +2554,11 @@ function planUse(j, d) {
       if (n > 0) rets.push({ type: 'defective', pn: u.pn, sn: '', qty: n, name: u.name || j.desc });
       if (rest > 0) {
         if (hub) hubBack.push({ pn: u.pn, sn: '', qty: rest, name: u.name || j.desc, cond: (u.item && u.item.cond) || 'New' });
+        else if (restDest === 'van' && keepHub) hubBack.push({ pn: u.pn, sn: '', qty: rest, name: u.name || j.desc, cond: 'New', to: keepHub });
         else if (restDest === 'van') vanAdds.push({ pn: u.pn, sn: '', qty: rest, name: u.name || j.desc });
         else rets.push({ type: 'unused', pn: u.pn, sn: '', qty: rest, name: u.name || j.desc });
       }
-      useUnits.push({ bulk: true, qty: u.qty, used: n, rest, restToVan: !hub && restDest === 'van', restToHub: hub });
+      useUnits.push({ bulk: true, qty: u.qty, used: n, rest, restToVan: !hub && !keepHub && restDest === 'van', restToHub: hub || (!!keepHub && restDest === 'van') });
     }
   });
   return { rets, useUnits, us, vanAdds, hubBack };
@@ -2526,13 +2580,13 @@ async function techUse(id, d) {
       log({ t: 'Kept in van', pn: v.pn, sn: v.sn, qty: v.qty || 1, from: me.name, to: vanLoc(me.id), ref: j.id });
     }
     for (const v of hubBack) {
-      await putLine(j.hub, v.pn, { sn: v.sn, qty: v.qty, cond: v.cond, name: v.name, source: `Not used on ${j.id}` });
-      log({ t: 'Put back in hub', pn: v.pn, sn: v.sn, qty: v.qty || 1, from: me.name, to: j.hub, ref: j.id });
+      await putLine(v.to || j.hub, v.pn, { sn: v.sn, qty: v.qty, cond: v.cond, name: v.name, source: `${v.to ? 'Kept from' : 'Not used on'} ${j.id}` });
+      log({ t: v.to ? 'Kept at hub' : 'Put back in hub', pn: v.pn, sn: v.sn, qty: v.qty || 1, from: me.name, to: v.to || j.hub, ref: j.id });
     }
     /* outside hub: what left the shelf for good (installed, or arrived faulty) is refilled from the Muscat Main Hub */
     const gone = fromHub(j) ? sum(useUnits, u => u.bulk ? +u.used || 0 : (u.used || u.doa ? 1 : 0)) : 0;
     if (gone > 0) await raiseRefill(j, me, gone);
-    const vanTxt = vanAdds.map(v => `keep ${v.pn}${v.sn ? ' SN ' + v.sn : ' × ' + v.qty} in van`).concat(hubBack.map(v => `${v.pn}${v.sn ? ' SN ' + v.sn : ' × ' + v.qty} back in ${HUB_NAME[j.hub] || j.hub}`));
+    const vanTxt = vanAdds.map(v => `keep ${v.pn}${v.sn ? ' SN ' + v.sn : ' × ' + v.qty} in van`).concat(hubBack.map(v => `${v.to ? 'keep ' : ''}${v.pn}${v.sn ? ' SN ' + v.sn : ' × ' + v.qty} ${v.to ? 'on the ' + (HUB_NAME[v.to] || v.to) + ' shelf' : 'back in ' + (HUB_NAME[j.hub] || j.hub)}`));
     /* nothing to send back? close the request here */
     if (!rets.length) {
       const doc = nextDoc(j, me, 'CLOSED', vanAdds.length ? 'Kept in van · no return' : hubBack.length ? 'Not used · back in the hub' : 'Done · no return', (vanTxt.join(' · ') || 'Nothing to return') + (note ? ' · ' + note : ''), { use, outcome: vanAdds.length ? 'Kept in van' : hubBack.length ? 'Back in the hub' : 'Closed', closedAt: now, rcvPhotos: (d.photos || []).slice(0, 3) });
@@ -2577,9 +2631,9 @@ function logsLink(v) {
 const safeLink = v => /^https?:\/\//i.test(String(v || '')) ? String(v) : '';
 async function techShip(id, d) {
   return jobStep(id, 'RETURN', 'TECH', async (j, me) => {
-    const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), courier = d.courier || COURIERS[0];
+    const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), via = returnVia(d), courier = via.courier;
     const logs = j.ret.type === 'defective' && j.ret.arrived ? logsLink(d.logs) : '';
-    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref, courier }, logs ? { logs } : {}) }));
+    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref }, via, logs ? { logs } : {}) }));
     log({ t: 'Return sent', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: me.name, to: 'Stock', ref: j.id, note: `${courier} · ${ref}` });
     return doc;
   });
@@ -2776,7 +2830,7 @@ async function stockBackInStock(id, d) {
    restocks the van when it drops below the minimum. */
 const vanPicks = j => LINES.filter(l => l.loc === vanLoc(j.techId) && l.pn === normPN(j.pn)).sort((a, b) => (!a.sn - !b.sn) || cmpVal(a.sn, b.sn));
 function checkVanAsk(d) {
-  const me = ME(); const l = LINES.find(x => x.key === d.line && x.loc === vanLoc(me.id));
+  const me = ME(); if (me && !hasVan(me.id)) throw E(NO_VAN_MSG); const l = LINES.find(x => x.key === d.line && x.loc === vanLoc(me.id));
   if (!l) throw E('Pick the part you need from your van.');
   if (!(d.scn || '').trim()) throw E('Enter the Service Call Number. Parts can only be used against a call.');
   if (!(d.machine || '').trim()) throw E('Enter the machine ID.');
@@ -2841,12 +2895,13 @@ async function techSendBack(d) {
   const want = [...new Set(d.items || [])], lines = want.map(k => LINES.find(l => l.key === k && l.loc === src));
   if (!want.length) throw E('Tick the parts to send back.');
   if (lines.some(l => !l)) throw E('Some parts have moved since you opened this. Close it and open it again.');
+  const via = returnVia(d);
   const taken = await takeMany(lines.map(l => ({ key: l.key, qty: qtyOf(l), loc: src })));
   const now = Date.now(), id = newId('RET'), n = sum(taken, t => t.qty), ref = (d.ref || '').trim(), note = (d.note || '').trim();
   const job = { id, type: 'ret', pn: taken[0].pn, desc: 'Return to ' + (HUB_NAME[to] || to), qty: n, qtyApproved: n, techId: me.id, techName: me.name, hub: to, from: src,
-    items: taken.map(t => ({ pn: t.pn, name: t.name || '', sn: t.sn || '', qty: t.qty, cond: t.cond || 'New', bin: t.bin || '', price: +t.price || 0 })), back: { ref, note, at: now },
+    items: taken.map(t => ({ pn: t.pn, name: t.name || '', sn: t.sn || '', qty: t.qty, cond: t.cond || 'New', bin: t.bin || '', price: +t.price || 0 })), back: Object.assign({ ref, note, at: now }, via),
     status: 'RETURNING', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
-    history: [{ at: now, by: me.name, byId: me.id, role: ROLE.TECH, action: 'Sent back to the Main Hub', note: `${n} part${n === 1 ? '' : 's'} from ${locName(src)} to ${HUB_NAME[to] || to}${ref ? ' · ' + ref : ''}${note ? ' · ' + note : ''}` }] };
+    history: [{ at: now, by: me.name, byId: me.id, role: ROLE.TECH, action: 'Sent back to the Main Hub', note: `${n} part${n === 1 ? '' : 's'} from ${locName(src)} to ${HUB_NAME[to] || to} · ${via.courier}${ref ? ' · ' + ref : ''}${note ? ' · ' + note : ''}` }] };
   try { await saveJob(job); } catch (e) { await putBack(taken); throw e; }
   for (const t of taken) log({ t: 'Sent back to the Main Hub', pn: t.pn, sn: t.sn, qty: t.qty, from: src, to, ref: id, note });
   return job;
@@ -3083,6 +3138,10 @@ const TABS = {
   DRIVER: [['todo', 'To do', 'inbox'], ['all', 'All requests', 'list']],
   MGR: [['rep', 'Reports', 'chart']]   /* the Operations Manager: the dashboard and reports, read only */
 };
+/* an engineer at a regional hub has no van: his "My van" tab is "My hub", the stock on his hub's shelf */
+const noVanMe = me => !!me && me.role === 'TECH' && !hasVan(me.id);
+const tabsFor = me => noVanMe(me) ? TABS.TECH.map(t => t[0] === 'van' ? ['van', 'My hub', 'hub'] : t) : TABS[me.role];
+const quickFor = me => noVanMe(me) ? [['sheet', 'new', 'plus', 'New request', 1], ['tab', 'van', 'hub', 'My hub'], ['tab', 'all', 'list', 'My requests']] : QUICK[me.role] || [];
 /* the Workshop sees parts sent for repair only from 08:00 on the next working day (the morning batch) */
 function myJobs(me) { return me.role === 'TECH' ? JOBS.filter(j => j.techId === me.id) : me.role === 'WS' ? JOBS.filter(j => j.status === 'WORKSHOP' ? !wsHeld(j) && inMyHub(stepHub(j), me) : j.ws && (j.ws.byId ? j.ws.byId === me.id : j.ws.by === me.name)) : JOBS; }
 function myTodo(me) {
@@ -3119,7 +3178,7 @@ function render() {
   if (!me) { if (!$('#si-form')) renderSignIn(); return; }
   if (UI.gate === 'otp') { if (!$('#otp-form')) renderOtpGate(); return; }
   if (UI.gate === 'pw') { if (!$('#pwg-form')) renderPwGate(); return; }
-  const tabs = TABS[me.role]; if (!tabs.some(t => t[0] === UI.tab)) UI.tab = tabs[0][0];
+  const tabs = tabsFor(me); if (!tabs.some(t => t[0] === UI.tab)) UI.tab = tabs[0][0];
   const f = grabFocus($('#app')); const scr = $('#scr'); const top = scr.scrollTop;
   $('#app').classList.remove('out'); $('#bar').hidden = false; $('#tabs').hidden = false;
   const n = todoCount(me), home = UI.tab === 'todo';
@@ -3137,7 +3196,7 @@ function render() {
   if (UI.tab === 'db') body += dbView(me);
   else if (UI.tab === 'rep') body += reportsView(me);
   else if (UI.tab === 'inv') body += invView(me);
-  else if (UI.tab === 'van') body += vanView(me);
+  else if (UI.tab === 'van') body += noVanMe(me) ? hubView(me) : vanView(me);
   else if (UI.tab === 'todo') body += todoView(me);
   else body += allView(me);
   if (me.role === 'TECH' && ['van', 'all'].includes(UI.tab)) body +=`<button class="fab" data-a="sheet" data-s="new">${ic('plus')}New request</button>`;
@@ -3150,7 +3209,7 @@ const PAGE_TITLES = {
   db: ['Database', 'Every record, settings and the Excel export. Only you can see this.'],
   all: { TECH: ['My requests', 'Every part you asked for and where it is now'], TL: ['All requests', 'Every request, restock and van use'], STOCK: ['All requests', 'Every request, restock and van use'], WS: ['Repairs', 'Parts sent to the Workshop'] }
 };
-function tabTitle(me) { let t = PAGE_TITLES[UI.tab]; if (t && !Array.isArray(t)) t = t[me.role]; return t ? t[0] : (TABS[me.role].find(x => x[0] === UI.tab) || [, 'SPMS'])[1]; }
+function tabTitle(me) { if (UI.tab === 'van' && noVanMe(me)) return 'My hub'; let t = PAGE_TITLES[UI.tab]; if (t && !Array.isArray(t)) t = t[me.role]; return t ? t[0] : (tabsFor(me).find(x => x[0] === UI.tab) || [, 'SPMS'])[1]; }
 /* the crimson home card: one big number, two shortcuts */
 /* ---------- engineer budget (yearly) ---------- */
 const budTone = (used, amount) => used > amount ? 'bad' : used >= amount * 0.8 ? 'warn' : 'ok';
@@ -3167,7 +3226,7 @@ function budgetLine(sid, cost, already, who, forVan) {
   const b = budgetInfo(sid); if (!b.set) return '';
   const used = r3(b.used - (already || 0) + (cost || 0)), left = r3(b.amount - used), tone = budTone(used, b.amount);
   const head = left < 0 ? `Over ${who ? 'the' : 'your'} budget by ${money(-left)}` : `${money(left)} left${cost ? ' after this request' : ''}`;
-  const sub = `${who ? esc(who) + '’s budget' : 'Budget'} ${b.year}: ${money(used)} used of ${money(b.amount)}${cost ? ' · this request ' + money(cost) : ''}${forVan ? ' · given back when it reaches the van' : ''}`;
+  const sub = `${who ? esc(who) + '’s budget' : 'Budget'} ${b.year}: ${money(used)} used of ${money(b.amount)}${cost ? ' · this request ' + money(cost) : ''}${forVan ? ' · given back when it reaches the ' + (forVan === 'hub' ? 'hub' : 'van') : ''}`;
   return `<div class="budnew ${tone}" role="status"><span class="lead ${tone}">${ic('wallet', 'sm')}</span><div class="main"><b>${head}</b><span class="s">${sub}</span>${budBar(used, b.amount)}</div></div>`;
 }
 /* new request form: what the parts in it cost the engineer */
@@ -3175,7 +3234,7 @@ function newBudget(d) {
   const me = ME(); if (!me || me.role !== 'TECH') return '';
   if (!d.forVan && d.charge === '1') return budgetInfo(me.id).set ? `<div class="budnew ok" role="status"><span class="lead ok">${ic('wallet', 'sm')}</span><div class="main"><b>Chargeable case</b><span class="s">These parts are not taken from your budget.</span></div></div>` : '';
   const list = (d.parts || []).slice(), cur = normPN(d.pn); if (cur && !list.some(x => normPN(x.pn) === cur)) list.push({ pn: cur, qty: d.qty });
-  const html = budgetLine(me.id, partsCost(list), 0, '', !!d.forVan); if (!html) return '';
+  const html = budgetLine(me.id, partsCost(list), 0, '', d.forVan === 'hub' ? 'hub' : !!d.forVan); if (!html) return '';
   const noPrice = list.filter(p => !(+part(p.pn).price > 0)).length;
   return html + (noPrice && list.length ? `<span class="hint">${noPrice === list.length ? 'No price on the parts list for this part yet: it counts as 0 until Stock adds one.' : 'Some parts have no price yet and count as 0.'}</span>` : '');
 }
@@ -3234,6 +3293,7 @@ function kindPills(j) {
   let s = '';
   if (j.type === 'rep') s += `<span class="pill">${j.auto ? 'Auto-Rep' : 'Van restock'}</span>`;
   if (j.forVan) s += '<span class="pill">For van</span>';
+  if (j.forHub) s += '<span class="pill">For hub</span>';
   if (j.type === 'van') s += '<span class="pill">From van</span>';
   if (j.type === 'hubrep') s += `<span class="pill">${j.xfer ? 'Hub transfer' : 'Hub refill'} · ${esc(j.to || '')}</span>`;
   if (j.type === 'ret') s += `<span class="pill">Return · ${esc(isVan(j.from) ? 'van' : j.from || '')}</span>`;
@@ -3281,7 +3341,7 @@ function groupCard(grp, me) {
   const sibs = JOBS.filter(j => j.grp === grp).sort((a, b) => a.createdAt - b.createdAt), j0 = sibs[0];
   if (!j0) return '';
   const pending = sibs.filter(j => j.status === 'TL').length;
-  const who = j0.forVan ? 'van stock' : me.role !== 'TECH' ? esc(j0.techName) : (j0.scn ? `<span class="mono">${esc(j0.scn)}</span>` : '');
+  const who = j0.forVan ? 'van stock' : j0.forHub ? 'hub stock' : me.role !== 'TECH' ? esc(j0.techName) : (j0.scn ? `<span class="mono">${esc(j0.scn)}</span>` : '');
   return `<button class="jcard mine" data-a="sheet" data-s="group" data-id="${esc(grp)}">
     <span class="j-ic t-amber">${ic('box')}</span>
     <span class="j-main"><span class="j-t1"><b>Request · ${sibs.length} parts</b><span class="when">${rel(j0.updatedAt)}</span></span>
@@ -3324,7 +3384,7 @@ function todoView(me) {
   }
   const sorted = me.role === 'TL' && todo.length > 1 ? '<span class="t3 muted">Oldest first</span>' : '';
   const list = todo.length ? `<section class="blk"><div class="sec-h"><h2>${me.role === 'TL' ? 'Requests' : 'Your next steps'}</h2>${sorted}</div><div class="jobs">${todoRows(todo, me)}</div></section>` : '';
-  return `${homeCard(me, n)}${me.role === 'TECH' ? budgetCard(me.id) : ''}${quick(QUICK[me.role] || [])}${pushBanner()}${alerts ? `<div class="blk">${alerts}</div>` : ''}${adj}${list}`;
+  return `${homeCard(me, n)}${me.role === 'TECH' ? budgetCard(me.id) : ''}${quick(quickFor(me))}${pushBanner()}${alerts ? `<div class="blk">${alerts}</div>` : ''}${adj}${list}`;
 }
 
 const FILTERS = [['open', 'Open'], ['closed', 'Completed'], ['rejected', 'Rejected'], ['all', 'All']];
@@ -3363,6 +3423,26 @@ function vanView(me) {
     ${backSources(me).some(([v]) => LINES.some(l => l.loc === v)) ? `<button class="btn sec block" data-a="sheet" data-s="sendback">${ic('ret', 'sm')}Return parts to the Main Hub</button>` : ''}
     ${reps.length ? `<section class="blk"><div class="sec-h"><h2>Restocks and returns</h2></div><div class="jobs">${reps.map(j => jobRow(j, me)).join('')}</div></section>` : ''}
     ${lines.length || groups.size ? list : emptyBox('Your van is empty', 'Parts Stock sends you show up here.')}<div style="height:56px"></div>`;
+}
+
+/* ---------- regional engineer: the stock on his hub's shelf (he has no van) ---------- */
+function hubView(me) {
+  const h = myHub(), hn = HUB_NAME[h] || h, lines = LINES.filter(l => l.loc === h), units = sum(lines, qtyOf), vanLeft = LINES.filter(l => l.loc === vanLoc(me.id));
+  const groups = new Map(); for (const l of lines) { const g = groups.get(l.pn) || []; g.push(l); groups.set(l.pn, g); }
+  const low = [...groups.keys()].filter(pn => { const p = part(pn), mn = +(p.min || {})[h] || 0; return mn && qtyAt(h, pn) < mn; }).length;
+  const ins = JOBS.filter(j => j.techId === me.id && isOpenStatus(j.status) && (j.forHub || j.type === 'hubrep' || j.type === 'ret'));
+  const list = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([pn, g]) => {
+    const p = part(pn), tot = sum(g, qtyOf), mn = +(p.min || {})[h] || 0, mx = +(p.max || {})[h] || 0, lv = levelOf(tot, mn, mx);
+    return `<section class="blk"><div class="grp"><h2>${tag(pn)} ${esc(p.name || (g[0] || {}).name || '')}</h2><span class="lv">${tot} on the shelf${mn ? ` · min ${mn}${mx ? ' · max ' + mx : ''}` : ''}</span>${lv === 'low' ? '<span class="lvs"><span class="lvl low">Low</span></span>' : ''}</div>
+      <div class="list">${g.map(l => `<div class="row"><span class="lead info">${ic('box', 'sm')}</span><div class="main"><div class="t1">${l.sn ? `<span class="mono">SN ${esc(l.sn)}</span>` : `<span class="num">× ${qtyOf(l)}</span>`}</div><div class="t3">${esc([l.cond && l.cond !== 'New' ? l.cond : '', l.bin ? 'Shelf ' + l.bin : ''].filter(Boolean).join(' · '))}</div></div></div>`).join('')}</div></section>`;
+  }).join('');
+  return `<div class="kpis k3"><div class="kpi"><span class="k">Units</span><span class="v">${units}</span></div><div class="kpi"><span class="k">Part numbers</span><span class="v">${groups.size}</span></div><div class="kpi ${low ? 'warn' : ''}"><span class="k">Below min</span><span class="v">${low}</span></div></div>
+    <div class="infobox">${ic('hub', 'sm')} The ${esc(hn)} shelf is your stock. Ask for a part on a service call and take it from here when the Team Leader approves.</div>
+    <button class="btn cta block" data-a="newHub">${ic('plus', 'sm')}Ask for parts for my hub</button>
+    ${backSources(me).some(([v]) => LINES.some(l => l.loc === v)) ? `<button class="btn sec block" data-a="sheet" data-s="sendback">${ic('ret', 'sm')}Return parts to the Main Hub</button>` : ''}
+    ${vanLeft.length ? `<div class="alert warn wrap"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>${sum(vanLeft, qtyOf)} part${sum(vanLeft, qtyOf) === 1 ? ' is' : 's are'} still in your van</b><span class="s">Engineers outside Muscat have no van. Return them to the Main Hub.</span></div></div>` : ''}
+    ${ins.length ? `<section class="blk"><div class="sec-h"><h2>On the way to your hub, and returns</h2></div><div class="jobs">${ins.map(j => jobRow(j, me)).join('')}</div></section>` : ''}
+    ${lines.length ? list : emptyBox(`Nothing on the ${hn} shelf`, 'Parts Stock sends to your hub show up here.')}<div style="height:56px"></div>`;
 }
 
 /* ---------- Stock inventory ---------- */
@@ -3542,10 +3622,20 @@ const doneMsg = j => `${stLabel(j)}${stWho(j) ? ' · next: ' + ROLE[stWho(j)] : 
 const box = inner => `<div class="card action">${inner}</div>`;
 /* Team Leader: is this a chargeable case? (the customer pays, so it is not taken from the engineer's budget) */
 const chargeField = d => fld('Chargeable case', segBtns(d, 'charge', [['', 'No'], ['1', 'Yes']]), d.charge === '1' ? 'The customer pays: not taken from the engineer’s budget.' : 'Choose Yes when the part was not needed because of the engineer’s work.');
-/* Stock chooses how the part goes (required): a driver takes it, or the engineer collects it at Stock */
+/* Stock chooses how the part goes (required): a driver takes it, the engineer collects it at Stock, or a courier */
 function deliveryField(d, who) {
-  const hint = d.deliv === 'collect' ? `${who || 'The engineer'} collects it from Stock and confirms in SPMS.` : d.deliv === 'driver' ? `A driver takes it to ${who || 'the engineer'}, who confirms in SPMS.` : 'Required: by driver, or the engineer collects it.';
-  return fld('Delivery method *', segBtns(d, 'deliv', DELIVERY), hint) + (d.deliv === 'driver' ? inp(d, 'driver', 'Driver name', 'Optional') : '');
+  const hint = d.deliv === 'collect' ? `${who || 'The engineer'} collects it from Stock and confirms in SPMS.` : d.deliv === 'driver' ? `A driver takes it to ${who || 'the engineer'}, who confirms in SPMS.` : d.deliv === 'courier' ? `A courier takes it to ${who || 'the engineer'}, who confirms in SPMS.` : 'Required: by driver, the engineer collects it, or by courier.';
+  return fld('Delivery method *', segBtns(d, 'deliv', DELIVERY), hint) + (d.deliv === 'driver' ? inp(d, 'driver', 'Driver name', 'Optional') : '') + (d.deliv === 'courier' ? courierFields(d) : '');
+}
+/* by courier: the company (Nool, GTC or another one typed in) and a photo of the courier receipt (required) */
+function courierFields(d) {
+  return fld('Courier company *', segBtns(d, 'cco', COURIER_COS.map(c => [c, c])), d.cco ? '' : 'Required.') + (d.cco === 'Other' ? inp(d, 'ccoName', 'Courier company name *', 'Type the company name') : '')
+    + photoField(d, 'rcpt', 'Photo of the courier receipt', true, { max: RCPT_MAX, need: 'A photo of the courier receipt is required.', ok: 'Stock and the Team Leader can see it.' });
+}
+/* the engineer chooses how a return goes back (required): self return, by driver, or by courier */
+function returnField(d) {
+  const hint = d.rvia === 'self' ? 'You bring it to Stock yourself.' : d.rvia === 'driver' ? 'A driver takes it to Stock.' : d.rvia === 'courier' ? 'A courier takes it to Stock.' : 'Required: self return, by driver, or by courier.';
+  return fld('How does it go back? *', segBtns(d, 'rvia', RETURN_BY), hint) + (d.rvia === 'driver' ? inp(d, 'driver', 'Driver name', 'Optional') : '') + (d.rvia === 'courier' ? courierFields(d) : '');
 }
 /* hub picker: buttons for up to 3 hubs, a list beyond that */
 function hubSeg(d, k, except) {
@@ -3575,6 +3665,7 @@ SH.job = (d, p) => {
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
   const facts = j.xfer ? fact('To', esc(HUB_NAME[j.to] || j.to)) + fact('Received by', esc(j.techName)) + fact('Sent by', esc((j.dispatch && j.dispatch.by) || '')) + fact('Sent', fmtD(j.createdAt))
     : j.type === 'rep' ? fact('Van', esc(j.techName)) + fact('Why', esc(j.reason || 'Van restock')) + fact('Value', money(jobQty(j) * (+part(j.pn).price || 0))) + fact('Raised', fmtD(j.createdAt))
+    : stockReq(j) ? fact('Engineer', esc(j.techName)) + fact('For', j.forHub ? esc((HUB_NAME[j.hub] || j.hub) + ' shelf') : 'Van stock') + fact('Value', money(jobQty(j) * (+(j.unit != null ? j.unit : part(j.pn).price) || 0))) + fact('Raised', fmtD(j.createdAt))
     : fact('Engineer', esc(j.techName)) + fact('Service call', `<span class="mono">${esc(j.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j.machine || '–')}${j.machineSn && j.machineSn !== j.machine ? ' · SN ' + esc(j.machineSn) : ''}</span>`) + fact(j.customer || !j.site ? 'Customer' : 'Site', esc(j.customer || j.site || '–'));
   const head = `<div class="card"><div class="chips">${tag(j.pn)}<b class="num">× ${jobQty(j)}</b>${stChip(j)}${lateChip(j)}${kindPills(j)}</div>${j.desc ? `<div class="jh-t">${esc(j.desc)}</div>` : ''}<div class="facts">${facts}</div>${['TL', 'STOCK'].includes(j.status) ? `<div class="t3 muted">In stock: ${esc(availText(j.pn))}</div>` : ''}${pbar}${stWho(j) && !turn ? `<div class="infobox nextbox"><span>Next: <b>${esc(ROLE[stWho(j)])}${stepOwner(j) && stepOwner(j).name ? ' (' + esc(stepOwner(j).name) + ')' : ''}</b> · ${esc(stNext(j))}</span></div>` : ''}</div>`;
   const info = `<details class="fold"><summary>Details<span class="t3 mono">${esc(j.id)}</span></summary><div class="fold-b">${dl([['Reference', `<span class="mono">${esc(j.id)}</span>`], ['Hub', esc(HUB_NAME[jobHub(j)] || jobHub(j))], j.parent && [j.backorder ? 'Back-order of' : 'Split from', jobLink(j.parent)],
@@ -3585,14 +3676,15 @@ SH.job = (d, p) => {
       j.dispatch && ['Sent', `${esc((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn)} · ${esc(isVan(j.dispatch.from) ? 'van stock' : j.dispatch.from)}${j.dispatch.courier ? ' · ' + esc(j.dispatch.courier) : ''}${j.dispatch.ref ? ' · ' + esc(j.dispatch.ref) : ''}`],
       (j.backorders || []).length && ['Back-orders', j.backorders.map(jobLink).join(' ')], (j.splits || []).length && ['Separate returns', j.splits.map(jobLink).join(' ')],
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
-      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
+      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
       r.logs && ['Logs', safeLink(r.logs) ? `<a href="${esc(safeLink(r.logs))}" target="_blank" rel="noopener noreferrer">Open the logs</a> <span class="t3">${esc(r.logs.length > 60 ? r.logs.slice(0, 57) + '…' : r.logs)}</span>` : esc(r.logs)],
       (j.tmAsk || j.tm) && ['Technical Manager', [j.tmAsk && `Asked by ${esc(j.tmAsk.by)}, ${fmtDT(j.tmAsk.at)}: ${esc(j.tmAsk.note)}`, j.tm && `${j.tm.ok ? 'Approved' : '<b>Rejected</b>'} by ${esc(j.tm.by)}, ${fmtDT(j.tm.at)}${j.tm.note ? ': ' + esc(j.tm.note) : ''}`].filter(Boolean).join('<br>')],
       (j.reminders || []).length && ['Reminders', j.reminders.map(x => `${fmtDT(x.at)} · ${esc(x.by)}`).join('<br>')],
       w.total != null && w.doneAt && ['Repair', `${esc(w.outcome)} · ${money(w.total)}`], j.outcome && ['Outcome', esc(eng(j.outcome))]])}</div></details>`;
   const altRow = !d.alt && alts.length ? `<div class="alts">${alts.map(([v, l, x]) => x === 'remind' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}${esc(l)}</button>` : `<button class="btn sm sec" data-a="alt" data-v="${v}">${esc(l)}</button>`).join('')}</div>` : '';
   let body = head + (a ? a.form : '') + altRow + info;
-  if ((j.reqPhotos || []).length || (j.rcvPhotos || []).length) body += `<section class="blk"><div class="card">${photoStrip(j.reqPhotos, 'Request photos')}${photoStrip(j.rcvPhotos, 'Photos when received')}</div></section>`;
+  const dRc = (j.dispatch && j.dispatch.receipt) || [], rRc = r.receipt || [];
+  if ((j.reqPhotos || []).length || (j.rcvPhotos || []).length || dRc.length || rRc.length) body += `<section class="blk"><div class="card">${photoStrip(j.reqPhotos, 'Request photos')}${photoStrip(j.rcvPhotos, 'Photos when received')}${photoStrip(dRc, 'Courier receipt · sent by Stock')}${photoStrip(rRc, 'Courier receipt · return')}</div></section>`;
   if (w.doneAt) body += `<section class="blk"><div class="sec-h"><h2>Repair report</h2></div><div class="card">${dl([(w.partName || w.partSn) && ['Part', `${esc(w.partName || '')} ${w.partSn ? '<span class="mono">SN ' + esc(w.partSn) + '</span>' : ''}`], w.diagnosis && ['What was wrong', esc(w.diagnosis)], w.fix && ['How fixed', esc(w.fix)], w.materials && ['Things used', esc(w.materials)], ['Workshop time', `${fmtDur((w.tm && w.tm.acc) || 0)} (${w.hours} h) × ${money(w.rate)}/h = ${money(w.labour)}`], w.matCost ? ['Materials', money(w.matCost)] : null, w.timeFixed && ['Time corrected', (w.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${esc(x.why)} (${esc(x.by)})`).join('<br>')], w.notes && ['Notes', esc(w.notes)], ['Total', `<b>${money(w.total)}</b>`], ['Time at workshop', `${w.days} days`], ['By', `${esc(w.doneBy || w.by)} · ${fmtDT(w.doneAt)}`]])}</div></section>`;
   if (!['REJECTED', 'CANCELLED'].includes(j.status)) body += `<details class="fold"><summary>All steps<span class="t3">${doneN} of ${st.length}</span></summary><div class="fold-b"><ul class="steps">${st.map(([l, ok], i) => `<li class="${ok ? 'done' : i === cur ? 'cur' : ''}">${esc(l)}</li>`).join('')}</ul></div></details>`;
   body += histFold(j, turn);
@@ -3610,14 +3702,14 @@ SH.job = (d, p) => {
 SH.group = (d, p) => {
   const grp = p.id, sibs = JOBS.filter(j => j.grp === grp).sort((a, b) => a.createdAt - b.createdAt);
   if (!sibs.length) return { title: 'Not found', body: emptyBox('This request no longer exists', '') };
-  const me = ME(), j0 = sibs[0], forVan = !!j0.forVan;
+  const me = ME(), j0 = sibs[0], forVan = stockReq(j0);
   const pending = sibs.filter(j => j.status === 'TL');
   const canAct = !!(me && me.role === 'TL' && inMyHub(jobHub(j0), me) && pending.length);
   if (canAct && !d.reason) d.reason = REJECT_REASONS[0];
   const chg = canAct && canCharge(j0); if (chg && d.charge == null) d.charge = j0.chargeable ? '1' : '';
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
-  const facts = fact('Engineer', esc(j0.techName)) + (j0.chargeable ? fact('Case', 'Chargeable') : '') + (forVan ? fact('For', 'Van stock') : fact('Service call', `<span class="mono">${esc(j0.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j0.machine || '–')}</span>`) + fact(j0.customer ? 'Customer' : 'Site', esc(j0.customer || j0.site || '–'))) + fact('Raised', fmtD(j0.createdAt));
-  const head = `<div class="card"><div class="jh-t">Request · ${sibs.length} part${sibs.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} to decide` : ' · all decided'}</div><div class="facts">${facts}</div>${canAct ? budgetLine(j0.techId, 0, 0, j0.techName, forVan) : ''}</div>`;
+  const facts = fact('Engineer', esc(j0.techName)) + (j0.chargeable ? fact('Case', 'Chargeable') : '') + (forVan ? fact('For', j0.forHub ? esc((HUB_NAME[j0.hub] || j0.hub) + ' stock') : 'Van stock') : fact('Service call', `<span class="mono">${esc(j0.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j0.machine || '–')}</span>`) + fact(j0.customer ? 'Customer' : 'Site', esc(j0.customer || j0.site || '–'))) + fact('Raised', fmtD(j0.createdAt));
+  const head = `<div class="card"><div class="jh-t">Request · ${sibs.length} part${sibs.length === 1 ? '' : 's'}${pending.length ? ` · ${pending.length} to decide` : ' · all decided'}</div><div class="facts">${facts}</div>${canAct ? budgetLine(j0.techId, 0, 0, j0.techName, j0.forHub ? 'hub' : forVan) : ''}</div>`;
   const rows = sibs.map(j => {
     const decided = j.status !== 'TL';
     const stTxt = j.status === 'REJECTED' ? '<span class="chip bad">Rejected</span>' : decided ? `<span class="chip ok">Approved${j.qtyApproved && j.qtyApproved !== j.qty ? ' × ' + j.qtyApproved : ''}</span>` : '';
@@ -3629,7 +3721,7 @@ SH.group = (d, p) => {
   const canAdd = canAct && j0.type === 'req', nAdd = (d.add || []).length;
   if (canAdd) { d._baseId = pending[0].id; d._basePn = ''; }
   const addBox = canAdd ? tlAddBox(d, nAdd ? `<button class="btn ok" data-a="grpAdd" id="grp-add">${ic('plus', 'sm')}Add ${nAdd} part${nAdd === 1 ? '' : 's'} · approved</button>` : '') : '';
-  return { title: 'Request', sub: forVan ? esc(j0.techName) + ' · van stock' : `${esc(j0.scn || '')}${j0.machine ? ' · ' + esc(j0.machine) : ''}`, body: `${head}${chg ? `<div class="card">${chargeField(d)}<span class="hint">Applies to the parts you approve here.</span></div>` : ''}${rows}${rejectBox}${allBtns}${addBox}`, foot: `<button class="btn sec" data-a="close">Close</button>` };
+  return { title: 'Request', sub: forVan ? esc(j0.techName) + (j0.forHub ? ' · hub stock' : ' · van stock') : `${esc(j0.scn || '')}${j0.machine ? ' · ' + esc(j0.machine) : ''}`, body: `${head}${chg ? `<div class="card">${chargeField(d)}<span class="hint">Applies to the parts you approve here.</span></div>` : ''}${rows}${rejectBox}${allBtns}${addBox}`, foot: `<button class="btn sec" data-a="close">Close</button>` };
 };
 
 /* Team Leader: more parts for the same engineer and service call, added while approving (each approved at once) */
@@ -3705,9 +3797,9 @@ function actionForm(j, me, d) {
       if (!d.mode) d.mode = 'approve'; if (d.q == null) d.q = j.qty; if (!d.reason) d.reason = REJECT_REASONS[0];
       if (d.charge == null && canCharge(j)) d.charge = j.chargeable ? '1' : '';
       const rep = j.type === 'rep', van = j.type === 'van', charged = canCharge(j) ? d.charge === '1' : !!j.chargeable, why = rep ? ((j.history || []).find(h => /Needs Team Leader/.test(h.action)) || {}).note : '';
-      const bud = rep ? '' : charged ? `<div class="budnew ok" role="status"><span class="lead ok">${ic('wallet', 'sm')}</span><div class="main"><b>Chargeable case</b><span class="s">Not taken from ${esc(j.techName)}’s budget.</span></div></div>` : budgetLine(j.techId, r3((+(j.unit != null ? j.unit : part(j.pn).price) || 0) * (+d.q || j.qty)), j.createdAt >= budgetInfo(j.techId).from ? jobSpend(j) : 0, j.techName, !!j.forVan);
+      const bud = rep ? '' : charged ? `<div class="budnew ok" role="status"><span class="lead ok">${ic('wallet', 'sm')}</span><div class="main"><b>Chargeable case</b><span class="s">Not taken from ${esc(j.techName)}’s budget.</span></div></div>` : budgetLine(j.techId, r3((+(j.unit != null ? j.unit : part(j.pn).price) || 0) * (+d.q || j.qty)), j.createdAt >= budgetInfo(j.techId).from ? jobSpend(j) : 0, j.techName, j.forHub ? 'hub' : !!j.forVan);
       const route = van ? `<div class="infobox">${ic('van', 'sm')} ${esc(j.techName)} wants to use <b class="mono">${esc(j.pn)} ${j.van && j.van.sn ? 'SN ' + esc(j.van.sn) : '× ' + j.qty}</b> from his van (${qtyAt(vanLoc(j.techId), j.pn)} in his van now). After you approve, he installs it, records it and returns the faulty part.</div>`
-        : rep || j.forVan || !isOutHub(j.hub) ? '' : hubUse(j, +d.q || j.qty)
+        : rep || stockReq(j) || !isOutHub(j.hub) ? '' : hubUse(j, +d.q || j.qty)
         ? `<div class="autohint">${ic('hub', 'sm')}<span>From his hub: ${esc(HUB_NAME[j.hub] || j.hub)} has ${qtyAt(j.hub, j.pn)} in stock. After you approve, he takes it there; when he installs it, the Muscat Main Hub refills the hub.</span></div>`
         : `<div class="infobox">${ic('truck', 'sm')} ${j.hub !== accHub(ACC(j.techId)) ? `Requested from ${esc(HUB_NAME[j.hub] || j.hub)}, not his own hub` : `Not enough at ${esc(HUB_NAME[j.hub] || j.hub)} (${qtyAt(j.hub, j.pn)} in stock)`}: Stock at the Muscat Main Hub sends it to him.</div>`;
       const form = box(`${bud}${route}${rep ? `<div class="infobox">${j.auto ? 'Auto-Rep restock' : 'Van restock'} for ${esc(j.techName)}’s van: ${esc(j.reason || '')}.${why ? ' Needs you because: ' + esc(why) + '.' : ''} Value ${money(jobQty(j) * (+part(j.pn).price || 0))}.</div>` : ''}${segBtns(d, 'mode', [['approve', 'Approve'], ['reject', 'Reject']])}
@@ -3727,7 +3819,7 @@ function actionForm(j, me, d) {
       const tmOk = j.tm && j.tm.ok ? `<div class="autohint">${ic('check', 'sm')}<span>Approved by the Technical Manager (${esc(j.tm.by)}, ${fmtDT(j.tm.at)})${j.tm.note ? ': ' + esc(j.tm.note) : ''}.</span></div>` : '';
       if (canTm && d.stAct === 'tm') return { form: box(`${tmSeg}<p class="note" style="padding:0;margin:0">The request goes to the Technical Manager. When he approves it, it comes back here for you to send.</p>${area(d, 'tmAsk', 'Why does it need his approval? *', 'e.g. High-value part, or not covered by the contract')}`),
         op: { label: 'Send to Technical Manager', check: () => { if (!String(d.tmAsk || '').trim()) throw E('Write why the Technical Manager needs to approve this.'); return null; }, run: () => stockAskTm(j.id, d), ok: 'Sent to the Technical Manager' } };
-      const refill = j.type === 'hubrep', need = j.qtyApproved || j.qty, rh = refill ? MAIN_HUB : stepHub(j), uh = usualHub(j.techId), rank = l => l.loc === rh ? 0 : hubCountry(l.loc) === hubCountry(rh) ? (l.loc === uh ? 1 : 2) : 3, av = hubLines(j.pn).filter(l => !(refill && l.loc === j.to)).sort((a, b) => rank(a) - rank(b));   /* the sending hub first, then the same country */
+      const refill = j.type === 'hubrep', need = j.qtyApproved || j.qty, rh = refill || j.forHub ? MAIN_HUB : stepHub(j), uh = usualHub(j.techId), rank = l => l.loc === rh ? 0 : hubCountry(l.loc) === hubCountry(rh) ? (l.loc === uh ? 1 : 2) : 3, av = hubLines(j.pn).filter(l => l.loc !== notFrom(j)).sort((a, b) => rank(a) - rank(b));   /* the sending hub first, then the same country */
       if (!d.from) d.from = uh || myHub();
       if (!d.items) { d.items = []; let c = 0; for (const l of av) { if (c >= need) break; d.items.push(l.key); c += qtyOf(l); } }
       d.items = d.items.filter(k => av.some(l => l.key === k));
@@ -3781,24 +3873,23 @@ function actionForm(j, me, d) {
       return { form: box(`<p style="margin:0">${j.type === 'rep' ? 'Restock for your van' : isCollect(j) ? 'Your part is ready' : 'Part sent to you'}: <b class="mono">${esc(items.map(itemTxt).join(', ') || dv.sn)}</b></p>${isCollect(j) ? `<div class="alert warn"><span class="lead warn">${ic('hub', 'sm')}</span><div class="main"><b>Collect it at Stock${HUBS.includes(at) ? ' · ' + esc(HUB_NAME[at] || at) : ''}</b><span class="s">No driver brings this part. Collect it, then confirm here.</span></div></div>` : dv.delivery === 'driver' ? `<div class="infobox">${ic('truck', 'sm')} A driver brings it${dv.driver ? ': ' + esc(dv.driver) : ''}.</div>` : ''}`), op: { label: isCollect(j) ? 'I collected it' : 'Confirm received', run: () => techReceive(j.id), ok: j.type === 'rep' ? 'Added to your van stock' : null } };
     }
     case 'RECEIVED': {
-      const us = unitsOf(j);
+      const us = unitsOf(j), kHub = !hasVan(j.techId) && isOutHub(myHub()) ? HUB_NAME[myHub()] || myHub() : '', keepL = kHub ? 'Keep at my hub' : 'Keep in van';   /* a regional engineer keeps a part on his hub's shelf */
       const units = us.map((u, i) => {
         const h = us.length > 1 ? `Part ${i + 1} of ${us.length} · ` : '';
         if (u.kind === 'sn') {
           const k = 'u' + i + '_out'; if (!d[k]) d[k] = 'used';
-          const hb = fromHub(j), hintTxt = d[k] === 'doa' ? `The part was faulty — it goes to ${hb ? 'the Muscat Main Hub' : 'Stock'} as faulty-on-arrival${hb ? ', and your hub is refilled' : ''}.` : d[k] === 'van' ? 'It works and stays in your van as stock.' : d[k] === 'return' ? (hb ? `It works — it goes back on the ${HUB_NAME[j.hub] || j.hub} shelf.` : 'It works — send it back to Stock.') : '';
-          return `<div class="unit"><div class="uh">${h}${tag(u.pn)} <span class="mono">SN ${esc(u.sn)}</span></div>${segBtns(d, k, hb ? [['used', 'Installed'], ['doa', 'Arrived faulty'], ['return', 'Not used · back to hub']] : [['used', 'Installed'], ['doa', 'Arrived faulty'], ['van', 'Keep in van'], ['return', 'Return unused']])}${d[k] === 'used' ? `<div class="two">${inp(d, 'u' + i + '_rpn', 'Removed PN', u.pn, { mono: true })}${inp(d, 'u' + i + '_rsn', 'Removed SN *', 'Defective part SN', { mono: true })}</div>` : `<span class="hint">${hintTxt}</span>`}</div>`;
+          const hb = fromHub(j), hintTxt = d[k] === 'doa' ? `The part was faulty — it goes to ${hb ? 'the Muscat Main Hub' : 'Stock'} as faulty-on-arrival${hb ? ', and your hub is refilled' : ''}.` : d[k] === 'van' ? (kHub ? `It works and goes onto the ${kHub} shelf as stock.` : 'It works and stays in your van as stock.') : d[k] === 'return' ? (hb ? `It works — it goes back on the ${HUB_NAME[j.hub] || j.hub} shelf.` : 'It works — send it back to Stock.') : '';
+          return `<div class="unit"><div class="uh">${h}${tag(u.pn)} <span class="mono">SN ${esc(u.sn)}</span></div>${segBtns(d, k, hb ? [['used', 'Installed'], ['doa', 'Arrived faulty'], ['return', 'Not used · back to hub']] : [['used', 'Installed'], ['doa', 'Arrived faulty'], ['van', keepL], ['return', 'Return unused']])}${d[k] === 'used' ? `<div class="two">${inp(d, 'u' + i + '_rpn', 'Removed PN', u.pn, { mono: true })}${inp(d, 'u' + i + '_rsn', 'Removed SN *', 'Defective part SN', { mono: true })}</div>` : `<span class="hint">${hintTxt}</span>`}</div>`;
         }
         const k = 'u' + i + '_n'; if (d[k] == null) d[k] = u.qty;
         const rest = u.qty - d[k], rk = 'u' + i + '_rest'; if (!d[rk]) d[rk] = 'return';
-        return `<div class="unit"><div class="uh">${h}${tag(u.pn)} bulk × ${u.qty}</div>${fld('How many did you use?', stepper(d, k, 0, u.qty, 'Used'), `${d[k]} used${rest ? ` · ${rest} left over` : ''}`)}${rest > 0 ? (fromHub(j) ? `<span class="hint">The ${rest} you didn’t use go back on the ${esc(HUB_NAME[j.hub] || j.hub)} shelf.</span>` : fld('The ones you didn’t use', segBtns(d, rk, [['return', 'Back to Stock'], ['van', 'Keep in van']]))) : ''}</div>`;
+        return `<div class="unit"><div class="uh">${h}${tag(u.pn)} bulk × ${u.qty}</div>${fld('How many did you use?', stepper(d, k, 0, u.qty, 'Used'), `${d[k]} used${rest ? ` · ${rest} left over` : ''}`)}${rest > 0 ? (fromHub(j) ? `<span class="hint">The ${rest} you didn’t use go back on the ${esc(HUB_NAME[j.hub] || j.hub)} shelf.</span>` : fld('The ones you didn’t use', segBtns(d, rk, [['return', 'Back to Stock'], ['van', keepL]]))) : ''}</div>`;
       }).join('');
       const needPhoto = usePhotoNeeded(j, d);
       return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', needPhoto)}<span class="hint">Return removed and faulty parts within ${daysWord(returnDays(jobHub(j)))}</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (usePhotoNeeded(j, d) && !(d.photos && d.photos.length)) throw E('Add a photo of the part before you save (needed when a part arrived faulty or a used part goes back).'); return null; }, run: () => techUse(j.id, d) } };
     }
     case 'RETURN': {
-      if (!d.courier) d.courier = COURIERS[0];
-      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>${r.type === 'defective' && r.arrived ? inp(d, 'logs', 'Link to the logs *', 'https://…', { hint: 'Upload the machine logs for this faulty part (for example to OneDrive or SharePoint) and paste the link here.' }) : ''}${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', run: () => techShip(j.id, d) } };
+      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>${r.type === 'defective' && r.arrived ? inp(d, 'logs', 'Link to the logs *', 'https://…', { hint: 'Upload the machine logs for this faulty part (for example to OneDrive or SharePoint) and paste the link here.' }) : ''}${returnField(d)}${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', check: () => { if (r.type === 'defective' && r.arrived) logsLink(d.logs); returnVia(d); return null; }, run: () => techShip(j.id, d) } };
     }
     case 'RETURNING': {
       if (!d.diff) d.diff = 'no'; if (!d.miss) d.miss = 'no'; if (!d.dmg) d.dmg = 'no';
@@ -3993,7 +4084,7 @@ function partHits(text, van) {
   return byPn.sort((a, b) => (b[0] === q) - (a[0] === q)).concat(byName);
 }
 function pnSuggest(d) {
-  const me = ME(), q = normPN(d.pn), van = vanLoc(me.id);
+  const me = ME(), q = normPN(d.pn), van = noVanMe(me) ? '-' : vanLoc(me.id);   /* a regional engineer has no van to use parts from */
   const hits = partHits(d.pn, van).slice(0, 8);
   const chips = hits.map(([pn, nm]) => { const h = sum(hubLines(pn), qtyOf), v = qtyAt(van, pn); return `<button class="snchip ${pn === q ? 'on' : ''}" data-a="pickPn" data-pn="${esc(pn)}" data-nm="${esc(nm)}"><span class="mono">${esc(pn)}</span><small>${esc(nm || 'No name')} · ${h} at hubs${v ? ` · ${v} in your van` : ''}</small></button>`; }).join('');
   let hint = '';
@@ -4031,9 +4122,9 @@ function compressPhoto(file) {
   });
 }
 async function addPhotos(key, files) {
-  const s = UI.sheet; if (!s) return; const d = s.d; d[key] = d[key] || [];
+  const s = UI.sheet; if (!s) return; const d = s.d; d[key] = d[key] || []; const max = key === 'rcpt' ? RCPT_MAX : PHOTO_MAX;
   for (const f of files) {
-    if (d[key].length >= PHOTO_MAX) { toast(`Up to ${PHOTO_MAX} photos.`); break; }
+    if (d[key].length >= max) { toast(max === 1 ? 'One photo here.' : `Up to ${max} photos.`); break; }
     if (!/^image\//.test(f.type)) continue;
     try { d[key].push(await compressPhoto(f)); } catch (e) { toast(e.message, 'bad'); }
   }
@@ -4044,19 +4135,31 @@ async function addPhotos(key, files) {
 function usePhotoNeeded(j, d) {
   return unitsOf(j).some((u, i) => u.kind === 'sn' ? ['used', 'doa'].includes(d['u' + i + '_out'] || 'used') : (d['u' + i + '_n'] == null ? u.qty : parseInt(d['u' + i + '_n'], 10)) > 0);
 }
-function photoField(d, key, label, need) {
-  const ph = d[key] || [];
-  const thumbs = ph.length ? `<div class="thumbs">${ph.map((src, i) => `<div class="thumb"><img src="${src}" alt="photo ${i + 1}"><button type="button" class="x" data-a="photoDel" data-k="${esc(key)}" data-i="${i}" aria-label="Remove photo">${ic('x', 'sm')}</button></div>`).join('')}</div>` : '';
-  const add = ph.length < PHOTO_MAX ? `<label class="btn sec" style="cursor:pointer;display:inline-flex">${ic('plus', 'sm')}${ph.length ? 'Add another photo' : 'Take or choose a photo'}<input class="vh" type="file" accept="image/*" capture="environment" data-photo="${esc(key)}" multiple></label>` : '';
-  return fld(label + (need ? ' *' : ''), `${thumbs}${add}`, need && !ph.length ? 'A photo of the part is required.' : need ? 'The Team Leader and Stock can see these.' : 'Optional. The Team Leader and Stock can see these.');
+function photoField(d, key, label, need, o) {
+  o = o || {}; const ph = d[key] || [], max = o.max || PHOTO_MAX;
+  const thumbs = ph.length ? `<div class="thumbs">${ph.map((src, i) => `<div class="thumb"><img src="${src}" alt="photo ${i + 1}" data-a="photoView" role="button" tabindex="0"><button type="button" class="x" data-a="photoDel" data-k="${esc(key)}" data-i="${i}" aria-label="Remove photo">${ic('x', 'sm')}</button></div>`).join('')}</div>` : '';
+  const add = ph.length < max ? `<label class="btn sec" style="cursor:pointer;display:inline-flex">${ic('plus', 'sm')}${ph.length ? 'Add another photo' : 'Take or choose a photo'}<input class="vh" type="file" accept="image/*" capture="environment" data-photo="${esc(key)}"${max > 1 ? ' multiple' : ''}></label>` : '';
+  return fld(label + (need ? ' *' : ''), `${thumbs}${add}`, need && !ph.length ? (o.need || 'A photo of the part is required.') : need ? (o.ok || 'The Team Leader and Stock can see these.') : 'Optional. The Team Leader and Stock can see these.');
 }
 function photoStrip(list, label) {
   if (!list || !list.length) return '';
-  return `<div class="sec-h" style="padding:6px 0 0"><h2>${esc(label)}</h2></div><div class="thumbs">${list.map((src, i) => `<a class="thumb" href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${esc(label)} ${i + 1}"></a>`).join('')}</div>`;
+  return `<div class="sec-h" style="padding:6px 0 0"><h2>${esc(label)}</h2></div><div class="thumbs">${list.map((src, i) => `<button type="button" class="thumb" data-a="photoView" aria-label="Open ${esc(label)} ${i + 1}"><img src="${src}" alt="${esc(label)} ${i + 1}"></button>`).join('')}</div>`;
 }
+/* Photos open inside the app. A photo is a data: address, and on a phone the installed app closes when it is opened as a
+   link in a new tab, so it is shown full screen here instead: tap it for full size (then scroll), × or Esc closes it. */
+function photoView(src) {
+  photoClose(); UI.pvFrom = document.activeElement;
+  const v = document.createElement('div'); v.className = 'pv'; v.id = 'pv';
+  v.setAttribute('role', 'dialog'); v.setAttribute('aria-modal', 'true'); v.setAttribute('aria-label', 'Photo');
+  v.innerHTML = `<div class="pv-b" data-a="photoZoom"><img alt="Photo"></div><button type="button" class="pv-x" data-a="photoClose" aria-label="Close photo">${ic('x', 'sm')}</button>`;
+  v.querySelector('img').src = src;
+  $('#app').appendChild(v); v.querySelector('.pv-x').focus();
+}
+function photoClose() { const v = $('#pv'); if (!v) return; v.remove(); const f = UI.pvFrom; UI.pvFrom = null; if (f && document.contains(f)) f.focus({ preventScroll: true }); }
 SH.new = d => {
   if (!d.qty) d.qty = 1; if (!d.urgency) d.urgency = 'normal'; if (d.forVan == null) d.forVan = ''; if (!HUBS.includes(d.hub)) { d.hub = myHub(); d._hubGps = false; }
-  const forVan = !!d.forVan;
+  const noVan = noVanMe(ME()); if (d.forVan) d.forVan = noVan ? 'hub' : '1';   /* a regional engineer asks for his hub, not a van */
+  const forVan = !!d.forVan, forHub = d.forVan === 'hub', hn = HUB_NAME[myHub()] || myHub();
   const g = d.gps;
   const gpsBox = `<div class="card" style="gap:10px"><div class="sec-h" style="padding:0"><h2>Your location</h2>${g ? `<span class="chip ${g.doubt ? 'warn' : 'ok'}">${g.how === 'gps' ? (g.doubt ? 'Check it · ±' : 'GPS ±') + g.acc + ' m' : 'Entered'}</span>` : ''}</div>
     ${g ? `<div class="mono" style="font-size:14px">${(+g.lat).toFixed(6)}, ${(+g.lng).toFixed(6)}</div><a href="${mapsUrl(g)}" target="_blank" rel="noopener" style="color:var(--brand-on);font-weight:600">Check on Google Maps</a>` : ''}
@@ -4069,12 +4172,12 @@ SH.new = d => {
   const star = parts.length ? '' : ' *';
   const partList = parts.length ? `<div class="list card" style="padding:0;margin-bottom:10px">${parts.map((pt, i) => `<div class="row"><span class="lead info">${ic('box', 'sm')}</span><div class="main"><div class="t1">${tag(pt.pn)} <span class="num">× ${pt.qty}</span></div><div class="t3">${esc(pt.desc || partName(pt.pn) || '')}</div></div><button class="btn sm sec" data-a="delPart" data-i="${i}" aria-label="Remove part">${ic('x', 'sm')}</button></div>`).join('')}</div>` : '';
   return {
-    title: 'New request', sub: forVan ? 'For your van · goes to the Team Leader' : 'Goes to the Team Leader',
+    title: 'New request', sub: forHub ? 'For your hub · goes to the Team Leader' : forVan ? 'For your van · goes to the Team Leader' : 'Goes to the Team Leader',
     body: `${parts.length ? `<div class="sec-h" style="padding:0"><h2>Parts in this request · ${parts.length}</h2></div>` : ''}${partList}
       ${inp(d, 'pn', 'Part number' + star, 'Type it, or search below', { mono: true, live: 'pnsug', auto: 'pn' })}<div id="live-pnsug" aria-live="polite">${pnSuggest(d)}</div>${inp(d, 'desc', 'Part description', 'Type to search, e.g. card reader', { live: 'descsug' })}<div id="live-descsug" aria-live="polite">${descSuggest(d)}</div>
       ${fld('Quantity' + star, `<div class="stepper" role="group" aria-label="Quantity"><button type="button" data-a="step" data-k="qty" data-delta="-1" aria-label="Less"${d.qty <= 1 ? ' disabled' : ''}>−</button><output class="num">${d.qty}</output><button type="button" data-a="step" data-k="qty" data-delta="1" aria-label="More"${d.qty >= 99 ? ' disabled' : ''}>+</button></div>`)}
       <button class="btn sec" data-a="addPart">${ic('plus', 'sm')}Add another part${forVan ? '' : ' for the same machine'}</button>
-      ${fld('What is this for?', segBtns(d, 'forVan', [['', 'For a machine'], ['1', 'For my van']]), forVan ? 'Van stock — no call or machine needed. It goes into your van when you receive it.' : 'A part for a job on a machine.')}
+      ${fld('What is this for?', segBtns(d, 'forVan', noVan ? [['', 'For a machine'], ['hub', 'For my hub']] : [['', 'For a machine'], ['1', 'For my van']]), forHub ? `Hub stock — no call or machine needed. It goes onto the ${esc(hn)} shelf when you receive it.` : forVan ? 'Van stock — no call or machine needed. It goes into your van when you receive it.' : 'A part for a job on a machine.')}
       ${forVan ? '' : fld('Chargeable case', segBtns(d, 'charge', [['', 'No'], ['1', 'Yes']]), d.charge === '1' ? 'The customer pays for these parts: they are not taken from your budget.' : 'Choose Yes if the customer pays for the parts. Then they are not taken from your budget.')}
       <div id="live-budnew" aria-live="polite">${newBudget(d)}</div>
       ${forVan ? '' : `<div class="sec-h" style="padding:10px 0 0"><h2>The machine</h2></div>
@@ -4082,7 +4185,7 @@ SH.new = d => {
       <div class="two">${inp(d, 'model', 'Machine model', 'e.g. DN Series 200')}${inp(d, 'customer', 'Customer / bank', '')}</div>${inp(d, 'contract', 'AMC / lease contract', 'Optional', { mono: true })}
       ${gpsBox}
       ${inp(d, 'site', 'Site / delivery address', 'Branch, building, street', { hint: 'Needed without GPS' })}`}
-      ${fld('Requesting from hub *', hubSeg(d, 'hub'), d._hubGps && !(d._picked && d._picked.hub) ? 'Nearest hub to your location. Change it if needed.' : 'Your hub. Change it if you request from another hub.')}
+      ${forHub ? '' : fld('Requesting from hub *', hubSeg(d, 'hub'), d._hubGps && !(d._picked && d._picked.hub) ? 'Nearest hub to your location. Change it if needed.' : 'Your hub. Change it if you request from another hub.')}
       ${fld('Urgency', segBtns(d, 'urgency', [['normal', 'Normal'], ['urgent', 'Urgent (machine down)']]))}
       ${area(d, 'note', 'Note', 'Optional')}
       ${photoField(d, 'photos', 'Photos', false)}`,
@@ -4092,7 +4195,8 @@ SH.new = d => {
 
 /* ---------- engineer: ask to use a part from the van (the Team Leader approves first) ---------- */
 SH.vanuse = d => {
-  const me = ME(), lines = LINES.filter(l => l.loc === vanLoc(me.id));
+  const me = ME(); if (noVanMe(me)) return { title: 'Use a part from my van', body: `<div class="err">${esc(NO_VAN_MSG)}</div>` };
+  const lines = LINES.filter(l => l.loc === vanLoc(me.id));
   if (!lines.length) return { title: 'Use a part from my van', body: emptyBox('Your van is empty', 'Parts that Stock sends to your van show up here.') };
   if (!d.line || !lines.some(l => l.key === d.line)) { d.line = lines[0].key; d.uqty = 1; }
   if (!d.uqty) d.uqty = 1;
@@ -4123,9 +4227,9 @@ SH.sendback = d => {
   const body = `${srcs.length > 1 ? fld('Send back from', segBtns(d, 'src', srcs)) : ''}
     <div class="infobox">${ic('ret', 'sm')} The parts go to <b>${esc(toName)}</b>. Stock there confirms them when they arrive; anything that doesn't arrive comes back to your ${van ? 'van' : 'hub'}.</div>
     ${lines.length ? fld(`Parts to send · ${units} unit${units === 1 ? '' : 's'}`, `<button class="btn sm sec" data-a="allItems">${d.items.length === lines.length ? 'Untick all' : 'Tick all'}</button><div class="opts">${lines.map(l => backOpt(d.items.includes(l.key), l.key, l.pn, l.sn, qtyOf(l), l.name, l.cond)).join('')}</div>`, 'Going on leave? Send everything.') : emptyBox('Nothing here', van ? 'Your van is empty.' : 'There are no parts on this shelf.')}
-    ${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}${area(d, 'note', 'Note', 'e.g. Going on leave until 20 Nov')}`;
+    ${lines.length ? returnField(d) : ''}${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}${area(d, 'note', 'Note', 'e.g. Going on leave until 20 Nov')}`;
   return { title: 'Return parts to the Main Hub', sub: esc(toName), body,
-    op: d.items.length ? { label: `Send ${units} part${units === 1 ? '' : 's'} back`, yes: 'Yes, send', check: () => `Send ${units} part${units === 1 ? '' : 's'} to ${toName}? They leave your ${van ? 'van' : 'hub'} now.`, run: () => techSendBack(d), ok: `On the way to ${toName}. Stock confirms them when they arrive.` } : null,
+    op: d.items.length ? { label: `Send ${units} part${units === 1 ? '' : 's'} back`, yes: 'Yes, send', check: () => returnVia(d) && `Send ${units} part${units === 1 ? '' : 's'} to ${toName}? They leave your ${van ? 'van' : 'hub'} now.`, run: () => techSendBack(d), ok: `On the way to ${toName}. Stock confirms them when they arrive.` } : null,
     foot: d.items.length ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
 };
 /* a return to the Main Hub: Stock ticks what arrived; the engineer can cancel it until then */
@@ -4133,7 +4237,7 @@ function retSheet(j, d) {
   const me = ME(), turn = myTurn(j, me), items = j.items || [], b = j.back || {}, open = j.status === 'RETURNING', n = jobQty(j);
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
   let body = `<div class="card"><div class="chips"><b class="num">${n} part${n === 1 ? '' : 's'}</b>${stChip(j)}${kindPills(j)}</div><div class="jh-t">${esc(j.desc || 'Return to the Main Hub')}</div>
-    <div class="facts">${fact('Engineer', esc(j.techName))}${fact('From', esc(locName(j.from)))}${fact('To', esc(HUB_NAME[j.hub] || j.hub))}${fact('Sent', fmtDT(j.createdAt))}${fact('Reference', b.ref ? `<span class="mono">${esc(b.ref)}</span>` : '')}${fact('Note', esc(b.note || ''))}</div></div>`;
+    <div class="facts">${fact('Engineer', esc(j.techName))}${fact('From', esc(locName(j.from)))}${fact('To', esc(HUB_NAME[j.hub] || j.hub))}${fact('Sent', fmtDT(j.createdAt))}${fact('How', esc(viaTxt(b)))}${fact('Reference', b.ref ? `<span class="mono">${esc(b.ref)}</span>` : '')}${fact('Note', esc(b.note || ''))}</div>${photoStrip(b.receipt, 'Courier receipt')}</div>`;
   let op = null;
   if (turn && open) {
     d._all = items.map((x, i) => String(i)); if (!d.items) d.items = d._all.slice();
@@ -4153,6 +4257,7 @@ function retSheet(j, d) {
 /* ---------- engineer: add a part to their own van ---------- */
 SH.vanadd = d => {
   const me = ME(); if (!me || me.role !== 'TECH') return { title: 'Add to my van', body: '<div class="err">Only an engineer can add to their van.</div>' };
+  if (noVanMe(me)) return { title: 'Add to my van', body: `<div class="err">${esc(NO_VAN_MSG)}</div>` };
   if (!d.qty) d.qty = 1; if (!d.cond) d.cond = 'New'; if (!d.vmode) d.vmode = 'type';
   const seg = segBtns(d, 'vmode', [['type', 'Type it in'], ['excel', 'From Excel']]);
   if (d.vmode === 'excel') {
@@ -5336,11 +5441,11 @@ const REQ_COLS = [
   ['SCN', j => j.scn], ['Machine', j => j.machine], ['Machine SN', j => j.machineSn || ''], ['Model', j => j.model], ['Customer', j => j.customer], ['AMC / lease', j => j.contract], ['Delivery site', j => j.site],
   ['GPS', j => j.gps ? `${(+j.gps.lat).toFixed(6)}, ${(+j.gps.lng).toFixed(6)}` : ''], ['Urgency', j => j.urgency], ['Chargeable', j => j.chargeable ? 'Yes' : ''], ['Chargeable set by', j => j.charge ? `${j.charge.by} · ${isoDT(j.charge.at)}${j.charge.note ? ' · ' + j.charge.note : ''}` : ''], ['Status', j => stLabel(j)], ['Waiting for', j => stWho(j) ? ROLE[stWho(j)] : ''],
   ['Team Leader', j => j.tl ? j.tl.by : ''], ['TL decided', j => j.tl ? isoDT(j.tl.at) : ''], ['TL note', j => j.tl ? j.tl.withdrawNote || j.tl.note : ''], ['Auto-Rep', j => j.auto ? (j.autoApproved ? 'Auto-approved' : 'Needed approval') : ''],
-  ['Dispatched from', j => j.dispatch ? j.dispatch.from : ''], ['Dispatched items', j => j.type === 'ret' ? (j.items || []).map(t => `${t.pn} ${itemTxt(t)}`).join(', ') : j.dispatch ? ((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn) : ''], ['Courier', j => j.dispatch ? j.dispatch.courier : ''], ['Delivery method', j => j.dispatch && j.dispatch.delivery ? (j.dispatch.delivery === 'collect' ? 'Engineer collects' : 'Driver') : ''], ['Driver', j => j.dispatch ? j.dispatch.driver || '' : ''], ['Dispatch ref', j => j.dispatch ? j.dispatch.ref : ''], ['Dispatched', j => j.dispatch ? isoDT(j.dispatch.at) : ''],
+  ['Dispatched from', j => j.dispatch ? j.dispatch.from : ''], ['Dispatched items', j => j.type === 'ret' ? (j.items || []).map(t => `${t.pn} ${itemTxt(t)}`).join(', ') : j.dispatch ? ((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn) : ''], ['Courier', j => j.dispatch ? j.dispatch.courier : ''], ['Delivery method', j => j.dispatch && j.dispatch.delivery ? (j.dispatch.delivery === 'collect' ? 'Engineer collects' : j.dispatch.delivery === 'courier' ? 'Courier · ' + (j.dispatch.company || '') : 'Driver') : ''], ['Driver', j => j.dispatch ? j.dispatch.driver || '' : ''], ['Dispatch ref', j => j.dispatch ? j.dispatch.ref : ''], ['Dispatched', j => j.dispatch ? isoDT(j.dispatch.at) : ''],
   ['Back-orders', j => (j.backorders || []).join(', ')], ['Received by tech', j => isoDT(j.receivedAt)], ['Replaced', j => j.use ? (j.use.replaced ? 'Yes' : 'No') : ''],
   ['Removed SN(s)', j => j.use ? ((j.use.units || []).filter(u => u.removedSn).map(u => u.removedSn).join(', ') || j.use.removedSn || '') : ''],
   ['Return type', j => j.ret ? j.ret.type : ''], ['Returned PN', j => j.ret ? j.ret.pn : ''], ['Returned SN', j => j.ret ? j.ret.sn : ''], ['Return qty', j => j.ret ? (j.ret.qty || 1) : ''], ['Return due', j => j.ret ? isoDT(j.ret.due) : ''],
-  ['Return overdue', j => isLate(j) ? 'Yes' : ''], ['Reminders', j => (j.reminders || []).length || ''], ['Return sent', j => j.ret ? isoDT(j.ret.shippedAt) : ''], ['Return at Stock', j => j.ret ? isoDT(j.ret.hubAt) : ''], ['Stock decision', j => j.ret ? j.ret.route || '' : ''], ['Workshop batch', j => j.ret && j.ret.wsAt ? isoDT(j.ret.wsAt) : ''],
+  ['Return overdue', j => isLate(j) ? 'Yes' : ''], ['Reminders', j => (j.reminders || []).length || ''], ['Return sent', j => j.ret ? isoDT(j.ret.shippedAt) : ''], ['Return method', j => j.type === 'ret' ? viaTxt(j.back) : j.ret && j.ret.shippedAt ? viaTxt(j.ret) : ''], ['Return at Stock', j => j.ret ? isoDT(j.ret.hubAt) : ''], ['Stock decision', j => j.ret ? j.ret.route || '' : ''], ['Workshop batch', j => j.ret && j.ret.wsAt ? isoDT(j.ret.wsAt) : ''],
   ['Workshop in', j => j.ws ? isoDT(j.ws.inAt) : ''], ['How fixed', j => j.ws ? j.ws.fix || '' : ''], ['Hours', j => j.ws && j.ws.hours != null ? j.ws.hours : ''], ['Labour OMR', j => j.ws && j.ws.labour != null ? j.ws.labour : ''],
   ['Materials OMR', j => j.ws && j.ws.matCost != null ? j.ws.matCost : ''], ['Repair total OMR', j => j.ws && j.ws.total != null ? j.ws.total : ''], ['Outcome', j => j.outcome || ''], ['Closed', j => isoDT(j.closedAt)], ['Last update', j => isoDT(j.updatedAt)]
 ];
@@ -6628,6 +6733,7 @@ const A = {
   dashHub(ds) { UI.dashHub = ds.v; UI.dashEng = ''; const c = $('#live-rep'); if (c && UI.tab === 'rep') { c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; $('#scr').scrollTop = 0; } else render(); },
   dashClear() { UI.dashHub = ''; UI.dashEng = ''; const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; else render(); },
   sheet(ds) { openSheet(ds.s, { id: ds.id }); },
+  newHub() { openSheet('new'); UI.sheet.d.forVan = 'hub'; renderSheet(); },
   close() { closeSheet(); },
   set(ds) { const d = sd(); if (ds.k === 'mode' && d.mode !== ds.v) delete d.reason; if (ds.k === 'line' && d.line !== ds.v) d.uqty = 1; d[ds.k] = ds.v; (d._picked = d._picked || {})[ds.k] = 1; d._err = ''; d._confirm = null; renderSheet(); },
   step(ds) { const d = sd(); d[ds.k] = Math.min(99, Math.max(1, (+d[ds.k] || 1) + +ds.delta)); renderSheet(); },
@@ -6689,6 +6795,9 @@ const A = {
     d.parts.push({ pn: (d.pn || '').trim(), desc: (d.desc || '').trim(), qty: parseInt(d.qty, 10) || 1 });
     d.pn = ''; d.desc = ''; d.qty = 1; d._err = ''; if (d._picked) delete d._picked.pn; renderSheet(); const i = $('#f-pn'); if (i) i.focus(); },
   delPart(ds) { const d = sd(); d.parts = d.parts || []; d.parts.splice(+ds.i, 1); d._err = ''; renderSheet(); },
+  photoView(ds, el) { const img = el.tagName === 'IMG' ? el : el.querySelector('img'); if (img && img.src) photoView(img.src); },
+  photoZoom(ds, el) { el.classList.toggle('zoom'); },
+  photoClose() { photoClose(); },
   photoDel(ds) { const d = sd(); if (d[ds.k]) d[ds.k].splice(+ds.i, 1); d._err = ''; renderSheet(); },
   workAs(ds) { const me = ME(); if (!me || !me.full || !ROLE[ds.v]) return; me.role = ds.v; UI.tab = 'todo'; closeSheet(); render(); $('#scr').scrollTop = 0; toast(ds.v === me.baseRole ? `Back to ${ROLE[ds.v]}` : `Working as ${ROLE[ds.v]}`); },
   reload() { try { location.reload(); } catch (e) { toast('Close and open the link again'); } },
@@ -6750,7 +6859,7 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-a]'); if (!el || el.disabled) return;
   const f = A[el.dataset.a]; if (!f) return;
   e.preventDefault();
-  if (UI.sheet && UI.sheet.busy && el.closest('#sheet-host') && !['close'].includes(el.dataset.a)) return;
+  if (UI.sheet && UI.sheet.busy && el.closest('#sheet-host') && !['close', 'photoView'].includes(el.dataset.a)) return;
   f(el.dataset, el);
 });
 function liveSearch(k) {
@@ -6799,6 +6908,7 @@ document.addEventListener('dragleave', e => { const z = dropZone(e); if (z) z.cl
 document.addEventListener('drop', e => { const z = dropZone(e); if (!z) return; e.preventDefault(); z.classList.remove('over'); const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) { if (UI.sheet && UI.sheet.name === 'accounts') readAccountsFile(f); else if (UI.sheet && UI.sheet.name === 'machines') readMachinesFile(f); else if (UI.sheet && UI.sheet.name === 'vanadd') readVanFile(f); else readImportFile(f); } });
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#pv')) { e.preventDefault(); photoClose(); return; }
   if (e.key === 'Escape' && UI.sheet) { e.preventDefault(); if (UI.sheet.d._confirm) A.cNo(); else closeSheet(); return; }
   if (e.key === 'Tab' && UI.sheet) {
     const host = $('#sheet'), fs = [...host.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null || x === document.activeElement); if (!fs.length) return;
