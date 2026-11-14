@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261114120054">
+<meta name="spms-build" content="20261114170127">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -1040,6 +1040,9 @@ const FIX_REASONS = ['Wrong entry', 'Count difference', 'Other'];
 /* how a part leaves Stock: a driver takes it, the engineer collects it at Stock, or a courier takes it (with a photo of
    the courier receipt). Stock chooses every time. */
 const DELIVERY = [['driver', 'By driver'], ['collect', 'Engineer collects'], ['courier', 'By courier']];
+/* Pick and dispatch only: Faisal takes the part to the courier company Stock chose, then adds the photo of the courier
+   receipt (14 Nov 2026) */
+const DELIVERY_DC = DELIVERY.concat([['drvcour', 'Driver & courier']]);
 /* how an engineer sends a part back: he brings it himself, a driver takes it, or a courier (with the receipt photo) */
 const RETURN_BY = [['self', 'Self return'], ['driver', 'By driver'], ['courier', 'By courier']];
 /* every driver task (deliveries and returns) goes to Faisal, so nobody types a driver name (11 Nov 2026) */
@@ -1079,6 +1082,8 @@ const ST = {
   REPL: { label: 'Hub refill · Muscat Main Hub to send', tone: 'warn', who: 'STOCK', next: 'Send the refill to the hub' },
   REPL_GO: { label: 'Replenishment on the way to the hub', tone: 'info', who: 'DRIVER', next: 'Deliver it to the hub' },
   REPL_CONF: { label: 'Refill on the way to the hub', tone: 'info', who: 'TECH', next: 'Confirm it arrived at your hub' },
+  /* Driver & courier: Stock gave the part to the driver, who hands it to the courier and adds the receipt photo */
+  DRV_COUR: { label: 'With the driver · to hand to the courier', tone: 'info', who: 'DRIVER', next: 'Hand it to the courier' },
   /* The faulty part can go back to the Muscat Main Hub by driver instead of the engineer taking it. */
   DRV_RET_PICK: { label: 'Faulty part · waiting for the driver', tone: 'warn', who: 'DRIVER', next: 'Collect the faulty part' },
   DRV_RET_GO: { label: 'Faulty part on the way to Stock', tone: 'info', who: 'DRIVER', next: 'Deliver it to Stock' },
@@ -2411,19 +2416,26 @@ function assignSns(taken, typed) {
 /* Stock says how each part goes (required): a driver takes it (driver name optional), the engineer collects it at Stock,
    or a courier takes it (Nool, GTC or another company) with a photo of the courier receipt (required) */
 const DELIV_MSG = 'Choose the delivery method: by driver, the engineer collects it, or by courier.';
+const DELIV_MSG_DC = 'Choose the delivery method: by driver, the engineer collects it, by courier, or driver & courier.';
 const RCPT_MAX = 1;   /* one photo of the courier receipt */
 const oneLine = (v, n) => String(v || '').trim().replace(/\s+/g, ' ').slice(0, n || 60);
-function courierOf(d) {
+function companyOf(d) {
   const c = d && d.cco; if (!COURIER_COS.includes(c)) throw E('Choose the courier company: Nool, GTC or Other.');
   const company = c === 'Other' ? oneLine(d.ccoName) : c; if (!company) throw E('Type the name of the courier company.');
+  return company;
+}
+function rcptOf(d) {
   const receipt = ((d && d.rcpt) || []).filter(x => /^data:image\//.test(x)).slice(0, RCPT_MAX);
   if (!receipt.length) throw E('Add a photo of the courier receipt.');
-  return { company, receipt };
+  return receipt;
 }
+function courierOf(d) { const company = companyOf(d); return { company, receipt: rcptOf(d) }; }
 /* who: the engineer it is for. By driver is always Faisal; when the engineer collects it himself, his own name is
-   recorded as the collector. */
-function deliveryOf(d, who) {
-  const v = d && d.deliv; if (!['driver', 'collect', 'courier'].includes(v)) throw E(DELIV_MSG);
+   recorded as the collector. dc: Pick and dispatch also offers "Driver & courier" (Stock picks the courier company;
+   Faisal adds the receipt photo later, so none is needed here). */
+function deliveryOf(d, who, dc) {
+  const v = d && d.deliv; if (!['driver', 'collect', 'courier'].concat(dc ? ['drvcour'] : []).includes(v)) throw E(dc ? DELIV_MSG_DC : DELIV_MSG);
+  if (v === 'drvcour') { const company = companyOf(d); return { delivery: v, driver: DRIVER_NAME, company, receipt: [], courier: `Driver & courier · ${DRIVER_NAME} · ${company}` }; }
   if (v === 'courier') { const c = courierOf(d); return { delivery: v, driver: '', company: c.company, receipt: c.receipt, courier: 'By courier · ' + c.company }; }
   if (v === 'driver') return { delivery: v, driver: DRIVER_NAME, courier: 'By driver · ' + DRIVER_NAME };
   const name = oneLine(who);
@@ -2441,7 +2453,7 @@ function returnVia(d, who) {
 }
 const viaTxt = x => !x ? '' : x.courier || (x.via === 'self' ? 'Self return' : '');
 function checkDispatch(j, d) {
-  deliveryOf(d, j.techName);
+  deliveryOf(d, j.techName, true);
   const p = dispatchPlan(j, d); const who = j.type === 'rep' ? `${j.techName}’s van` : j.type === 'hubrep' ? HUB_NAME[j.to] || j.to : j.techName;
   const what = `${p.send} × ${j.pn}`;
   if (p.rest > 0) return `Only ${p.send} of ${p.need} selected. Send ${p.send} now to ${who}? The other ${p.rest} stay as a back-order for Stock.`;
@@ -2449,17 +2461,17 @@ function checkDispatch(j, d) {
 }
 async function stockDispatch(id, d) {
   return jobStep(id, ['STOCK', 'REPL'], 'STOCK', async (j, me) => {
-    const dv = deliveryOf(d, j.techName), p = dispatchPlan(j, d), refill = j.type === 'hubrep';
+    const dv = deliveryOf(d, j.techName, true), p = dispatchPlan(j, d), refill = j.type === 'hubrep', dc = dv.delivery === 'drvcour', then = refill ? 'REPL_CONF' : 'DISPATCHED';
     let items, taken = null;
     if (p.manual) items = p.sns.map(sn => ({ pn: normPN(j.pn), name: j.desc || partName(j.pn), sn, qty: 1, from: p.from, cond: 'Not in inventory', price: +part(j.pn).price || 0 }));
     else { taken = await takeMany(p.plan); items = assignSns(taken, p.typed); }
     try {
       const now = Date.now(), courier = dv.courier, ref = (d.ref || '').trim() || 'DSP-' + id.slice(-6);
       const sns = items.map(t => t.sn || 'bulk × ' + t.qty).join(', '), from = [...new Set(items.map(t => t.from))].join(' + ');
-      const extra = { dispatch: Object.assign({ by: me.name, at: now, items, sn: sns, from, ref }, dv) };
+      const extra = { dispatch: Object.assign({ by: me.name, at: now, items, sn: sns, from, ref }, dv, dc ? { then } : {}) };
       let childId = null;
       if (p.rest > 0) { childId = `${j.id}-B${(j.backorders || []).length + 1}`; extra.backorders = (j.backorders || []).concat([childId]); }
-      const doc = nextDoc(j, me, refill ? 'REPL_CONF' : 'DISPATCHED', dv.delivery === 'collect' ? (j.type === 'rep' ? 'Restock ready to collect' : refill ? 'Refill ready to collect' : 'Ready to collect at Stock') : j.type === 'rep' ? 'Restock sent to van' : refill ? 'Refill sent to the hub' : 'Dispatched by Stock', `${p.send} of ${p.need} · from ${from} · ${sns} · ${courier} · ${ref}${p.manual ? '' : ' · removed from inventory'}${childId ? ` · back-order ${childId} for ${p.rest}` : ''}`, extra);
+      const doc = nextDoc(j, me, dc ? 'DRV_COUR' : then, dc ? 'Given to the driver for the courier' : dv.delivery === 'collect' ? (j.type === 'rep' ? 'Restock ready to collect' : refill ? 'Refill ready to collect' : 'Ready to collect at Stock') : j.type === 'rep' ? 'Restock sent to van' : refill ? 'Refill sent to the hub' : 'Dispatched by Stock', `${p.send} of ${p.need} · from ${from} · ${sns} · ${courier} · ${ref}${p.manual ? '' : ' · removed from inventory'}${childId ? ` · back-order ${childId} for ${p.rest}` : ''}`, extra);
       if (childId) {
         const child = Object.assign(cleanCopy(j), { id: childId, parent: j.id, backorder: true, qty: p.rest, qtyApproved: p.rest, status: refill ? 'REPL' : 'STOCK', open: true, createdAt: now, updatedAt: now, updatedBy: me.name, dispatch: null, history: [{ at: now, by: me.name, role: 'Stock', action: 'Back-order created', note: `${p.rest} of ${p.need} still to send (from ${j.id})` }] });
         await saveJob(child);
@@ -2468,6 +2480,14 @@ async function stockDispatch(id, d) {
       for (const t of items) log({ t: j.type === 'rep' ? 'Sent to van stock' : refill ? 'Refill sent to hub' : 'Dispatched to technician', pn: t.pn, sn: t.sn, qty: t.qty, from: t.from, to: j.type === 'rep' ? vanLoc(j.techId) : refill ? j.to : j.techName, ref: j.id });
       return doc;
     } catch (e) { if (taken) await putBack(taken); throw e; }
+  });
+}
+/* Driver & courier: Faisal hands the part to the courier company Stock chose and adds the photo of the courier receipt.
+   Then it is on the way, as if Stock had sent it by courier. */
+async function driverCourier(id, d) {
+  return jobStep(id, 'DRV_COUR', 'DRIVER', async (j, me) => {
+    const receipt = rcptOf(d), dp = j.dispatch || {}, then = dp.then || (j.type === 'hubrep' ? 'REPL_CONF' : 'DISPATCHED');
+    return saveJob(nextDoc(j, me, then, 'Handed to the courier', `${dp.company || 'Courier'} · receipt photo added`, { dispatch: Object.assign({}, dp, { receipt, handedBy: me.name, handedAt: Date.now() }) }));
   });
 }
 async function techReceive(id) {
@@ -3311,16 +3331,16 @@ function storeBanner() {
 
 /* ---------- request cards ---------- */
 function steps(j) {
-  const r = j.ret || {}, w = j.ws || {};
-  if (j.type === 'rep') return [['Restock raised', true], ['Approved', ['STOCK', 'DISPATCHED'].includes(j.status) || !!j.dispatch], ['Sent to the van', !!j.dispatch], ['Received into the van', j.status === 'CLOSED' && !!j.receivedAt]];
+  const r = j.ret || {}, w = j.ws || {}, dc = j.dispatch && j.dispatch.delivery === 'drvcour' ? [['Handed to the courier', !!j.dispatch.handedAt]] : [];   /* Driver & courier */
+  if (j.type === 'rep') return [['Restock raised', true], ['Approved', ['STOCK', 'DISPATCHED'].includes(j.status) || !!j.dispatch], ['Sent to the van', !!j.dispatch]].concat(dc, [['Received into the van', j.status === 'CLOSED' && !!j.receivedAt]]);
   if (j.type === 'hubrep' && j.xfer) return [['Sent by the Muscat Main Hub', true], ['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']];
-  if (j.type === 'hubrep') return [['Refill raised', true], ['Sent by the Muscat Main Hub', !!j.dispatch], ['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']];
+  if (j.type === 'hubrep') return [['Refill raised', true], ['Sent by the Muscat Main Hub', !!j.dispatch]].concat(dc, [['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']]);
   if (j.type === 'ret') return [['Sent back by the engineer', true], ['Received at ' + (HUB_NAME[j.hub] || j.hub), j.status === 'CLOSED']];
   const tail = [['Return sent', !!r.shippedAt], ['Return received at Stock', !!r.hubAt], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   if (j.type === 'van') return (j.van ? [['Asked to use from van', true], ['Team Leader approved', !!j.use || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)], ['Used from van stock', !!j.use]] : [['Used from van stock', true]]).concat(tail);   /* older records: used without approval */
   if (fromHub(j)) return [['Requested', true], ['Team Leader approved', !!j.tl && !j.tl.rejected && !j.tl.withdrawn], ['Taken from ' + (HUB_NAME[j.hub] || j.hub), !!j.dispatch], ['Replacement recorded', !!j.use]].concat(tail);
   const tm = j.tmAsk ? [['Technical Manager approved', !!(j.tm && j.tm.ok)]] : [];
-  return [['Requested', true], ['Team Leader approved', !!j.dispatch || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)]].concat(tm, [['Dispatched by Stock', !!j.dispatch], ['Received by engineer', !!j.receivedAt], ['Replacement recorded', !!j.use]], tail);
+  return [['Requested', true], ['Team Leader approved', !!j.dispatch || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)]].concat(tm, [['Dispatched by Stock', !!j.dispatch]], dc, [['Received by engineer', !!j.receivedAt], ['Replacement recorded', !!j.use]], tail);
 }
 /* a return to the Main Hub in a list: how many parts, from where */
 function retRow(j, me, mine, tone) {
@@ -3351,7 +3371,7 @@ function jobMeta(j, me) {
   return `${me.role !== 'TECH' ? esc(j.techName) + ' · ' : ''}<span class="mono">${esc(j.scn)}</span> · ${esc(j.machine)}${j.customer ? ' · ' + esc(j.customer) : ''}`;
 }
 /* one icon per step, so a list can be read at a glance */
-const ST_IC = { TL: 'check', STOCK: 'box', VAN_OK: 'van', DISPATCHED: 'truck', RECEIVED: 'wrench', RETURN: 'ret', RETURNING: 'truck', ATHUB: 'hub', WORKSHOP: 'wrench', REPAIRING: 'gear', REPAIRED: 'check', CLOSED: 'check', REJECTED: 'ban', CANCELLED: 'ban' };
+const ST_IC = { TL: 'check', STOCK: 'box', VAN_OK: 'van', DISPATCHED: 'truck', DRV_COUR: 'truck', RECEIVED: 'wrench', RETURN: 'ret', RETURNING: 'truck', ATHUB: 'hub', WORKSHOP: 'wrench', REPAIRING: 'gear', REPAIRED: 'check', CLOSED: 'check', REJECTED: 'ban', CANCELLED: 'ban' };
 function jobRow(j, me) {
   const mine = myTurn(j, me), late = isLate(j);
   const tone = late ? 'bad' : !isOpenStatus(j.status) ? (j.status === 'CLOSED' ? 'ok' : j.status === 'REJECTED' ? 'bad' : '') : (ST[j.status] || {}).tone || '';
@@ -3672,16 +3692,17 @@ const doneMsg = j => `${stLabel(j)}${stWho(j) ? ' · next: ' + ROLE[stWho(j)] : 
 const box = inner => `<div class="card action">${inner}</div>`;
 /* Team Leader: is this a chargeable case? (the customer pays, so it is not taken from the engineer's budget) */
 const chargeField = d => fld('Chargeable case', segBtns(d, 'charge', [['', 'No'], ['1', 'Yes']]), d.charge === '1' ? 'The customer pays: not taken from the engineer’s budget.' : 'Choose Yes when the part was not needed because of the engineer’s work.');
-/* Stock chooses how the part goes (required): a driver takes it, the engineer collects it at Stock, or a courier */
-function deliveryField(d, who) {
-  const hint = d.deliv === 'collect' ? `${who || 'The engineer'} collects it from Stock and confirms in SPMS. Collector: ${who || 'the engineer'}.` : d.deliv === 'driver' ? `Driver: ${DRIVER_NAME}. He takes it to ${who || 'the engineer'}, who confirms in SPMS.` : d.deliv === 'courier' ? `A courier takes it to ${who || 'the engineer'}, who confirms in SPMS.` : 'Required: by driver, the engineer collects it, or by courier.';
-  return fld('Delivery method *', segBtns(d, 'deliv', DELIVERY), hint) + (d.deliv === 'courier' ? courierFields(d) : '');
+/* Stock chooses how the part goes (required): a driver takes it, the engineer collects it at Stock, or a courier.
+   dc (Pick and dispatch only): also "Driver & courier" — Faisal takes it to the courier and adds the receipt photo. */
+function deliveryField(d, who, dc) {
+  const hint = d.deliv === 'collect' ? `${who || 'The engineer'} collects it from Stock and confirms in SPMS. Collector: ${who || 'the engineer'}.` : d.deliv === 'driver' ? `Driver: ${DRIVER_NAME}. He takes it to ${who || 'the engineer'}, who confirms in SPMS.` : d.deliv === 'courier' ? `A courier takes it to ${who || 'the engineer'}, who confirms in SPMS.`
+    : d.deliv === 'drvcour' && dc ? `Driver: ${DRIVER_NAME}. He takes it to the courier and adds the photo of the courier receipt. The courier takes it to ${who || 'the engineer'}, who confirms in SPMS.` : dc ? 'Required: by driver, the engineer collects it, by courier, or driver & courier.' : 'Required: by driver, the engineer collects it, or by courier.';
+  return fld('Delivery method *', segBtns(d, 'deliv', dc ? DELIVERY_DC : DELIVERY), hint) + (d.deliv === 'courier' ? courierFields(d) : d.deliv === 'drvcour' && dc ? companyFields(d) : '');
 }
 /* by courier: the company (Nool, GTC or another one typed in) and a photo of the courier receipt (required) */
-function courierFields(d) {
-  return fld('Courier company *', segBtns(d, 'cco', COURIER_COS.map(c => [c, c])), d.cco ? '' : 'Required.') + (d.cco === 'Other' ? inp(d, 'ccoName', 'Courier company name *', 'Type the company name') : '')
-    + photoField(d, 'rcpt', 'Photo of the courier receipt', true, { max: RCPT_MAX, need: 'A photo of the courier receipt is required.', ok: 'Stock and the Team Leader can see it.' });
-}
+const companyFields = d => fld('Courier company *', segBtns(d, 'cco', COURIER_COS.map(c => [c, c])), d.cco ? '' : 'Required.') + (d.cco === 'Other' ? inp(d, 'ccoName', 'Courier company name *', 'Type the company name') : '');
+const rcptField = d => photoField(d, 'rcpt', 'Photo of the courier receipt', true, { max: RCPT_MAX, need: 'A photo of the courier receipt is required.', ok: 'Stock and the Team Leader can see it.' });
+function courierFields(d) { return companyFields(d) + rcptField(d); }
 /* the engineer chooses how a return goes back (required): self return, by driver, or by courier */
 function returnField(d) {
   const me = ME(), hint = d.rvia === 'self' ? `You bring it to Stock yourself (recorded as ${me ? me.name : 'you'}).` : d.rvia === 'driver' ? `Driver: ${DRIVER_NAME}. He takes it to Stock.` : d.rvia === 'courier' ? 'A courier takes it to Stock.' : 'Required: self return, by driver, or by courier.';
@@ -3735,7 +3756,7 @@ SH.job = (d, p) => {
   const altRow = !d.alt && alts.length ? `<div class="alts">${alts.map(([v, l, x]) => x === 'remind' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}${esc(l)}</button>` : `<button class="btn sm sec" data-a="alt" data-v="${v}">${esc(l)}</button>`).join('')}</div>` : '';
   let body = head + (a ? a.form : '') + altRow + info;
   const dRc = (j.dispatch && j.dispatch.receipt) || [], rRc = r.receipt || [];
-  if ((j.reqPhotos || []).length || (j.rcvPhotos || []).length || dRc.length || rRc.length) body += `<section class="blk"><div class="card">${photoStrip(j.reqPhotos, 'Request photos')}${photoStrip(j.rcvPhotos, 'Photos when received')}${photoStrip(dRc, 'Courier receipt · sent by Stock')}${photoStrip(rRc, 'Courier receipt · return')}</div></section>`;
+  if ((j.reqPhotos || []).length || (j.rcvPhotos || []).length || dRc.length || rRc.length) body += `<section class="blk"><div class="card">${photoStrip(j.reqPhotos, 'Request photos')}${photoStrip(j.rcvPhotos, 'Photos when received')}${photoStrip(dRc, (j.dispatch || {}).delivery === 'drvcour' ? 'Courier receipt · added by the driver' : 'Courier receipt · sent by Stock')}${photoStrip(rRc, 'Courier receipt · return')}</div></section>`;
   if (w.doneAt) body += `<section class="blk"><div class="sec-h"><h2>Repair report</h2></div><div class="card">${dl([(w.partName || w.partSn) && ['Part', `${esc(w.partName || '')} ${w.partSn ? '<span class="mono">SN ' + esc(w.partSn) + '</span>' : ''}`], w.diagnosis && ['What was wrong', esc(w.diagnosis)], w.fix && ['How fixed', esc(w.fix)], w.materials && ['Things used', esc(w.materials)], ['Workshop time', `${fmtDur((w.tm && w.tm.acc) || 0)} (${w.hours} h) × ${money(w.rate)}/h = ${money(w.labour)}`], w.matCost ? ['Materials', money(w.matCost)] : null, w.timeFixed && ['Time corrected', (w.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${esc(x.why)} (${esc(x.by)})`).join('<br>')], w.notes && ['Notes', esc(w.notes)], ['Total', `<b>${money(w.total)}</b>`], ['Time at workshop', `${w.days} days`], ['By', `${esc(w.doneBy || w.by)} · ${fmtDT(w.doneAt)}`]])}</div></section>`;
   if (!['REJECTED', 'CANCELLED'].includes(j.status)) body += `<details class="fold"><summary>All steps<span class="t3">${doneN} of ${st.length}</span></summary><div class="fold-b"><ul class="steps">${st.map(([l, ok], i) => `<li class="${ok ? 'done' : i === cur ? 'cur' : ''}">${esc(l)}</li>`).join('')}</ul></div></details>`;
   body += histFold(j, turn);
@@ -3883,7 +3904,7 @@ function actionForm(j, me, d) {
         ? fld(`Pick from inventory (${send} of ${need} selected)`, `<div class="opts">${av.map(l => { const on = d.items.includes(l.key); return `<button class="opt ${on ? 'on' : ''}" aria-pressed="${on}" data-a="togItem" data-id="${esc(l.key)}"><span class="radio"></span><span class="main"><span class="t1">${l.sn ? '<span class="mono">SN ' + esc(l.sn) + '</span>' : 'Bulk × ' + qtyOf(l)}</span><span class="t2">${esc(l.loc)} · ${esc(l.cond || 'New')}${l.bin ? ' · bin ' + esc(l.bin) : ''}</span></span></button>`; }).join('')}</div>`, `Requested from ${esc(HUB_NAME[rh] || rh)}`)
           + (send < need && send > 0 ? `<div class="alert warn"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>Only ${send} of ${need} selected</b><span class="s">${need - send} more become a back-order</span></div></div>` : '') + snBox
         : `<div class="alert warn"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>${esc(j.pn)} is not in the inventory</b><span class="s">Receive it first, or send it with its serial number without taking it from the inventory</span></div></div>${fld('Sending from', hubSeg(d, 'from'))}${fld('Serial numbers *', `<textarea class="inp mono" id="f-msns" data-d="msns" placeholder="One per line">${esc(d.msns || '')}</textarea>`, `One serial number per part. A part can’t be sent without one; fewer than ${need} makes a back-order for the rest.`, 'f-msns')}`;
-      const form = box(`${tmSeg}${tmOk}${refill ? `<div class="autohint">${ic('hub', 'sm')}<span>Refill for ${esc(HUB_NAME[j.to] || j.to)}: ${esc(j.techName)} used ${esc(j.pn)} × ${need} from that hub (${esc(j.refillFor || '')}).</span></div>` : ''}${pick}${inp(d, 'ref', 'Dispatch reference', 'Automatic if empty', { mono: true })}${deliveryField(d, refill ? 'The ' + (HUB_NAME[j.to] || j.to) + ' engineer' : j.techName)}<div class="infobox">${ic('truck', 'sm')} For ${esc(who)}${j.type === 'rep' || refill ? '' : `: ${esc(j.site || '')}${j.gps ? ` · <a href="${mapsUrl(j.gps)}" target="_blank" rel="noopener" style="font-weight:600">GPS location</a>` : ''}`}</div>`);
+      const form = box(`${tmSeg}${tmOk}${refill ? `<div class="autohint">${ic('hub', 'sm')}<span>Refill for ${esc(HUB_NAME[j.to] || j.to)}: ${esc(j.techName)} used ${esc(j.pn)} × ${need} from that hub (${esc(j.refillFor || '')}).</span></div>` : ''}${pick}${inp(d, 'ref', 'Dispatch reference', 'Automatic if empty', { mono: true })}${deliveryField(d, refill ? 'The ' + (HUB_NAME[j.to] || j.to) + ' engineer' : j.techName, true)}<div class="infobox">${ic('truck', 'sm')} For ${esc(who)}${j.type === 'rep' || refill ? '' : `: ${esc(j.site || '')}${j.gps ? ` · <a href="${mapsUrl(j.gps)}" target="_blank" rel="noopener" style="font-weight:600">GPS location</a>` : ''}`}</div>`);
       return { form, op: { label: j.type === 'rep' ? 'Send to van' : refill ? 'Send to the hub' : 'Dispatch', yes: 'Yes, send', check: () => checkDispatch(j, d), run: () => stockDispatch(j.id, d) } };
     }
     case 'TM': {   /* the Technical Manager approves a request Stock sent him (back to Stock), or rejects it */
@@ -3917,6 +3938,11 @@ function actionForm(j, me, d) {
     case 'REPL_CONF': {   /* the refill reached the outside hub: the engineer puts it on the shelf */
       const items = (j.dispatch && j.dispatch.items) || [];
       return { form: box(`<p style="margin:0">${j.xfer ? 'Parts for' : 'Refill for'} <b>${esc(HUB_NAME[j.to] || j.to)}</b> from the Muscat Main Hub: <b class="mono">${esc(j.pn)} ${esc(items.map(itemTxt).join(', '))}</b>${j.dispatch && j.dispatch.ref ? ` · ${esc(j.dispatch.ref)}` : ''}.</p>${isCollect(j) ? `<div class="alert warn"><span class="lead warn">${ic('hub', 'sm')}</span><div class="main"><b>Collect it at the Muscat Main Hub</b><span class="s">No driver brings ${j.xfer ? 'these parts' : 'this refill'}. Collect ${j.xfer ? 'them' : 'it'} from Stock and take ${j.xfer ? 'them' : 'it'} to your hub.</span></div></div>` : ''}<span class="hint">Confirm when it is on the hub’s shelf. It is added to the hub stock.</span>`), op: { label: 'Arrived at the hub', run: () => techHubArrived(j.id), ok: 'Added to the hub stock' } };
+    }
+    case 'DRV_COUR': {   /* Driver & courier: Faisal hands it to the courier Stock chose, then adds the receipt photo */
+      const dp = j.dispatch || {}, items = dp.items || [], to = j.type === 'rep' ? `${j.techName}’s van` : j.type === 'hubrep' ? HUB_NAME[j.to] || j.to : j.techName;
+      return { form: box(`<p style="margin:0">Take <b class="mono">${esc(j.pn)} ${esc(items.map(itemTxt).join(', ') || dp.sn || '')}</b> from Stock${dp.from ? ' (' + esc(dp.from) + ')' : ''} to the courier <b>${esc(dp.company || '')}</b>. It goes to ${esc(to)}${dp.ref ? ' · <span class="mono">' + esc(dp.ref) + '</span>' : ''}.</p>${rcptField(d)}`),
+        op: { label: 'Handed to the courier', check: () => { rcptOf(d); return null; }, run: () => driverCourier(j.id, d), ok: 'Saved. The part is on the way.' } };
     }
     case 'DISPATCHED': {
       const items = (j.dispatch && j.dispatch.items) || [];
@@ -5214,7 +5240,7 @@ function dashBuckets(r) {
 const bucketLabel = b => b.kind === 'day' ? shortDay(b.s) : b.kind === 'month' ? new Date(b.s).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : `${shortDay(b.s)} – ${shortDay(addDays(b.e, -1))}`;
 const bucketTick = b => b.kind === 'month' ? new Date(b.s).toLocaleDateString('en-GB', { month: 'short' }) : shortDay(b.s);
 const STEP_WORD = { day: 'by day', days: 'every 3 days', week: 'by week', month: 'by month' }, STEP_COL = { day: 'Day', days: 'Days', week: 'Week', month: 'Month' };
-const DASH_PHASES = [['Waiting for your approval', ['TL']], ['Approved · Stock to send', ['STOCK', 'REPL', 'REPL_GO', 'DRV_PICK', 'DRV_GO']], ['With the engineer', ['DISPATCHED', 'RECEIVED', 'USE_OK', 'REPL_CONF']], ['Return on its way back', ['RETURN', 'RETURNING', 'DRV_RET_PICK', 'DRV_RET_GO']], ['At Stock · to decide', ['ATHUB']], ['In the Workshop', ['WORKSHOP', 'REPAIRING', 'REPAIRED']]];
+const DASH_PHASES = [['Waiting for your approval', ['TL']], ['Approved · Stock to send', ['STOCK', 'REPL', 'REPL_GO', 'DRV_PICK', 'DRV_GO', 'DRV_COUR']], ['With the engineer', ['DISPATCHED', 'RECEIVED', 'USE_OK', 'REPL_CONF']], ['Return on its way back', ['RETURN', 'RETURNING', 'DRV_RET_PICK', 'DRV_RET_GO']], ['At Stock · to decide', ['ATHUB']], ['In the Workshop', ['WORKSHOP', 'REPAIRING', 'REPAIRED']]];
 function dashModel(jobs, led, r) {
   const units = e => Math.abs(+e.qty || 0) || 1, B = dashBuckets(r), start = r.start, end = r.end, pStart = start - (end - start);
   const cnt = (k, s, t) => sum(led.filter(e => e.at >= s && e.at < t && DASH_EV[k].includes(e.t)), units);
@@ -5539,7 +5565,7 @@ const REQ_COLS = [
   ['SCN', j => j.scn], ['Machine', j => j.machine], ['Machine SN', j => j.machineSn || ''], ['Model', j => j.model], ['Customer', j => j.customer], ['AMC / lease', j => j.contract], ['Delivery site', j => j.site],
   ['GPS', j => j.gps ? `${(+j.gps.lat).toFixed(6)}, ${(+j.gps.lng).toFixed(6)}` : ''], ['Urgency', j => j.urgency], ['Chargeable', j => j.chargeable ? 'Yes' : ''], ['Chargeable set by', j => j.charge ? `${j.charge.by} · ${isoDT(j.charge.at)}${j.charge.note ? ' · ' + j.charge.note : ''}` : ''], ['Status', j => stLabel(j)], ['Waiting for', j => stWho(j) ? ROLE[stWho(j)] : ''],
   ['Team Leader', j => j.tl ? j.tl.by : ''], ['TL decided', j => j.tl ? isoDT(j.tl.at) : ''], ['TL note', j => j.tl ? j.tl.withdrawNote || j.tl.note : ''], ['Auto-Rep', j => j.auto ? (j.autoApproved ? 'Auto-approved' : 'Needed approval') : ''],
-  ['Dispatched from', j => j.dispatch ? j.dispatch.from : ''], ['Dispatched items', j => j.type === 'ret' ? (j.items || []).map(t => `${t.pn} ${itemTxt(t)}`).join(', ') : j.dispatch ? ((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn) : ''], ['Courier', j => j.dispatch ? j.dispatch.courier : ''], ['Delivery method', j => j.dispatch && j.dispatch.delivery ? (j.dispatch.delivery === 'collect' ? 'Engineer collects' : j.dispatch.delivery === 'courier' ? 'Courier · ' + (j.dispatch.company || '') : 'Driver') : ''], ['Driver', j => j.dispatch ? j.dispatch.driver || '' : ''], ['Dispatch ref', j => j.dispatch ? j.dispatch.ref : ''], ['Dispatched', j => j.dispatch ? isoDT(j.dispatch.at) : ''],
+  ['Dispatched from', j => j.dispatch ? j.dispatch.from : ''], ['Dispatched items', j => j.type === 'ret' ? (j.items || []).map(t => `${t.pn} ${itemTxt(t)}`).join(', ') : j.dispatch ? ((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn) : ''], ['Courier', j => j.dispatch ? j.dispatch.courier : ''], ['Delivery method', j => j.dispatch && j.dispatch.delivery ? (j.dispatch.delivery === 'collect' ? 'Engineer collects' : j.dispatch.delivery === 'courier' ? 'Courier · ' + (j.dispatch.company || '') : j.dispatch.delivery === 'drvcour' ? 'Driver & courier · ' + (j.dispatch.company || '') : 'Driver') : ''], ['Driver', j => j.dispatch ? j.dispatch.driver || '' : ''], ['Dispatch ref', j => j.dispatch ? j.dispatch.ref : ''], ['Dispatched', j => j.dispatch ? isoDT(j.dispatch.at) : ''],
   ['Back-orders', j => (j.backorders || []).join(', ')], ['Received by tech', j => isoDT(j.receivedAt)], ['Replaced', j => j.use ? (j.use.replaced ? 'Yes' : 'No') : ''],
   ['Removed SN(s)', j => j.use ? ((j.use.units || []).filter(u => u.removedSn).map(u => u.removedSn).join(', ') || j.use.removedSn || '') : ''],
   ['Return type', j => j.ret ? j.ret.type : ''], ['Returned PN', j => j.ret ? j.ret.pn : ''], ['Returned SN', j => j.ret ? j.ret.sn : ''], ['Return qty', j => j.ret ? (j.ret.qty || 1) : ''], ['Return due', j => j.ret ? isoDT(j.ret.due) : ''],
