@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261111162122">
+<meta name="spms-build" content="20261114120054">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -3009,6 +3009,28 @@ async function wipeData(keys, onProgress) {
   log({ t: 'Test data cleared', qty: done, from: me.name, to: '', note: sets.map(x => x[1].split(' (')[0]).join(' · ') });   /* one line saying who cleared what, and when */
   return done;
 }
+/* Team Leader: delete only the requests he ticks (made for testing), open or finished. Every other request stays.
+   Stock and the inventory log are not changed. A finished request already added to an engineer's budget total is taken
+   out of that total again. */
+async function deleteJobs(ids) {
+  const me = mustRole('TL');
+  const want = [...new Set((ids || []).map(String).filter(Boolean))]; if (!want.length) throw E('Tick at least one request to delete.');
+  const gone = [];
+  try {
+    for (const id of want) {
+      const j = await withLocks(['jobs/' + id], async () => { const cur = await api.get('jobs', id); if (cur) await api.del('jobs', id); return cur; });
+      if (!j) continue;   /* already deleted by someone else */
+      gone.push(id);
+      if (!j.chargeable) { try { await budgetCharge(normJob(j), true); } catch (e) { console.warn('budget', e); } }
+    }
+  } finally {   /* the connection dropped half way: what was deleted is still logged and taken off the screen */
+    const set = new Set(gone);
+    if (ARCHIVE) ARCHIVE = ARCHIVE.filter(j => !set.has(j.id));
+    JOBS_RECENT = JOBS_RECENT.filter(j => !set.has(j.id)); JOBS_OPEN = JOBS_OPEN.filter(j => !set.has(j.id)); mergeJobs();
+    if (gone.length) log({ t: 'Requests deleted', qty: gone.length, from: me.name, to: '', note: gone.join(', ') });   /* one line saying who deleted which requests, and when */
+  }
+  return gone.length;
+}
 
 /* ---------- hubs (Stock or Team Leader) ---------- */
 async function saveHub(d) {
@@ -3524,6 +3546,7 @@ function dbView(me) {
     <div class="card"><div class="sec-h" style="padding:0"><h2>Machine list</h2><button class="btn sm sec" data-a="sheet" data-s="machines">${ic('sheet', 'sm')}${UI.machInfo ? 'Update' : 'Import Excel'}</button></div><span class="hint">${ensureMachines(() => { if (UI.tab === 'db') render(); }) && UI.machInfo ? `${UI.machInfo.n.toLocaleString('en-GB')} machines · engineers type the ATM code or serial number and SPMS fills in the rest` : MACHINES ? 'No machines yet. Import the ATM / CDM list so new requests fill in the machine details.' : 'Loading…'}</span></div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Hubs</h2><button class="btn sm sec" data-a="sheet" data-s="hubs">${ic('edit', 'sm')}Manage hubs</button></div><div class="chips">${HUB_INFO.map(h => `<span class="chip plain" title="${esc(h.name)}"><b>${esc(h.code)}</b>&nbsp;${esc(h.name)}${h.country ? ' · ' + esc(h.country) : ''}</span>`).join('')}</div></div>
     <button class="btn" data-a="excel">${ic('download', 'sm')}Download Excel · 10 sheets, with graphs</button>
+    <div class="card"><div class="sec-h" style="padding:0"><h2>Delete requests</h2><button class="btn sm danger" data-a="sheet" data-s="deljobs">${ic('ban', 'sm')}Choose…</button></div><span class="hint">Delete one or more requests made for testing, open or finished. All other requests stay.</span></div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Test data</h2><button class="btn sm danger" data-a="sheet" data-s="wipe">${ic('ban', 'sm')}Delete…</button></div><span class="hint">Clear the requests, inventory log and stock left over from testing, so the reports and the dashboard start from zero</span></div>
     <section class="blk"><div class="sec-h"><h2>All records</h2>${JOBS.length > rows.length ? `<span class="t3 muted">Newest ${rows.length} of ${JOBS.length}</span>` : ''}</div><div class="tbl-wrap"><table class="tbl"><thead><tr>${cols.map(c => `<th scope="col">${c}</th>`).join('')}</tr></thead><tbody>${rows.map(j => `<tr data-a="sheet" data-s="job" data-id="${esc(j.id)}" tabindex="0" aria-label="Open ${esc(j.id)}" class="${isLate(j) ? 'flag' : ''}"><td class="mono">${esc(j.id)}</td><td>${esc({ req: 'Request', rep: 'Van restock', van: 'Van use' }[j.type] || 'Request')}</td><td>${esc(j.techName)}</td><td>${esc(j.pn)} × ${jobQty(j)}</td><td class="mono">${esc(j.scn || '')}</td><td>${esc(stLabel(j))}</td><td class="mono">${esc(j.ret ? j.ret.sn : '')}</td><td class="r">${j.ws && j.ws.total != null ? money(j.ws.total) : ''}</td></tr>`).join('') || `<tr><td colspan="${cols.length}" class="muted">No records yet.</td></tr>`}</tbody></table></div>${allLoaded() ? '' : `<button class="btn sec block" data-a="older">${ic('clock', 'sm')}Load older requests</button>`}</section>`;
 }
@@ -4416,6 +4439,30 @@ SH.wipe = d => {
     run: () => wipeData(picked.map(x => x[0]), n => { const t = $('#wipe-prog'); if (t) t.innerHTML = `<span class="hint">Deleted ${n} records…</span>`; }),
     ok: n => `Deleted ${n} record${n === 1 ? '' : 's'}. SPMS starts clean.` } : null;
   return { title: 'Delete test data', sub: 'Start the reports from zero', body, op, foot: op ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
+};
+
+/* ---------- Team Leader: delete chosen requests (made for testing), open or finished; the others stay ---------- */
+SH.deljobs = d => {
+  const me = ME(); if (!me || me.role !== 'TL') return { title: 'Delete requests', body: '<div class="err">Only the Team Leader can do this.</div>' };
+  const q = (d.q || '').trim().toLowerCase(), sel = d.sel || (d.sel = {});
+  const kind = j => ({ req: 'Request', rep: 'Van restock', van: 'Van use', hubrep: 'Hub refill', ret: 'Return' }[j.type] || 'Request');
+  const found = JOBS.filter(j => !q || [j.id, j.pn, j.desc, j.techName, j.scn, j.machine, stLabel(j)].join(' ').toLowerCase().includes(q));
+  const shown = found.slice(0, 300), picked = Object.keys(sel).filter(id => sel[id] && JOB(id));
+  d._ids = shown.map(j => j.id);
+  const allSel = shown.length && shown.every(j => sel[j.id]);
+  const body = `<div class="alert bad wrap"><span class="lead bad">${ic('alert', 'sm')}</span><div class="main"><b>Deletes only the requests you tick</b><span class="s">For requests made for testing, open or finished. All other requests stay. Stock and the inventory log are not changed. This can’t be undone.</span></div></div>
+    <div class="searchbox">${ic('search')}<input class="inp" id="f-q" data-d="q" data-live="rr" placeholder="Search request, part, engineer or SCN" value="${esc(d.q || '')}" autocomplete="off" aria-label="Search requests"></div>
+    <div style="display:flex;gap:8px;align-items:center;padding:2px 2px 0"><p class="note" style="padding:0;margin:0;flex:1">${picked.length ? `${picked.length} request${picked.length === 1 ? '' : 's'} ticked` : 'Tick the requests to delete, then press Delete.'}</p>${shown.length ? `<button class="btn sm ${allSel ? 'sec' : ''}" data-a="jobsAll" style="flex:none">${allSel ? 'Clear' : 'Select all'}</button>` : ''}</div>
+    <div class="list">${shown.map(j => { const on = !!sel[j.id];
+      return `<button class="row ${on ? 'on' : ''}" data-a="jobPick" data-id="${esc(j.id)}"><span class="pickbox${on ? ' on' : ''}">${on ? ic('check', 'sm') : ''}</span><div class="main"><div class="t1">${esc(j.desc || partName(j.pn) || kind(j))}</div><div class="t3"><span class="mono">${esc(j.id)}</span> · ${esc(j.pn)} × ${jobQty(j)} · ${esc(j.techName || '')} · ${esc(stLabel(j))} · ${esc(fmtD(j.createdAt))}</div></div></button>`;
+    }).join('') || `<div class="empty">${q ? 'No matches' : 'No requests'}</div>`}</div>
+    ${found.length > shown.length ? `<p class="note" style="padding:2px">Showing ${shown.length} of ${found.length}. Search to find the others.</p>` : ''}
+    ${allLoaded() ? '' : `<button class="btn sec block" data-a="older">${ic('clock', 'sm')}Load older requests</button>`}`;
+  const n = picked.length, word = `${n} request${n === 1 ? '' : 's'}`;
+  const op = n ? { label: `Delete ${word}`, cls: 'danger', danger: true, yes: 'Yes, delete',
+    check: () => `Delete ${word}${n <= 5 ? ' (' + picked.join(', ') + ')' : ''}? All other requests stay. This can’t be undone.`,
+    run: () => deleteJobs(picked), stay: true, after: () => { d.sel = {}; }, ok: k => `${k} request${k === 1 ? '' : 's'} deleted` } : null;
+  return { title: 'Delete requests', sub: 'Select test requests to delete', body, op, foot: op ? undefined : `<button class="btn sec" data-a="close">Close</button>` };
 };
 
 /* ---------- Stock: one stock line ---------- */
@@ -6810,6 +6857,8 @@ const A = {
   accPick(ds) { const d = sd(); d.selIds = d.selIds || {}; d.selIds[ds.id] = !d.selIds[ds.id]; d._err = ''; renderSheet(); },
   partPick(ds) { const d = sd(); d.sel = d.sel || {}; d.sel[ds.id] = !d.sel[ds.id]; d._err = ''; renderSheet(); },
   partsAll() { const d = sd(); const pns = d._pns || []; d.sel = d.sel || {}; const on = pns.length && pns.every(pn => d.sel[pn]); pns.forEach(pn => d.sel[pn] = !on); d._err = ''; renderSheet(); },
+  jobPick(ds) { const d = sd(); d.sel = d.sel || {}; d.sel[ds.id] = !d.sel[ds.id]; d._err = ''; renderSheet(); },
+  jobsAll() { const d = sd(); const ids = d._ids || []; d.sel = d.sel || {}; const on = ids.length && ids.every(id => d.sel[id]); ids.forEach(id => d.sel[id] = !on); d._err = ''; renderSheet(); },
   accAll() { const d = sd(); const ids = d._accSel || []; d.selIds = d.selIds || {}; const on = ids.length && ids.every(id => d.selIds[id]); ids.forEach(id => d.selIds[id] = !on); d._err = ''; renderSheet(); },
   async grpOne(ds) {
     const s = UI.sheet; if (!s || s.busy) return; const d = s.d; s.busy = true; d._err = ''; renderSheet();
