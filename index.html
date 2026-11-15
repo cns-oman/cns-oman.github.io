@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261115172248">
+<meta name="spms-build" content="20261115202638">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -2930,12 +2930,58 @@ function undoMark(doc) {
   doc.undo = (Array.isArray(r.base.undo) ? r.base.undo : []).concat([e]).slice(-UNDO_MAX);
   r.main = doc; r.n = r.puts.length + r.takes.length + r.made.length;
 }
-/* the step that can be undone now: the newest record, if the request is still at the step it led to */
-const lastUndo = j => { const u = j && Array.isArray(j.undo) ? j.undo[j.undo.length - 1] : null; return u && u.to === j.status ? u : null; };
+/* the step that can be undone now: the newest record, if the request is still at the step it led to;
+   else, for a step made before the records existed, what SPMS can work out from the request (legacyUndo) */
+const lastUndo = j => { const u = j && Array.isArray(j.undo) ? j.undo[j.undo.length - 1] : null; return u && u.to === j.status ? u : legacyUndo(j); };
+/* Steps made before build 20261115172248 have no undo record (15 Nov 2026). For the four steps most often done by mistake,
+   SPMS works out what to change back from the request itself: Repair finished, Scrapped by Workshop, Return sent to
+   Stock and the Stock dispatch. Only when that step is the last one on the request (a reminder or a chargeable change
+   after it doesn't count). */
+const UNDO_SKIP_ACT = ['Reminder sent', 'Marked as chargeable case', 'Chargeable case removed'];
+const WS_DONE = ['partName', 'partSn', 'diagnosis', 'fix', 'materials', 'used', 'notes', 'hours', 'rate', 'labour', 'matCost', 'total', 'outcome', 'doneAt', 'doneBy', 'days'];
+const RET_SENT = ['shippedAt', 'ref', 'via', 'courier', 'driver', 'company', 'receipt', 'logs', 'issue'];
+const DSP_ACT = ['Dispatched by Stock', 'Given to the driver for the courier', 'Ready to collect at Stock', 'Restock ready to collect', 'Refill ready to collect', 'Restock sent to van', 'Refill sent to the hub'];
+function legacyUndo(j) {
+  if (!j || !Array.isArray(j.history)) return null;
+  let i = j.history.length - 1; while (i >= 0 && UNDO_SKIP_ACT.includes(j.history[i].action)) i--;
+  const h = j.history[i]; if (!h) return null;
+  const e = { legacy: true, at: +h.at || 0, by: h.by || '', byId: h.byId || '', role: h.role || '', action: h.action || '', to: j.status, old: {}, none: [], part: {}, puts: [], takes: [], made: [], logT: [] };
+  const ws = j.ws || {}, r = j.ret || {};
+  /* spare parts the Workshop took when it finished (those taken during the repair are separate steps); their shelf is not known */
+  const finTakes = () => (Array.isArray(ws.used) ? ws.used.slice(wsParts(j).length) : []).map(u => ({ pn: u.pn, name: u.name || '', sn: u.sn || '', qty: +u.qty || 1, from: u.from, cond: u.from === SCRAP ? 'Scrap' : 'New', bin: '' }));
+  const wsBack = () => ({ ws: { old: {}, none: WS_DONE.filter(k => ws[k] !== undefined) } });
+  if (h.action === 'Repair finished' && j.status === 'REPAIRED' && ws.doneAt && r.pn)
+    return Object.assign(e, { from: 'REPAIRING', part: wsBack(), takes: finTakes(), logT: ['Repair finished', 'Used in repair'] });
+  if (h.action === 'Scrapped by Workshop' && j.status === 'CLOSED' && ws.doneAt && r.pn) {
+    const n = r.sn ? 1 : +r.qty || 1, l = LINES.find(x => x.loc === SCRAP && normPN(x.pn) === normPN(r.pn) && (r.sn ? normSN(x.sn) === normSN(r.sn) : !x.sn && qtyOf(x) >= n));
+    return Object.assign(e, { from: 'REPAIRING', none: ['closedAt', 'outcome'].filter(k => j[k] !== undefined), part: wsBack(), takes: finTakes(), puts: [{ key: l ? l.key : '', loc: SCRAP, pn: r.pn, sn: r.sn || '', qty: n }], logT: ['Scrapped', 'Used in repair'] });
+  }
+  if (h.action === 'Return sent to Stock' && j.status === 'RETURNING' && r.shippedAt && j.type !== 'ret')
+    return Object.assign(e, { from: 'RETURN', part: { ret: { old: {}, none: RET_SENT.filter(k => r[k] !== undefined) } }, logT: ['Return sent'] });
+  const dp = j.dispatch;
+  if (DSP_ACT.includes(h.action) && ['DISPATCHED', 'DRV_COUR', 'REPL_CONF'].includes(j.status) && dp && !j.receivedAt && h.role === 'Stock') {
+    const bo = Array.isArray(j.backorders) ? j.backorders : [], kid = bo.length && String(h.note || '').includes(bo[bo.length - 1]) ? bo[bo.length - 1] : '';
+    if (kid) { if (bo.length > 1) e.old.backorders = bo.slice(0, -1); else e.none.push('backorders'); e.made = [{ id: kid, st: j.type === 'hubrep' ? 'REPL' : 'STOCK' }]; }
+    e.none.push('dispatch');
+    e.takes = (dp.items || []).filter(t => t.cond !== 'Not in inventory').map(t => ({ pn: t.pn, name: t.name || '', sn: t.sn || '', qty: +t.qty || 1, from: t.from, cond: t.cond || 'New', bin: t.bin || '' }));
+    return Object.assign(e, { from: j.type === 'hubrep' ? 'REPL' : 'STOCK', logT: ['Dispatched to technician', 'Sent to van stock', 'Refill sent to hub'] });
+  }
+  return null;
+}
+/* the inventory log lines an older step wrote: in its person's ledger documents of that day, for this request, of the step's kinds */
+async function legacyLogLines(j, e) {
+  if (!e.byId || !e.at) return [];
+  const k = String(e.byId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 48), days = [...new Set([dayKey(e.at), dayKey(e.at + 600000)])], out = [];
+  for (const day of days) for (let part = 1; part < 50; part++) {
+    const d = await api.get('ledger', `LG-${day}-${k}-${part}`); if (!d) break;
+    for (const x of (Array.isArray(d.entries) ? d.entries : [])) if (x.ref === j.id && e.logT.includes(x.t) && x.at >= e.at - 2000 && x.at <= e.at + 600000) out.push(x);
+  }
+  return out;
+}
 const moveTxt = x => `${x.pn}${x.sn ? ' SN ' + x.sn : ' × ' + (x.qty || 1)}`;
 /* what undoing the step changes in stock and in other requests (shown before the Team Leader confirms) */
 function undoEffects(e) {
-  return [...(e.puts || []).map(p => `${moveTxt(p)} comes out of ${locName(p.loc)}`), ...(e.takes || []).map(t => `${moveTxt(t)} goes back into ${locName(t.from)}${t.bin ? ' · shelf ' + t.bin : ''}`), ...(e.made || []).map(k => `${k.id} (made by this step) is deleted`)];
+  return [...(e.puts || []).map(p => `${moveTxt(p)} comes out of ${locName(p.loc)}`), ...(e.takes || []).map(t => `${moveTxt(t)} goes back into ${locName(t.from)}${t.bin ? ' · shelf ' + t.bin : e.legacy ? ' (shelf not known: set it in Inventory)' : ''}`), ...(e.made || []).map(k => `${k.id} (made by this step) is deleted`)];
 }
 /* the checks on this phone's copy of the stock and requests (done again on the saved data when it runs) */
 function checkUndoLocal(j, e) {
@@ -2984,8 +3030,11 @@ async function tlUndo(id, d) {
       doc.ws = Object.assign({}, doc.ws, { tm: Object.assign({}, t, { acc, since: null }) });
     }
     const fx = undoEffects(Object.assign({}, e, { made: kids.map(c => ({ id: c.id })) }));
-    Object.assign(doc, { status: e.from, open: isOpenStatus(e.from), undo: j.undo.slice(0, -1), updatedAt: now, updatedBy: me.name,
+    Object.assign(doc, { status: e.from, open: isOpenStatus(e.from), updatedAt: now, updatedBy: me.name,
       history: (j.history || []).concat([{ at: now, by: me.name, byId: me.id || '', role: ROLE.TL, action: 'Step undone by Team Leader', note: `${e.action}${e.by ? ' (' + e.by + ')' : ''}: ${why}${fx.length ? ' · ' + fx.join(' · ') : ''}` }]) });
+    /* a recorded step leaves the records; an older step (worked out, not recorded) leaves them as they are */
+    const und = e.legacy ? j.undo : (j.undo || []).slice(0, -1);
+    if (Array.isArray(und)) doc.undo = und; else delete doc.undo;
     try { await saveJob(doc); } catch (x) { await undoMoves(); throw x; }
     /* 4. the requests the step made (nobody has acted on them) are deleted */
     const gone = new Set();
@@ -2999,7 +3048,8 @@ async function tlUndo(id, d) {
   const { j, e, doc } = done;
   try {
     await flushLog().catch(() => {});
-    const seen = new Set(), lines = flatLedger(await api.query('ledger', { where: [['us', 'array-contains', e.key]] })).concat(LOGQ).filter(x => x.u === e.key && !seen.has(x.at + '|' + x.t + '|' + x.sn) && seen.add(x.at + '|' + x.t + '|' + x.sn));
+    const seen = new Set(), all = e.legacy ? await legacyLogLines(j, e) : flatLedger(await api.query('ledger', { where: [['us', 'array-contains', e.key]] })).concat(LOGQ).filter(x => x.u === e.key);
+    const lines = all.filter(x => !seen.has(x.at + '|' + x.t + '|' + x.sn) && seen.add(x.at + '|' + x.t + '|' + x.sn));
     for (const x of lines) log({ t: 'Step undone', undo: x.t, pn: x.pn, sn: x.sn, qty: x.qty, from: x.to, to: x.from, ref: x.ref || j.id, note: `Undo of “${x.t}” on ${j.id}: ${why}` });
   } catch (x) { console.warn('undo log', x); }
   return doc;
@@ -4004,6 +4054,7 @@ function undoForm(j, d) {
   const fx = undoEffects(e), back = stLabel(Object.assign({}, j, { status: e.from }));
   return { title, form: box(`<p style="margin:0">Last step: <b>${esc(eng(e.action))}</b>${e.by ? ' · ' + esc(e.by) : ''}${e.role ? ' (' + esc(eng(e.role)) + ')' : ''} · ${fmtDT(e.at)}</p>
       <p style="margin:0">The request goes back to <b>${esc(back)}</b>${e.from === e.to ? '' : ', so that step can be done again'}.</p>
+      ${e.legacy ? '<p class="t2" style="margin:0">This step was made before SPMS kept undo records, so SPMS works out what to change back from the request.</p>' : ''}
       ${fx.length ? `<div class="t2">Also:</div><ul class="t2" style="margin:0;padding-left:20px">${fx.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       ${area(d, 'uwhy', 'Why is it undone? *', 'e.g. Scrapped by mistake: the part can be repaired')}<span class="hint">The history keeps the step and the undo. The request shows again in the To do list of whoever does that step.</span>`),
     op: { label: 'Undo step', cls: 'danger', danger: true, yes: 'Yes, undo it', check: () => checkUndo(j, d), run: () => tlUndo(j.id, d), stay: true, ok: 'Step undone' } };
