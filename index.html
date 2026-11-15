@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261115202638">
+<meta name="spms-build" content="20261115205855">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -2700,11 +2700,30 @@ async function remindReturn(id) {
   });
 }
 /* problems Stock found when a return arrived: another serial number, a missing component, damage */
-const retProblems = r => [r && r.snExpected ? `Serial number mismatch (expected ${r.snExpected}, arrived ${r.sn})` : '', r && r.missing ? `Missing: ${r.missing}` : '', r && r.damage ? `Damaged: ${r.damage}` : ''].filter(Boolean);
+const retProblems = r => [r && r.pnExpected ? `Part number mismatch (expected ${r.pnExpected}, arrived ${r.pn})` : '', r && r.snExpected ? `Serial number mismatch (expected ${r.snExpected}, arrived ${r.sn})` : '', r && r.missing ? `Missing: ${r.missing}` : '', r && r.damage ? `Damaged: ${r.damage}` : ''].filter(Boolean);
+function arrivedChange(j, d) {
+  if (!d || d.diff !== 'yes') return null;
+  const r = j.ret || {}, opn = normPN(r.pn), osn = normSN(r.sn), one = !!osn || (+r.qty || 1) === 1;
+  const pn = d.apn != null ? normPN(d.apn) : opn, sn = one ? (d.asn != null ? normSN(d.asn) : osn) : '';
+  if (!pn) throw E('Enter the part number on the part that arrived.');
+  if (pn !== opn && !PN_RE.test(pn)) throw E('Use letters, numbers, dots, dashes or slashes for the part number.');
+  if (osn && !sn) throw E('Enter the serial number on the part that arrived.');
+  if (pn === opn && sn === osn) throw E('That is the same part number and serial number we expected.');
+  const why = String(d.awhy || '').trim();   /* optional, as the serial number check was before */
+  return { pn, sn, opn, osn, why };
+}
 async function stockReceiveReturn(id, d) {
   return jobStep(id, 'RETURNING', 'STOCK', async (j, me) => {
     const ret = Object.assign({}, j.ret, { hubAt: Date.now(), hubBy: me.name, hubById: me.id || '' }); let note = j.ret.sn ? `SN ${j.ret.sn}` : `× ${j.ret.qty || 1}`;
-    if (d.diff === 'yes') { const a = normSN(d.asn); if (!a) throw E('Enter the serial number on the part that arrived.'); if (a === j.ret.sn) throw E('That is the same serial number we expected.'); ret.snExpected = j.ret.sn; ret.sn = a; note = `Arrived with SN ${a} (expected ${j.ret.sn || 'none'})`; }
+    /* the part that arrived has another part number or serial number than the engineer recorded (15 Nov 2026): Stock enters
+       the numbers on the part and why; the request keeps both (pnExpected, snExpected) and the log records the change */
+    const c = arrivedChange(j, d);
+    if (c) {
+      if (c.pn !== c.opn) { ret.pnExpected = c.opn; ret.pn = c.pn; }
+      if (c.sn !== c.osn) { if (c.osn) ret.snExpected = c.osn; ret.sn = c.sn; }
+      if (c.why) ret.diffWhy = c.why;
+      note = `Arrived as ${c.pn}${c.sn ? ' SN ' + c.sn : ''} (expected ${c.opn}${c.osn ? ' SN ' + c.osn : ''})${c.why ? ': ' + c.why : ''}`;
+    }
     /* what was wrong with the part that arrived: a component missing, or damage (both shown in Reports → Returns) */
     const miss = d.miss === 'yes' ? String(d.missWhat || '').trim() : '', dmg = d.dmg === 'yes' ? String(d.dmgWhat || '').trim() : '';
     if (d.miss === 'yes' && !miss) throw E('Write what is missing from the part.');
@@ -2712,6 +2731,7 @@ async function stockReceiveReturn(id, d) {
     ret.missing = miss; ret.damage = dmg;
     const probs = retProblems(ret); if (probs.length) note += ' · ' + probs.join(' · ');
     const doc = await saveJob(nextDoc(j, me, 'ATHUB', 'Return received at Stock', note, { ret }));
+    if (c) log({ t: 'Part number / serial changed', pn: c.opn, sn: c.osn, qty: ret.qty || 1, from: j.techName, to: 'Stock', ref: j.id, note: `Arrived as ${c.pn}${c.sn ? ' SN ' + c.sn : ''}${c.why ? ': ' + c.why : ''}` });
     log({ t: 'Return received', pn: ret.pn, sn: ret.sn, qty: ret.qty || 1, from: j.techName, to: 'Stock', ref: j.id, note: probs.join(' · ') });
     return doc;
   });
@@ -3951,7 +3971,7 @@ SH.job = (d, p) => {
       j.dispatch && ['Sent', `${esc((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn)} · ${esc(isVan(j.dispatch.from) ? 'van stock' : j.dispatch.from)}${j.dispatch.courier ? ' · ' + esc(j.dispatch.courier) : ''}${j.dispatch.ref ? ' · ' + esc(j.dispatch.ref) : ''}`],
       (j.backorders || []).length && ['Back-orders', j.backorders.map(jobLink).join(' ')], (j.splits || []).length && ['Separate returns', j.splits.map(jobLink).join(' ')],
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
-      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
+      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}${r.pnExpected || r.snExpected ? ` (expected ${esc([r.pnExpected, r.snExpected ? 'SN ' + r.snExpected : ''].filter(Boolean).join(' '))}${r.diffWhy ? ': ' + esc(r.diffWhy) : ''})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
       r.issue && ['Issue', esc(r.issue)],
       r.logs && ['Logs', safeLink(r.logs) ? `<a href="${esc(safeLink(r.logs))}" target="_blank" rel="noopener noreferrer">Open the logs</a> <span class="t3">${esc(r.logs.length > 60 ? r.logs.slice(0, 57) + '…' : r.logs)}</span>` : esc(r.logs)],
       (j.tmAsk || j.tm) && ['Technical Manager', [j.tmAsk && `Asked by ${esc(j.tmAsk.by)}, ${fmtDT(j.tmAsk.at)}: ${esc(j.tmAsk.note)}`, j.tm && `${j.tm.ok ? 'Approved' : '<b>Rejected</b>'} by ${esc(j.tm.by)}, ${fmtDT(j.tm.at)}${j.tm.note ? ': ' + esc(j.tm.note) : ''}`].filter(Boolean).join('<br>')],
@@ -4191,7 +4211,13 @@ function actionForm(j, me, d) {
       if (!d.diff) d.diff = 'no'; if (!d.miss) d.miss = 'no'; if (!d.dmg) d.dmg = 'no';
       const issues = fld('All components there?', segBtns(d, 'miss', [['no', 'Complete'], ['yes', 'Something missing']])) + (d.miss === 'yes' ? area(d, 'missWhat', 'What is missing? *', 'e.g. cable, cover, screws') : '')
         + fld('Condition when it arrived', segBtns(d, 'dmg', [['no', 'No damage'], ['yes', 'Damaged']])) + (d.dmg === 'yes' ? area(d, 'dmgWhat', 'Describe the damage *', 'e.g. cracked case, bent pins') : '');
-      return { form: box(`<p style="margin:0">Confirm you received the ${r.type === 'defective' ? 'defective' : 'unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b>${r.courier ? ` (${esc(r.courier)} · ${esc(r.ref || '')})` : ''}.</p>${r.sn ? fld('Serial number on the part', segBtns(d, 'diff', [['no', 'Matches'], ['yes', 'Different']])) + (d.diff === 'yes' ? inp(d, 'asn', 'Serial number on the part that arrived *', '', { mono: true, hint: 'The request keeps both numbers so the trace stays correct.' }) : '') : ''}${issues}`), op: { label: 'Confirm received', run: () => stockReceiveReturn(j.id, d) } };
+      /* the part number and serial number on the part that arrived: Stock can change them, with a reason (15 Nov 2026) */
+      const one = !!r.sn || (+r.qty || 1) === 1;
+      if (d.diff === 'yes') { if (d.apn == null) d.apn = r.pn || ''; if (one && d.asn == null) d.asn = r.sn || ''; }
+      const nums = fld(`Part number${one ? ' and serial number' : ''} on the part`, segBtns(d, 'diff', [['no', 'Match'], ['yes', 'Different']]))
+        + (d.diff === 'yes' ? inp(d, 'apn', 'Part number on the part *', '', { mono: true }) + (one ? inp(d, 'asn', `Serial number on the part${r.sn ? ' *' : ''}`, 'As printed on the part', { mono: true }) : '')
+          + inp(d, 'awhy', 'Why are they different?', 'e.g. The engineer typed the serial number wrongly') + `<span class="hint">The request keeps both the numbers the engineer recorded and the numbers on the part, so the trace stays correct.</span>` : '');
+      return { form: box(`<p style="margin:0">Confirm you received the ${r.type === 'defective' ? 'defective' : 'unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b>${r.courier ? ` (${esc(r.courier)} · ${esc(r.ref || '')})` : ''}.</p>${nums}${issues}`), op: { label: 'Confirm received', check: () => { const c = arrivedChange(j, d); return c ? `Record the part as ${c.pn}${c.sn ? ' SN ' + c.sn : ''}? (${backTxt(c)})` : null; }, run: () => stockReceiveReturn(j.id, d) } };
     }
     case 'ATHUB': {
       const opts = r.type === 'unused' ? [['stock', 'Back to stock'], ['repair', 'Repair'], ['scrap', 'Scrap']] : [['repair', 'Send to repair'], ['scrap', 'Scrap'], ['consume', 'Consume']];
@@ -5661,10 +5687,10 @@ function repDash() {
 /* returns Stock received with a problem: another serial number, a missing component, or damage (newest first) */
 function retProblemsCard() {
   const list = JOBS.filter(j => j.ret && j.ret.hubAt && retProblems(j.ret).length).sort((a, b) => b.ret.hubAt - a.ret.hubAt);
-  const chips = r => [r.snExpected ? `<span class="chip warn">Serial number mismatch</span>` : '', r.missing ? `<span class="chip bad">Missing</span>` : '', r.damage ? `<span class="chip bad">Damaged</span>` : ''].join(' ');
+  const chips = r => [r.pnExpected ? `<span class="chip warn">Part number mismatch</span>` : '', r.snExpected ? `<span class="chip warn">Serial number mismatch</span>` : '', r.missing ? `<span class="chip bad">Missing</span>` : '', r.damage ? `<span class="chip bad">Damaged</span>` : ''].join(' ');
   const rows = list.slice(0, 100).map(j => `<tr class="flag" data-a="sheet" data-s="job" data-id="${esc(j.id)}" tabindex="0"><td class="mono">${esc(j.ret.pn)}${j.ret.sn ? ' SN ' + esc(j.ret.sn) : ''}</td><td>${chips(j.ret)}<div class="t3">${esc(retProblems(j.ret).join(' · '))}</div></td><td>${esc(j.techName)}</td><td>${esc(fmtDT(j.ret.hubAt))}</td><td class="mono">${esc(j.id)}</td><td>${esc(j.ret.hubBy || '')}</td></tr>`);
   return `<div class="card">${cardH('Received with a problem', list.length ? `${list.length}` : '')}
-    ${tbl(['Part', 'Problem', 'Engineer', 'At Stock', 'Request', 'Received by'], rows, 'No return arrived with a wrong serial number, a missing component or damage.')}</div>`;
+    ${tbl(['Part', 'Problem', 'Engineer', 'At Stock', 'Request', 'Received by'], rows, 'No return arrived with a wrong part number or serial number, a missing component or damage.')}</div>`;
 }
 function repReturns() {
   const R = returnsData(JOBS), now = R.now;
@@ -6794,7 +6820,11 @@ const otpRequired = () => !!UI.otpOn && !deviceTrusted();
 /* read the Team Leader's 2-factor switch at sign-in (defaults to off) */
 async function loadSecurity() {
   UI.otpOn = false;
-  try { const s = await FB.fs.collection('settings').doc('security').get(); if (s.exists && s.data().otp === true) UI.otpOn = true; } catch (e) { /* off */ }
+  try {
+    const q = await quickGet(FB.fs.collection('settings').doc('security'), () => true), on = s => !!(s && s.exists && s.data().otp === true);
+    UI.otpOn = on(q.snap);
+    if (q.server) q.server.then(s => { UI.otpOn = on(s); }).catch(() => {});   /* opened from the saved copy: the server's answer when it comes */
+  } catch (e) { /* off */ }
 }
 /* the password is older than 90 days, or the Team Leader marked it to be changed */
 function pwMustChange(d) { if (!d) return false; if (d.mustChange === true) return true; const at = +d.pwAt; return at > 0 && Date.now() - at > PW_MAX_AGE; }
@@ -6993,14 +7023,31 @@ async function fbSignInTry(email, pw) {
   throw mapAuthErr(first);
 }
 function resetData() { unsubAll(); BUDGETS = {}; JOBS = []; JOBS_OPEN = []; JOBS_RECENT = []; ARCHIVE = null; ALL_LOADED = false; LINES = []; PARTS = {}; ADJ = []; LEGACY = []; UI.loaded = false; UI.ledger = null; UI.traceRes = null; }
+/* Open fast (15 Nov 2026). A read from the server waits for the connection to Firebase, which on a phone that has just
+   started SPMS (the Android app always starts fresh) can take 10 seconds or more. After 2.5 seconds SPMS uses the copy
+   saved on this phone, if there is one, and opens; the server's answer still comes and is checked then (server = that
+   pending read; null when the answer already came from the server). No saved copy (a new phone, or an iPhone, which
+   keeps none): it waits for the server as before. A refused read (permission) is never replaced by the saved copy. */
+const QUICK_MS = 2500;
+function quickGet(ref, okSaved) {
+  const server = ref.get();
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const t = setTimeout(() => { ref.get({ source: 'cache' }).then(s => { if (!done && s && okSaved(s)) { done = true; resolve({ snap: s, server }); } }, () => { /* no saved copy: wait for the server */ }); }, QUICK_MS);
+    server.then(s => { clearTimeout(t); if (!done) { done = true; resolve({ snap: s, server: null }); } }, e => { clearTimeout(t); if (!done) { done = true; reject(e); } });
+  });
+}
 async function fbAuthChanged(user) {
   resetData(); UI.gate = null;
   const fail = msg => { UI.siErr = msg; UI.authReady = true; UI.profile = null; ACCOUNTS = TEST_ACCOUNTS.slice(); USERS = []; $('#scr').innerHTML = ''; render(); };
+  let later = null;
   if (!user) { markSignInPw(''); UI.profile = null; ACCOUNTS = TEST_ACCOUNTS.slice(); USERS = []; UI.authReady = true; if (!UI.sheet || UI.sheet.name !== 'pwmail') closeSheet(); $('#scr').innerHTML = ''; render(); return; }
   const email = (user.email || '').toLowerCase();
   try {
     let sec = loadSecurity();   /* is 2-factor turned on? read at the same time as the profile, to open faster */
-    const doc = await FB.fs.collection('users').doc(email).get(); let d = doc.exists ? fixTitle(doc.data()) : null;
+    /* a saved profile is used only if it lets the person in: whether access was removed is always the server's answer */
+    const pq = await quickGet(FB.fs.collection('users').doc(email), s => { if (!s.exists) return false; const x = s.data(); return !!ROLE[x.role] && x.active !== false; }), doc = pq.snap; let d = doc.exists ? fixTitle(doc.data()) : null;
+    if (pq.server) later = pq.server;   /* opened from the saved profile: check the server's copy when it comes */
     const bt = builtinTL(email), bm = builtinMgr(email);
     /* a built-in Team Leader signing in for the first time: add them to the staff list (the rules allow it only once their
        email is confirmed, which the password email does) */
@@ -7024,6 +7071,17 @@ async function fbAuthChanged(user) {
   if (pwMustChange(UI.pwDoc) || pwWeakNow()) { UI.gate = 'pw'; UI.gateD = {}; render(); return; }
   UI.gate = null; PW_SIGNED = '';   /* no password screen: the typed password isn't needed any more */
   UI.store = 'connecting'; render(); $('#scr').scrollTop = 0; subscribeAll(); toast(`Signed in as ${UI.profile.name}`); refreshPush();
+  if (later) later.then(s => profileCheck(email, s, null, fail), e => profileCheck(email, null, e, fail));
+}
+/* SPMS opened from the saved profile: the server's copy has come. Access removed since → out; the password must be
+   changed → the password screen. Role, hub and name changes already come through the live staff list. */
+function profileCheck(email, s, e, fail) {
+  const p = UI.profile; if (!p || p.email !== email || !FB || !FB.auth.currentUser) return;
+  if (e && !/permission/.test(String(e.code || e))) return;   /* no answer from the server: nothing to check */
+  const d = s && s.exists ? fixTitle(s.data()) : null;
+  if (!d || !ROLE[d.role] || d.active === false) { fail(d && d.active === false ? 'Your access to SPMS was removed. Ask the Team Leader.' : 'Your login works, but you aren’t on the SPMS staff list yet. Ask the Team Leader to add you.'); FB.auth.signOut().catch(() => {}); return; }
+  UI.pwDoc = d;
+  if (!UI.gate && (pwMustChange(d) || pwWeakNow())) { UI.gate = 'pw'; UI.gateD = {}; render(); }
 }
 /* after a gate is cleared: move to the next gate, or into the app */
 function afterGate() {
