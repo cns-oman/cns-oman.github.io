@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261115205855">
+<meta name="spms-build" content="20261115215137">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -1156,7 +1156,15 @@ const normSN = x => String(x || '').trim().toUpperCase();
 const docId = pn => 'P-' + normPN(pn).replace(/[^A-Za-z0-9_\-.:@+]/g, c => '~' + c.charCodeAt(0).toString(16));
 const rid = p => p + '-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
 const qtyOf = l => l.sn ? 1 : (+l.qty || 0);
-const qtyAt = (loc, pn) => sum(LINES.filter(l => l.loc === loc && normPN(l.pn) === normPN(pn)), qtyOf);
+/* how many units of each part are at each place: worked out once each time the stock lines change (LINES is replaced,
+   never changed in place). 15 Nov 2026: the dashboard asked for it tens of thousands of times per screen, going through
+   every stock line each time, which froze the screen for seconds. */
+let QIDX = null, QIDX_OF = null;
+function qtyIndex() {
+  if (QIDX_OF !== LINES) { const m = new Map(); for (const l of LINES) { const k = l.loc + '\u0001' + normPN(l.pn); m.set(k, (m.get(k) || 0) + qtyOf(l)); } QIDX = m; QIDX_OF = LINES; }
+  return QIDX;
+}
+const qtyAt = (loc, pn) => qtyIndex().get(loc + '\u0001' + normPN(pn)) || 0;
 const linesAt = (loc, pn) => LINES.filter(l => l.loc === loc && (!pn || normPN(l.pn) === normPN(pn)));
 const hubLines = pn => LINES.filter(l => HUBS.includes(l.loc) && normPN(l.pn) === normPN(pn));
 const vanLoc = techId => 'VAN-' + techId;
@@ -1833,14 +1841,19 @@ function partOp(pn, patch, a) {
   return { id: docId(pn), fn: cur => { const doc = Object.assign({}, cur || { pn, name: '', price: 0, min: {}, max: {}, vanMin: 0, vanMax: 0, autoRep: false, restricted: false }, patch, { pn, updatedAt: Date.now(), updatedBy: a.by }); delete doc.id; return doc; } };
 }
 async function savePart(pn, patch) { const [doc] = await apiBulk('parts', [partOp(pn, patch)]); if (doc) delete doc.id; return doc; }
+/* worked out again only when the parts list, the stock lines or the hubs change (the dashboard asks once per hub) */
+let LOW_MEMO = null;
 function lowStock() {
+  const M = LOW_MEMO, hk = HUBS.join(',');
+  if (M && M.parts === PARTS && M.lines === LINES && M.hubs === hk) return M.out.slice();
   const out = [];
   for (const p of Object.values(PARTS)) for (const hub of HUBS) {
     const mn = +(p.min || {})[hub] || 0, mx = +(p.max || {})[hub] || 0, q = qtyAt(hub, p.pn);
     if (mn && q < mn) out.push({ pn: p.pn, name: p.name, hub, kind: 'low', qty: q, min: mn, max: mx });
     else if (mx && q > mx) out.push({ pn: p.pn, name: p.name, hub, kind: 'over', qty: q, min: mn, max: mx });
   }
-  return out;
+  LOW_MEMO = { parts: PARTS, lines: LINES, hubs: hk, out };
+  return out.slice();
 }
 function vanLow(techId) {
   const out = [];
