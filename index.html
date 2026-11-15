@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261114170127">
+<meta name="spms-build" content="20261115172248">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -76,7 +76,9 @@
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { height: 100%; }
+/* no pull-to-refresh (Android Chrome): pulling the page down reloaded the whole app and lost what was on screen.
+   The data is live, so nothing needs a manual refresh (15 Nov 2026). */
+html, body { height: 100%; overscroll-behavior-y: none; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15.5px; line-height: 1.45; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -481,7 +483,7 @@ select.inp { appearance: none; background-image: linear-gradient(45deg, transpar
 .sheet-h h3:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; border-radius: 6px; }
 .sheet-h p { margin: 4px 0 0; font-size: 13.5px; color: var(--ink-3); }
 .x { width: 38px; height: 38px; border: 0; border-radius: 50%; background: var(--fill); color: var(--ink-2); display: grid; place-items: center; flex: none; }
-.sheet-b { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.sheet-b { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 2px 16px 18px; display: flex; flex-direction: column; gap: 14px; }
 .sheet-b > * { flex: none; }
 .sheet-f { flex: none; padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px)); background: var(--surface); display: flex; gap: 10px; box-shadow: 0 -10px 24px -18px rgba(0,0,0,.35); }
 .sheet-f .btn { flex: 1; }
@@ -1768,6 +1770,7 @@ function changed() {
    Business rules
    ========================================================================== */
 let lastAt = 0;
+let REC = null;   /* the request step running now: what it changes, for the Team Leader's undo (see tlUndo) */
 const tick = () => { const t = Math.max(Date.now(), lastAt + 1); lastAt = t; return t; };
 function actor() { const me = ME(); return me ? { by: me.name, role: ROLE[me.role] } : { by: 'System', role: 'System' }; }
 
@@ -1780,7 +1783,7 @@ const ledgerPart = {};
 const dayKey = at => { const d = new Date(at); return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`; };
 function log(e, who) {
   const a = who || actor(), me = ME();
-  LOGQ.push(Object.assign({ at: tick(), by: a.by, role: a.role, qty: 1, from: '', to: '', ref: '', note: '' }, e, { pn: normPN(e.pn), sn: normSN(e.sn), k: who || !me ? 'system' : me.id }));
+  LOGQ.push(Object.assign({ at: tick(), by: a.by, role: a.role, qty: 1, from: '', to: '', ref: '', note: '' }, e, { pn: normPN(e.pn), sn: normSN(e.sn), k: who || !me ? 'system' : me.id }, REC ? { u: REC.key } : {}));   /* u: the request step that wrote it (for undo) */
   DATAV.led++;
   if (!logTimer) logTimer = setTimeout(() => { logTimer = null; flushLog().catch(() => {}); }, 0);
 }
@@ -1803,7 +1806,7 @@ async function writeLedger(batch) {
         const cur = await api.get('ledger', id), list = (cur && Array.isArray(cur.entries)) ? cur.entries : [];
         if (list.length && list.length + add.length > LEDGER_CAP) return false;
         const entries = list.concat(add);
-        await api.set('ledger', id, { day: g.slice(0, 8), key: g.slice(9), part, at: Math.max(...entries.map(x => x.at)), first: Math.min(...entries.map(x => x.at)), n: entries.length, sns: [...new Set(entries.map(x => x.sn).filter(Boolean))], entries });
+        await api.set('ledger', id, { day: g.slice(0, 8), key: g.slice(9), part, at: Math.max(...entries.map(x => x.at)), first: Math.min(...entries.map(x => x.at)), n: entries.length, sns: [...new Set(entries.map(x => x.sn).filter(Boolean))], us: [...new Set(entries.map(x => x.u).filter(Boolean))], entries });
         return true;
       });
       if (ok) { ledgerPart[g] = part; break; }
@@ -1859,7 +1862,7 @@ async function putLine(loc, pn, o) {
   const base = lineBase(loc, pn, o);
   if (sn) {
     const dup = await snInStock(sn); if (dup) throw E(`Serial number ${sn} is already in the inventory (${locName(dup.loc)}).`);
-    const id = rid('LN'); await setLine(id, Object.assign(base, { sn, qty: 1 })); return id;
+    const id = rid('LN'); await setLine(id, Object.assign(base, { sn, qty: 1 })); return recPut(id, loc, pn, sn, 1);
   }
   const n = Math.max(1, parseInt(o.qty, 10) || 1);
   /* a part put on a named shelf / bin joins only a line on that same shelf */
@@ -1868,10 +1871,12 @@ async function putLine(loc, pn, o) {
     /* add to the line already there (read and written together); if it was emptied a moment ago, start a new line */
     const add = async () => { const [r] = await apiBulk('lines', [{ id: same.id, fn: cur => cur && !cur.sn ? Object.assign(cur, { qty: (+cur.qty || 0) + n, editedAt: Date.now() }) : undefined }]); return r && !r.sn ? same.id : null; };
     const got = api.packed ? await add() : await withLocks(['lines/' + same.id], add);
-    if (got) return got;
+    if (got) return recPut(got, loc, pn, '', n);
   }
-  const id = rid('LN'); await setLine(id, Object.assign(base, { sn: '', qty: n })); return id;
+  const id = rid('LN'); await setLine(id, Object.assign(base, { sn: '', qty: n })); return recPut(id, loc, pn, '', n);
 }
+/* a request step remembers the stock it put in and took out, so the Team Leader can undo it */
+function recPut(key, loc, pn, sn, qty) { if (REC) REC.puts.push({ key, loc, pn, sn: sn || '', qty }); return key; }
 async function takeLine(key, n, expectLoc) {
   /* read the line and take from it in one step, so two people can't take the same part */
   const take = async () => {
@@ -1886,7 +1891,9 @@ async function takeLine(key, n, expectLoc) {
     } }]);
     return out;
   };
-  return api.packed ? take() : withLocks(['lines/' + key], take);
+  const t = await (api.packed ? take() : withLocks(['lines/' + key], take));
+  if (REC && t) REC.takes.push(Object.assign({}, t));
+  return t;
 }
 async function takeMany(plan) {
   const taken = [];
@@ -2159,7 +2166,13 @@ async function jobStep(id, status, role, fn) {
   return withLocks(['jobs/' + id], async () => {
     const j = await api.get('jobs', id); if (!j) throw E('This request no longer exists.');
     const me = must(normJob(j), status, role);
-    return fn(j, me);
+    const outer = REC, rec = REC = { key: rid('U'), id, base: JSON.parse(JSON.stringify(j)), puts: [], takes: [], made: [], main: null, entry: null, n: 0 };
+    try {
+      const out = await fn(j, me);
+      /* stock moved or a request made after the request was saved (e.g. a scrapped part into the scrap pool): save the record of it too */
+      if (rec.main && rec.puts.length + rec.takes.length + rec.made.length > rec.n) await saveJob(rec.main);
+      return out;
+    } finally { REC = outer; }
   });
 }
 function nextDoc(j, me, status, action, note, extra) {
@@ -2168,12 +2181,12 @@ function nextDoc(j, me, status, action, note, extra) {
   if (!isOpenStatus(status) && !doc.closedAt) doc.closedAt = now;
   return doc;
 }
-async function saveJob(doc) { UI.lastWrite[doc.id] = doc.updatedAt; await api.set('jobs', doc.id, doc); upsertJob(doc); return doc; }
+async function saveJob(doc) { undoMark(doc); UI.lastWrite[doc.id] = doc.updatedAt; await api.set('jobs', doc.id, doc); upsertJob(doc); return doc; }
 function upsertJob(doc) {
   const d = normJob(Object.assign({}, doc)); const put = arr => { const i = arr.findIndex(x => x.id === d.id); if (i >= 0) arr[i] = d; else arr.unshift(d); return arr; };
   JOBS_RECENT = put(JOBS_RECENT.slice()); JOBS_OPEN = d.open ? put(JOBS_OPEN.slice()) : JOBS_OPEN.filter(x => x.id !== d.id); mergeJobs();
 }
-const cleanCopy = j => { const c = Object.assign({}, j); for (const k of ['id', 'history', 'backorders', 'splits', 'reminders', 'ws', 'closedAt', 'outcome', 'reqPhotos', 'rcvPhotos']) delete c[k]; return c; };
+const cleanCopy = j => { const c = Object.assign({}, j); for (const k of ['id', 'history', 'backorders', 'splits', 'reminders', 'ws', 'closedAt', 'outcome', 'reqPhotos', 'rcvPhotos', 'undo']) delete c[k]; return c; };
 
 async function createJob(d, dry) {
   const me = mustRole('TECH');
@@ -2853,14 +2866,155 @@ async function wsScrap(id, d) {
     return doc;
   });
 }
+/* Stock can change the part number and the serial number of the part that came back from the Workshop, with a reason
+   (15 Nov 2026). The part goes into stock under the new numbers; the history and the inventory log keep the old ones. */
+const PN_RE = /^[A-Z0-9][A-Z0-9._\/-]{1,39}$/;
+function backChange(j, d) {
+  const r = j.ret || {}, opn = normPN(r.pn), osn = normSN(r.sn);
+  const pn = d && d.bpn != null ? normPN(d.bpn) : opn, sn = osn && d && d.bsn != null ? normSN(d.bsn) : osn;
+  if (!pn) throw E('Enter the part number.');
+  if (pn !== opn && !PN_RE.test(pn)) throw E('Use letters, numbers, dots, dashes or slashes for the part number.');
+  if (osn && !sn) throw E('Enter the serial number.');
+  if (pn === opn && sn === osn) return null;
+  const why = String((d && d.bwhy) || '').trim(); if (!why) throw E('Write why the part number or serial number changes.');
+  return { pn, sn, opn, osn, why };
+}
+const backTxt = c => [c.pn !== c.opn ? `PN ${c.opn} → ${c.pn}` : '', c.sn !== c.osn ? `SN ${c.osn} → ${c.sn}` : ''].filter(Boolean).join(' · ');
 async function stockBackInStock(id, d) {
   return jobStep(id, 'REPAIRED', 'STOCK', async (j, me) => {
     const hub = HUBS.includes(d && d.hub) ? d.hub : HUBS[0], q = j.ret.sn ? 1 : j.ret.qty || 1, bin = binTxt(d && d.bin);
     if (!bin) throw E(BIN_MSG);
-    await putLine(hub, j.ret.pn, { sn: j.ret.sn, qty: q, cond: 'Repaired', bin, name: (j.ws && j.ws.partName) || j.ret.name || j.desc, source: 'Repaired ' + j.id });
-    const doc = await saveJob(nextDoc(j, me, 'CLOSED', 'Repaired part back in stock', `${j.ret.sn ? 'SN ' + j.ret.sn : '× ' + q} · added to ${hub} inventory · shelf ${bin}`, { outcome: 'Repaired, back in stock', backBin: bin }));
-    log({ t: 'Repaired part back in stock', pn: j.ret.pn, sn: j.ret.sn, qty: q, from: 'Workshop', to: hub, ref: j.id, note: 'Shelf ' + bin });
+    const c = backChange(j, d), pn = c ? c.pn : j.ret.pn, sn = c ? c.sn : j.ret.sn;
+    const name = (c && c.pn !== c.opn && partName(pn)) || (j.ws && j.ws.partName) || j.ret.name || j.desc;
+    await putLine(hub, pn, { sn, qty: q, cond: 'Repaired', bin, name, source: 'Repaired ' + j.id });
+    const ret = c ? Object.assign({}, j.ret, { pn, sn, backWas: { pn: c.opn, sn: c.osn, why: c.why, by: me.name, at: Date.now() } }) : j.ret;
+    const doc = await saveJob(nextDoc(j, me, 'CLOSED', 'Repaired part back in stock', `${c ? backTxt(c) + ': ' + c.why + ' · ' : ''}${sn ? 'SN ' + sn : '× ' + q} · added to ${hub} inventory · shelf ${bin}`, { ret, outcome: 'Repaired, back in stock', backBin: bin }));
+    if (c) log({ t: 'Part number / serial changed', pn: c.opn, sn: c.osn, qty: q, from: 'Workshop', to: hub, ref: j.id, note: `Now ${pn}${sn ? ' SN ' + sn : ''}: ${c.why}` });
+    log({ t: 'Repaired part back in stock', pn, sn, qty: q, from: 'Workshop', to: hub, ref: j.id, note: 'Shelf ' + bin + (c ? ` · was ${c.opn}${c.osn ? ' SN ' + c.osn : ''}` : '') });
     return doc;
+  });
+}
+
+/* ---------- Team Leader: undo the last step (15 Nov 2026) ----------
+   Every request step keeps a record of what it changed: the old values of the request, the stock it put in or took out,
+   the requests it made and (through the inventory log) the log lines it wrote. The Team Leader can undo the last step,
+   one at a time, with a reason: the request goes back to the step before, the stock moves are reversed, the requests the
+   step made are deleted (only while nobody has acted on them), a finished request comes out of the engineer's settled
+   budget again, and the inventory log gets a "Step undone" line for each line the step wrote. Steps made before this
+   was added have no record, so they can't be undone. */
+const UNDO_MAX = 20, UNDO_SKIP = ['id', 'history', 'updatedAt', 'updatedBy', 'undo'];
+const canon = v => JSON.stringify(v == null ? null : v, (k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, s) => { o[s] = x[s]; return o; }, {}) : x);
+const isMap = v => !!v && typeof v === 'object' && !Array.isArray(v);
+/* the old values of what changed: whole fields, or for a field that is a group of values (ret, ws, dispatch …) only the parts that changed */
+function undoDiff(a, b) {
+  const old = {}, none = [], part = {};
+  for (const k of new Set(Object.keys(a).concat(Object.keys(b)))) {
+    if (UNDO_SKIP.includes(k) || canon(a[k]) === canon(b[k])) continue;
+    if (isMap(a[k]) && isMap(b[k])) {
+      const p = { old: {}, none: [] };
+      for (const s of new Set(Object.keys(a[k]).concat(Object.keys(b[k])))) if (canon(a[k][s]) !== canon(b[k][s])) { if (a[k][s] === undefined) p.none.push(s); else p.old[s] = a[k][s]; }
+      part[k] = p;
+    } else if (a[k] === undefined) none.push(k); else old[k] = a[k];
+  }
+  return { old, none, part };
+}
+/* called on every save of a request while a step runs: the request of the step gets the record (its newest undo entry);
+   any other request saved is one the step made */
+function undoMark(doc) {
+  const r = REC; if (!r || !doc || !doc.id) return;
+  if (doc.id !== r.id) { if (!r.made.some(m => m.id === doc.id)) r.made.push({ id: doc.id, st: doc.status || '' }); return; }
+  const h = doc.history || [], last = h[h.length - 1];
+  if (!last || h.length <= (r.base.history || []).length) return;   /* not a step (e.g. only the group id changed) */
+  const e = r.entry || (r.entry = { key: r.key, from: r.base.status || '', puts: r.puts, takes: r.takes, made: r.made });
+  Object.assign(e, undoDiff(r.base, doc), { to: doc.status || '', at: last.at || Date.now(), by: last.by || '', role: last.role || '', action: last.action || '' });
+  doc.undo = (Array.isArray(r.base.undo) ? r.base.undo : []).concat([e]).slice(-UNDO_MAX);
+  r.main = doc; r.n = r.puts.length + r.takes.length + r.made.length;
+}
+/* the step that can be undone now: the newest record, if the request is still at the step it led to */
+const lastUndo = j => { const u = j && Array.isArray(j.undo) ? j.undo[j.undo.length - 1] : null; return u && u.to === j.status ? u : null; };
+const moveTxt = x => `${x.pn}${x.sn ? ' SN ' + x.sn : ' × ' + (x.qty || 1)}`;
+/* what undoing the step changes in stock and in other requests (shown before the Team Leader confirms) */
+function undoEffects(e) {
+  return [...(e.puts || []).map(p => `${moveTxt(p)} comes out of ${locName(p.loc)}`), ...(e.takes || []).map(t => `${moveTxt(t)} goes back into ${locName(t.from)}${t.bin ? ' · shelf ' + t.bin : ''}`), ...(e.made || []).map(k => `${k.id} (made by this step) is deleted`)];
+}
+/* the checks on this phone's copy of the stock and requests (done again on the saved data when it runs) */
+function checkUndoLocal(j, e) {
+  const need = new Map(); for (const p of e.puts || []) need.set(p.key, (need.get(p.key) || 0) + (p.sn ? 1 : +p.qty || 1));
+  for (const p of e.puts || []) {
+    const l = LINES.find(x => x.key === p.key);
+    if (!l || l.loc !== p.loc || normPN(l.pn) !== normPN(p.pn) || (p.sn ? normSN(l.sn) !== normSN(p.sn) : qtyOf(l) < need.get(p.key))) throw E(`${moveTxt(p)} is no longer in ${locName(p.loc)} (it was sent, used or moved), so this step can’t be undone.`);
+  }
+  for (const t of e.takes || []) if (t.sn) { const l = LINES.find(x => normSN(x.sn) === normSN(t.sn)); if (l) throw E(`Serial number ${t.sn} is in the inventory again (${locName(l.loc)}), so this step can’t be undone.`); }
+  for (const k of e.made || []) { const c = JOB(k.id); if (c && c.status !== k.st) throw E(`${k.id}, made by this step, has moved on (${stLabel(c)}). Undo its steps first.`); }
+}
+function checkUndo(j, d) {
+  const e = lastUndo(j); if (!e) throw E('There is no step to undo on this request.');
+  if (!String((d && d.uwhy) || '').trim()) throw E('Write why the step is undone.');
+  checkUndoLocal(j, e);
+  return `Undo “${e.action}”? The request goes back to “${stLabel(Object.assign({}, j, { status: e.from }))}”.`;
+}
+async function tlUndo(id, d) {
+  const me = mustRole('TL'), j0 = JOB(id); if (!j0) throw E('This request no longer exists.');
+  if (!inMyHub(jobHub(j0), me)) throw E(`This request belongs to ${HUB_NAME[jobHub(j0)] || jobHub(j0)}.`);
+  const why = String((d && d.uwhy) || '').trim(); if (!why) throw E('Write why the step is undone.');
+  const done = await withLocks(['jobs/' + id], async () => {
+    const j = await api.get('jobs', id); if (!j) throw E('This request no longer exists.'); normJob(j);
+    const e = lastUndo(j); if (!e) throw E('This request has moved on since you opened it. Close and reopen it.');
+    checkUndoLocal(j, e);
+    const kids = [];
+    for (const k of e.made || []) { const c = await api.get('jobs', k.id); if (!c) continue; if (c.status !== k.st) throw E(`${k.id}, made by this step, has moved on (${stLabel(normJob(c))}). Undo its steps first.`); kids.push(c); }
+    for (const t of e.takes || []) if (t.sn) { const dup = await snInStock(t.sn); if (dup) throw E(`Serial number ${t.sn} is in the inventory again (${locName(dup.loc)}), so this step can’t be undone.`); }
+    /* 1. the stock the step put in comes out again */
+    let out;
+    try { out = await takeMany((e.puts || []).map(p => ({ key: p.key, qty: p.sn ? 1 : p.qty, loc: p.loc }))); }
+    catch (x) { throw E('Some of the stock this step put in is no longer there, so it can’t be undone. ' + x.message); }
+    /* 2. the stock the step took goes back where it was */
+    const back = [];
+    const undoMoves = async () => { for (const k of back) { try { await takeLine(k.key, k.qty, k.loc); } catch (x) { /* best effort */ } } await putBack(out); };
+    try { for (const t of e.takes || []) { const key = await putLine(t.from, t.pn, { sn: t.sn, qty: t.qty, cond: t.cond, bin: t.bin, name: t.name, source: 'Step undone on ' + j.id }); back.push({ key, qty: t.sn ? 1 : t.qty, loc: t.from }); } }
+    catch (x) { await undoMoves(); throw x; }
+    /* 3. the request goes back to the step before: the old values return, what the step added goes */
+    const now = Date.now(), doc = Object.assign({}, j);
+    for (const [k, v] of Object.entries(e.old || {})) doc[k] = v;
+    for (const k of e.none || []) delete doc[k];
+    for (const [k, p] of Object.entries(e.part || {})) { const o = Object.assign({}, isMap(doc[k]) ? doc[k] : {}); for (const [s, v] of Object.entries(p.old || {})) o[s] = v; for (const s of p.none || []) delete o[s]; doc[k] = o; }
+    /* a finished or scrapped repair goes back to the Workshop with the timer paused: the time since then doesn't count */
+    if (e.from === 'REPAIRING' && e.to !== 'REPAIRING' && doc.ws && doc.ws.tm && doc.ws.tm.since) {
+      const t = doc.ws.tm, cur = j.ws && j.ws.tm, acc = cur && cur.since == null && +cur.acc >= (+t.acc || 0) ? +cur.acc : (+t.acc || 0) + Math.max(0, (+e.at || now) - t.since);   /* the time the step counted */
+      doc.ws = Object.assign({}, doc.ws, { tm: Object.assign({}, t, { acc, since: null }) });
+    }
+    const fx = undoEffects(Object.assign({}, e, { made: kids.map(c => ({ id: c.id })) }));
+    Object.assign(doc, { status: e.from, open: isOpenStatus(e.from), undo: j.undo.slice(0, -1), updatedAt: now, updatedBy: me.name,
+      history: (j.history || []).concat([{ at: now, by: me.name, byId: me.id || '', role: ROLE.TL, action: 'Step undone by Team Leader', note: `${e.action}${e.by ? ' (' + e.by + ')' : ''}: ${why}${fx.length ? ' · ' + fx.join(' · ') : ''}` }]) });
+    try { await saveJob(doc); } catch (x) { await undoMoves(); throw x; }
+    /* 4. the requests the step made (nobody has acted on them) are deleted */
+    const gone = new Set();
+    for (const c of kids) { try { await api.del('jobs', c.id); gone.add(c.id); } catch (x) { console.warn('undo', x); } }
+    if (gone.size) { if (ARCHIVE) ARCHIVE = ARCHIVE.filter(x => !gone.has(x.id)); JOBS_RECENT = JOBS_RECENT.filter(x => !gone.has(x.id)); JOBS_OPEN = JOBS_OPEN.filter(x => !gone.has(x.id)); mergeJobs(); }
+    /* 5. a finished request already in the engineer's settled budget total comes out of it (it is counted again when it finishes) */
+    if (!j.open && j.closedAt && doc.open) { try { await budgetUnsettle(j); } catch (x) { console.warn('budget', x); } }
+    return { j, e, doc };
+  });
+  /* 6. the inventory log: a "Step undone" line for each line the step wrote */
+  const { j, e, doc } = done;
+  try {
+    await flushLog().catch(() => {});
+    const seen = new Set(), lines = flatLedger(await api.query('ledger', { where: [['us', 'array-contains', e.key]] })).concat(LOGQ).filter(x => x.u === e.key && !seen.has(x.at + '|' + x.t + '|' + x.sn) && seen.add(x.at + '|' + x.t + '|' + x.sn));
+    for (const x of lines) log({ t: 'Step undone', undo: x.t, pn: x.pn, sn: x.sn, qty: x.qty, from: x.to, to: x.from, ref: x.ref || j.id, note: `Undo of “${x.t}” on ${j.id}: ${why}` });
+  } catch (x) { console.warn('undo log', x); }
+  return doc;
+}
+/* a finished request that is already in the engineer's settled budget total: take its value out again */
+async function budgetUnsettle(j) {
+  const v = jobSpend(j);
+  if (!(v > 0) || j.open || !j.closedAt || !j.techId || !j.createdAt) return;
+  const id = budKey(j.techId, budYear(j.createdAt));
+  await withLocks(['budgets/_state'], async () => {
+    const r = await api.get('budgets', id); if (!r || j.createdAt < (+r.at || 0)) return;
+    const done = Object.assign({}, r.done || {}); if (!(done[j.id] || (+r.upto && j.closedAt < +r.upto - BUD_LOOK))) return;   /* not settled yet: nothing to take out */
+    delete done[j.id];
+    const doc = Object.assign({}, r, { settled: r3(Math.max(0, (+r.settled || 0) - v)), done }); delete doc.id;
+    await api.set('budgets', id, doc); BUDGETS[id] = Object.assign({}, doc, { id });
   });
 }
 
@@ -3747,7 +3901,7 @@ SH.job = (d, p) => {
       j.dispatch && ['Sent', `${esc((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn)} · ${esc(isVan(j.dispatch.from) ? 'van stock' : j.dispatch.from)}${j.dispatch.courier ? ' · ' + esc(j.dispatch.courier) : ''}${j.dispatch.ref ? ' · ' + esc(j.dispatch.ref) : ''}`],
       (j.backorders || []).length && ['Back-orders', j.backorders.map(jobLink).join(' ')], (j.splits || []).length && ['Separate returns', j.splits.map(jobLink).join(' ')],
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
-      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
+      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}${r.snExpected ? ` (expected ${esc(r.snExpected)})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
       r.issue && ['Issue', esc(r.issue)],
       r.logs && ['Logs', safeLink(r.logs) ? `<a href="${esc(safeLink(r.logs))}" target="_blank" rel="noopener noreferrer">Open the logs</a> <span class="t3">${esc(r.logs.length > 60 ? r.logs.slice(0, 57) + '…' : r.logs)}</span>` : esc(r.logs)],
       (j.tmAsk || j.tm) && ['Technical Manager', [j.tmAsk && `Asked by ${esc(j.tmAsk.by)}, ${fmtDT(j.tmAsk.at)}: ${esc(j.tmAsk.note)}`, j.tm && `${j.tm.ok ? 'Approved' : '<b>Rejected</b>'} by ${esc(j.tm.by)}, ${fmtDT(j.tm.at)}${j.tm.note ? ': ' + esc(j.tm.note) : ''}`].filter(Boolean).join('<br>')],
@@ -3838,9 +3992,22 @@ function altActions(j, me) {
   if (me.role === 'TECH' && j.techId === me.id && j.status === 'RETURN' && j.ret && j.ret.type === 'defective') out.push(['fixsn', 'Correct serial number']);
   if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && tmState(j) !== 'new' && d0(j)) out.push(['fixtime', 'Correct repair time']);
   if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && d0(j)) out.push(['scrap', 'Scrap · can’t be repaired']);
+  if (me.role === 'TL' && lastUndo(j) && inMyHub(jobHub(j), me)) out.push(['undo', 'Undo the last step']);
   return out;
 }
 const d0 = () => !(UI.sheet && UI.sheet.d.mode === 'finish');
+/* the Team Leader undoes the last step of a request (15 Nov 2026): the panel shows the step, where the request goes
+   back to and what changes in stock, and asks why */
+function undoForm(j, d) {
+  const e = lastUndo(j), title = 'Undo the last step';
+  if (!e) return { title, form: box('<p style="margin:0">There is no step to undo on this request.</p>'), op: null };
+  const fx = undoEffects(e), back = stLabel(Object.assign({}, j, { status: e.from }));
+  return { title, form: box(`<p style="margin:0">Last step: <b>${esc(eng(e.action))}</b>${e.by ? ' · ' + esc(e.by) : ''}${e.role ? ' (' + esc(eng(e.role)) + ')' : ''} · ${fmtDT(e.at)}</p>
+      <p style="margin:0">The request goes back to <b>${esc(back)}</b>${e.from === e.to ? '' : ', so that step can be done again'}.</p>
+      ${fx.length ? `<div class="t2">Also:</div><ul class="t2" style="margin:0;padding-left:20px">${fx.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${area(d, 'uwhy', 'Why is it undone? *', 'e.g. Scrapped by mistake: the part can be repaired')}<span class="hint">The history keeps the step and the undo. The request shows again in the To do list of whoever does that step.</span>`),
+    op: { label: 'Undo step', cls: 'danger', danger: true, yes: 'Yes, undo it', check: () => checkUndo(j, d), run: () => tlUndo(j.id, d), stay: true, ok: 'Step undone' } };
+}
 function altForm(j, me, d) {
   switch (d.alt) {
     case 'cancel': return { title: j.type === 'van' ? 'Cancel van part use' : 'Cancel request', form: box(`<p style="margin:0">Cancel the ${j.type === 'van' ? 'use of' : 'request for'} <b>${esc(j.pn)} × ${j.qty}</b>${j.type === 'van' ? ' from your van' : ''} on <span class="mono">${esc(j.scn)}</span>? Use this when the part is no longer needed.</p>${area(d, 'cnote', 'Reason (optional)', 'e.g. Fixed without a new part')}`), op: { label: 'Cancel', cls: 'danger', danger: true, yes: 'Yes, cancel it', check: () => j.type === 'van' ? 'Cancel this? The part stays in your van.' : 'Cancel this request? It will close and Stock won’t send the part.', run: () => techCancel(j.id, d), ok: j.type === 'van' ? 'Cancelled' : 'Request cancelled' } };
@@ -3857,6 +4024,7 @@ function altForm(j, me, d) {
     case 'withdraw': return { title: 'Withdraw approval', form: box(`<p style="margin:0">${j.type === 'van' ? 'The engineer has not used this part yet.' : 'Stock has not sent this part yet.'} Withdrawing closes the ${j.type === 'rep' ? 'restock' : 'request'} as rejected, and the engineer sees your reason.</p>${area(d, 'wnote', 'Why are you withdrawing it? (required)', 'e.g. Customer replaced the machine')}`), op: { label: 'Withdraw approval', cls: 'danger', danger: true, yes: 'Yes, withdraw', check: () => checkWithdraw(j, d), run: () => tlWithdraw(j.id, d), ok: 'Approval withdrawn' } };
     case 'fixsn': return { title: 'Correct serial number', form: box(`<p style="margin:0">Current serial number of the part you are returning: <b class="mono">${esc(j.ret.sn || '(none)')}</b></p>${inp(d, 'fsn', 'Correct serial number *', 'As printed on the part', { mono: true })}${inp(d, 'fwhy', 'Why is it changing? *', 'e.g. Typing mistake')}<span class="hint">The old value is kept in the history and the inventory log.</span>`), op: { label: 'Save correction', run: () => techFixSn(j.id, d), stay: true, ok: 'Serial number corrected' } };
     case 'scrap': return { title: 'Scrap the part', form: box(`<p style="margin:0">Can’t repair <b class="mono">${esc(j.ret.pn)}${j.ret.sn ? ' SN ' + esc(j.ret.sn) : ''}</b>? Scrap it here. It goes to the scrap pool (its good pieces can be used in other repairs) and the request closes.</p>${area(d, 'sreason', 'Why can’t it be repaired? *', 'e.g. Main board burnt, no spare available')}${wsParts(j).length ? `<span class="hint">Spare parts already used (${money(sum(wsParts(j), p => +p.cost || 0))}) stay on the repair cost.</span>` : ''}`), op: { label: 'Scrap part', cls: 'danger', danger: true, yes: 'Yes, scrap it', check: () => checkScrap(j, d), run: () => wsScrap(j.id, d), ok: 'Scrapped. The part is in the scrap pool.' } };
+    case 'undo': return undoForm(j, d);
     case 'fixtime': return { title: 'Correct repair time', form: box(`<p style="margin:0">Timer now: <b data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</b>. Enter the time actually worked so far. ${tmState(j) === 'running' ? 'The timer keeps running from the corrected time.' : ''}</p><div class="two">${inp(d, 'fh', 'Hours', '0', { type: 'number', num: true })}${inp(d, 'fm', 'Minutes', '0', { type: 'number', num: true })}</div>${inp(d, 'fwhy', 'Why are you correcting it? *', 'e.g. Forgot to start the timer')}<span class="hint">The Team Leader sees every correction in the repair report and the Excel file.</span>`), op: { label: 'Save time', run: () => wsFixTime(j.id, d), stay: true, ok: 'Repair time corrected' } };
   }
   return { title: 'Request', form: '', op: null };
@@ -4010,7 +4178,12 @@ function actionForm(j, me, d) {
     }
     case 'REPAIRED':
       if (!d.hub) d.hub = (j.dispatch && HUBS.includes(j.dispatch.from)) ? j.dispatch.from : myHub();
-      return { form: box(`<p style="margin:0">Workshop repaired <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> for ${money((j.ws || {}).total)}. </p>${fld('Put into', hubSeg(d, 'hub'))}${binField(d, 'bin')}`), op: { label: 'Back in stock', cls: 'ok', check: () => { if (!binTxt(d.bin)) throw E(BIN_MSG); return null; }, run: () => stockBackInStock(j.id, d), ok: 'Back in stock and added to the inventory' } };
+      if (d.bpn == null) d.bpn = r.pn || ''; if (r.sn && d.bsn == null) d.bsn = r.sn;
+      /* Stock can change the part number and serial number of the repaired part (15 Nov 2026) */
+      return { form: box(`<p style="margin:0">Workshop repaired <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> for ${money((j.ws || {}).total)}. </p>${fld('Put into', hubSeg(d, 'hub'))}${binField(d, 'bin')}
+        ${inp(d, 'bpn', 'Part number *', '', { mono: true })}${r.sn ? inp(d, 'bsn', 'Serial number *', 'As printed on the part', { mono: true }) : ''}
+        ${inp(d, 'bwhy', 'Why do they change?', 'e.g. The Workshop changed the board: new part number')}<span class="hint">Change the part number${r.sn ? ' or serial number' : ''} only if the part that came back has another one. Then write why. The history and the inventory log keep the old ${r.sn ? 'numbers' : 'number'}.</span>`),
+        op: { label: 'Back in stock', cls: 'ok', check: () => { if (!binTxt(d.bin)) throw E(BIN_MSG); const c = backChange(j, d); return c ? `Put it into stock as ${c.pn}${c.sn ? ' SN ' + c.sn : ''}? (${backTxt(c)})` : null; }, run: () => stockBackInStock(j.id, d), ok: 'Back in stock and added to the inventory' } };
   }
   return null;
 }
@@ -4335,6 +4508,8 @@ SH.sendback = d => {
 /* a return to the Main Hub: Stock ticks what arrived; the engineer can cancel it until then */
 function retSheet(j, d) {
   const me = ME(), turn = myTurn(j, me), items = j.items || [], b = j.back || {}, open = j.status === 'RETURNING', n = jobQty(j);
+  /* the Team Leader undoes the last step (15 Nov 2026) */
+  if (d.alt === 'undo') { const a = undoForm(j, d); return { title: a.title, sub: `${esc(j.techName)} · <span class="mono">${esc(j.id)}</span>`, body: a.form + histFold(j, false), op: a.op }; }
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
   let body = `<div class="card"><div class="chips"><b class="num">${n} part${n === 1 ? '' : 's'}</b>${stChip(j)}${kindPills(j)}</div><div class="jh-t">${esc(j.desc || 'Return to the Main Hub')}</div>
     <div class="facts">${fact('Engineer', esc(j.techName))}${fact('From', esc(locName(j.from)))}${fact('To', esc(HUB_NAME[j.hub] || j.hub))}${fact('Sent', fmtDT(j.createdAt))}${fact('How', esc(viaTxt(b)))}${fact('Reference', b.ref ? `<span class="mono">${esc(b.ref)}</span>` : '')}${fact('Note', esc(b.note || ''))}</div>${photoStrip(b.receipt, 'Courier receipt')}</div>`;
@@ -4350,6 +4525,7 @@ function retSheet(j, d) {
     if ((b.missing || []).length) body += `<div class="alert warn wrap"><span class="lead warn">${ic('alert', 'sm')}</span><div class="main"><b>Not received at the Main Hub</b><span class="s">${esc(b.missing.join(', '))} · back in ${esc(locName(j.from))}</span></div></div>`;
     if (open && me && me.role === 'TECH' && j.techId === me.id) op = { label: 'Cancel this return', danger: true, yes: 'Yes, cancel', check: () => `Cancel this return? The parts go back to ${locName(j.from)}.`, run: () => techCancelBack(j.id), ok: `Cancelled · the parts are back in ${locName(j.from)}` };
   }
+  if (me && me.role === 'TL' && lastUndo(j) && inMyHub(jobHub(j), me)) body += `<div class="alts"><button class="btn sm sec" data-a="alt" data-v="undo">Undo the last step</button></div>`;
   body += histFold(j, turn);
   return { title: turn && open ? stNext(j) : 'Return to the Main Hub', sub: `${esc(j.techName)} · <span class="mono">${esc(j.id)}</span>`, body, op };
 }
@@ -5173,6 +5349,8 @@ const DASH_EV = {
   back: ['Returned to stock', 'Repaired part back in stock', 'Put back in hub'],
   scrap: ['Scrapped']
 };
+/* +1 for a log line of this kind, -1 for a "Step undone" line that reverses one (15 Nov 2026), 0 otherwise */
+const evIn = (e, k) => DASH_EV[k].includes(e.t) ? 1 : e.undo && DASH_EV[k].includes(e.undo) ? -1 : 0;
 const DASH_SERIES = [['taken', 'Taken from stock'], ['back', 'Back in stock'], ['scrap', 'Scrapped']];
 /* weeks start on Sunday */
 const weekOf = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - d.getDay()); return d.getTime(); };
@@ -5180,7 +5358,7 @@ const shortDay = t => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', 
 function dashData(jobs, led, now) {
   now = now || Date.now(); const since = now - 30 * DAY;
   const units = e => Math.abs(+e.qty || 0) || 1;
-  const count = (rows, k) => sum(rows.filter(e => DASH_EV[k].includes(e.t)), units);
+  const count = (rows, k) => sum(rows, e => evIn(e, k) * units(e));
   const recent = led.filter(e => e.at >= since);
   const outRet = jobs.filter(j => ['RETURN', 'RETURNING'].includes(j.status) && j.ret);
   const lateRet = outRet.filter(isLate);
@@ -5243,7 +5421,7 @@ const STEP_WORD = { day: 'by day', days: 'every 3 days', week: 'by week', month:
 const DASH_PHASES = [['Waiting for your approval', ['TL']], ['Approved · Stock to send', ['STOCK', 'REPL', 'REPL_GO', 'DRV_PICK', 'DRV_GO', 'DRV_COUR']], ['With the engineer', ['DISPATCHED', 'RECEIVED', 'USE_OK', 'REPL_CONF']], ['Return on its way back', ['RETURN', 'RETURNING', 'DRV_RET_PICK', 'DRV_RET_GO']], ['At Stock · to decide', ['ATHUB']], ['In the Workshop', ['WORKSHOP', 'REPAIRING', 'REPAIRED']]];
 function dashModel(jobs, led, r) {
   const units = e => Math.abs(+e.qty || 0) || 1, B = dashBuckets(r), start = r.start, end = r.end, pStart = start - (end - start);
-  const cnt = (k, s, t) => sum(led.filter(e => e.at >= s && e.at < t && DASH_EV[k].includes(e.t)), units);
+  const cnt = (k, s, t) => sum(led.filter(e => e.at >= s && e.at < t), e => evIn(e, k) * units(e));
   const tiles = [['taken', 'Taken from stock', 'box'], ['inst', 'Installed', 'wrench'], ['back', 'Back in stock', 'ret'], ['scrap', 'Scrapped', 'ban']].map(([k, label, icon]) => ({ k, label, icon, v: cnt(k, start, end), prev: cnt(k, pStart, start), trend: B.map(b => cnt(k, b.s, b.e)) }));
   const series = B.map(b => ({ b, taken: cnt('taken', b.s, b.e), back: cnt('back', b.s, b.e), scrap: cnt('scrap', b.s, b.e) }));
   const open = jobs.filter(j => isOpenStatus(j.status));
@@ -5253,7 +5431,7 @@ function dashModel(jobs, led, r) {
   const routed = jobs.filter(j => j.ret && j.ret.route && inP(j.ret.routedAt || j.updatedAt));
   const decisions = [['Back to stock', 'stock'], ['Sent to Workshop', 'repair'], ['Scrapped by Stock', 'scrap'], ['Consumed', 'consume']].map(([l, k]) => [l, sum(routed.filter(j => j.ret.route === k), j => j.ret.qty || 1)]);
   const wsDone = jobs.filter(j => j.ws && j.ws.doneAt && inP(j.ws.doneAt)), wsScrap = wsDone.filter(j => /^Scrapped/.test(j.outcome || '') || /Beyond/.test(j.ws.outcome || ''));
-  const top = groupSum(led.filter(e => e.at >= start && e.at < end && DASH_EV.taken.includes(e.t) && e.pn), e => e.pn, units).slice(0, 5);
+  const top = groupSum(led.filter(e => e.at >= start && e.at < end && evIn(e, 'taken') && e.pn), e => e.pn, e => evIn(e, 'taken') * units(e)).filter(x => x[1] > 0).slice(0, 5);
   const oldest = jobs.length ? Math.min(...jobs.map(j => j.createdAt || Infinity)) : Infinity;
   return { r, start, end, kind: B[0].kind, tiles, series, open: open.length, phases, decisions, repaired: wsDone.length - wsScrap.length, wsScrapped: wsScrap.length, repairCost: sum(wsDone, j => +j.ws.total || 0), top, partial: !allLoaded() && oldest > start };
 }
@@ -5513,7 +5691,7 @@ const ledgerWait = () => UI.ledgerErr ? `<div class="err">${esc(UI.ledgerErr)}</
 function repMoves() {
   if (!ensureLedger()) return ledgerWait();
   const since = Date.now() - 30 * DAY, rows = UI.ledger.rows.filter(e => e.at >= since);
-  return `<div class="kpis k3">${kpi('Movements, 30 days', rows.length)}${kpi('Units out to engineers', sum(rows.filter(e => /Dispatched to technician|Sent to van stock/.test(e.t)), e => e.qty))}${kpi('Units received', sum(rows.filter(e => e.t === 'Received'), e => e.qty))}</div>
+  return `<div class="kpis k3">${kpi('Movements, 30 days', rows.length)}${kpi('Units out to engineers', sum(rows.filter(e => /Dispatched to technician|Sent to van stock/.test(e.t)), e => e.qty) - sum(rows.filter(e => /Dispatched to technician|Sent to van stock/.test(e.undo || '')), e => e.qty))}${kpi('Units received', sum(rows.filter(e => e.t === 'Received'), e => e.qty))}</div>
     ${bars('Movements by type, last 30 days', groupSum(rows, e => e.t, () => 1))}
     <section class="blk"><div class="sec-h"><h2>Latest movements</h2></div>${tbl(['When', 'Event', 'Part', 'Serial / qty', 'From', 'To', 'By'], rows.slice(0, 40).map(e => `<tr><td>${esc(isoDT(e.at))}</td><td>${esc(eng(e.t))}</td><td class="mono">${esc(e.pn)}</td><td class="mono">${esc(e.sn || '× ' + e.qty)}</td><td>${esc(locName(e.from))}</td><td>${esc(locName(e.to))}</td><td>${esc(e.by)}</td></tr>`))}</section>`;
 }
