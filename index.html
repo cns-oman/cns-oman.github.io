@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261115215137">
+<meta name="spms-build" content="20261116133032">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -986,8 +986,18 @@ const ROLE = { TECH: 'Engineer', TL: 'Team Leader', STOCK: 'Stock', WS: 'Worksho
 /* the Technical Manager approves the requests Stock sends him (built in; also in the Sender) */
 const TECH_MANAGERS = ['mohamed.said@cns-me.com'], TM_NAME = 'Technical Manager';
 const isTM = me => !!me && TECH_MANAGERS.includes(String(me.email || '').toLowerCase());
+/* the Workshop Team Leader (16 Nov 2026): a Workshop account marked wsLead. The role stays WS, so the security rules and
+   the notifications treat him as Workshop; in the app he sees and works on every Workshop repair, and sees the reports
+   (view only). In the staff forms he is the role "WSL". */
+const isWsLead = me => !!me && me.role === 'WS' && !!me.wsLead;
+const WSL_NAME = 'Workshop Team Leader';
+/* Workshop performance (16 Nov 2026, settings/wsperf): pts { part number: points for one repaired unit }, targets
+   { member id: points per week }, leave [{ id, sid, name, from, to, note }], holidays [{ id, from, to, note }].
+   Only the Workshop Team Leader and the Technical Manager change it (the security rules check the same). */
+let WSPERF = { pts: {}, targets: {}, leave: [], holidays: [] };
+const canSetWs = me => isWsLead(me) || isTM(me);
 /* what the person is called on screen: the full-access manager (Mohamed Said) shows his title, "Technical Manager - BFSI" */
-const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || SAID_TITLE) : (me ? ROLE[me.role] || '' : '');
+const roleName = me => me && me.full && me.role === me.baseRole ? (me.title || SAID_TITLE) : (me ? (me.role === 'WS' && me.wsLead ? WSL_NAME : ROLE[me.role] || me.role || '') : '');   /* a staff record or the person signed in */
 /* Mohamed Said's built-in, locked account (role Team Leader). His title is always "Technical Manager - BFSI", whatever
    his staff record says (nobody can edit that record from the app) */
 const SAID_EMAIL = 'mohamed.said@cns-me.com', SAID_TITLE = 'Technical Manager - BFSI';
@@ -1045,6 +1055,10 @@ const DELIVERY = [['driver', 'By driver'], ['collect', 'Engineer collects'], ['c
 /* Pick and dispatch only: Faisal takes the part to the courier company Stock chose, then adds the photo of the courier
    receipt (14 Nov 2026) */
 const DELIVERY_DC = DELIVERY.concat([['drvcour', 'Driver & courier']]);
+/* a customer's repaired part going back to the customer (16 Nov 2026) */
+const DELIVERY_CUST = [['driver', 'By driver'], ['collect', 'Customer collects'], ['courier', 'By courier']];
+/* a part the Workshop added: back to stock (e.g. from a scrapped machine), or a customer's part sent in for repair */
+const isCustPart = j => !!j && j.type === 'wsadd' && j.dest === 'customer';
 /* how an engineer sends a part back: he brings it himself, a driver takes it, or a courier (with the receipt photo) */
 const RETURN_BY = [['self', 'Self return'], ['driver', 'By driver'], ['courier', 'By courier']];
 /* every driver task (deliveries and returns) goes to Faisal, so nobody types a driver name (11 Nov 2026) */
@@ -1096,6 +1110,8 @@ const ST = {
   WORKSHOP: { label: 'Sent to Workshop', tone: 'info', who: 'WS', next: 'Accept the part' },
   REPAIRING: { label: 'Under repair', tone: 'info', who: 'WS', next: 'Repair the part' },
   REPAIRED: { label: 'Repaired · back to Stock', tone: 'ok', who: 'STOCK', next: 'Confirm back in stock' },
+  /* a customer's part the Workshop repaired (or could not repair): Stock sends it back to the customer (16 Nov 2026) */
+  TO_CUST: { label: 'Back to Stock · to send to the customer', tone: 'ok', who: 'STOCK', next: 'Send to the customer' },
   CLOSED: { label: 'Closed', tone: 'ok', who: null, next: '' },
   REJECTED: { label: 'Rejected', tone: 'bad', who: null, next: '' },
   CANCELLED: { label: 'Cancelled', tone: '', who: null, next: '' }
@@ -1115,7 +1131,9 @@ const RET_ST = {
 const VAN_ST = { TL: { label: 'Van part use · waiting for Team Leader', next: 'Approve or reject' } };
 /* parts Stock sends from the Muscat Main Hub to a regional hub (type 'hubrep' with xfer) */
 const XFER_ST = { REPL_CONF: { label: 'On the way to the hub', next: 'Confirm the parts arrived at your hub' }, CLOSED: { label: 'Received at the hub', next: '' } };
-const TYPE_ST = { rep: REP_ST, ret: RET_ST, van: VAN_ST, xfer: XFER_ST };
+/* a part the Workshop added to repair (16 Nov 2026, e.g. from a scrapped machine): the Team Leader approves it first */
+const WSADD_ST = { TL: { label: 'Workshop part · waiting for Team Leader', next: 'Approve or reject' }, WORKSHOP: { label: 'Approved · ready to repair', next: 'Accept the part' } };
+const TYPE_ST = { rep: REP_ST, ret: RET_ST, van: VAN_ST, xfer: XFER_ST, wsadd: WSADD_ST };
 const stType = j => j.xfer ? 'xfer' : j.type;
 /* the part waits at Stock for the engineer to collect it (instead of a driver bringing it) */
 const COLLECT_ST = {
@@ -1599,7 +1617,7 @@ async function withLocks(paths, fn) {
 const unsubs = {};
 let ARCHIVE = null, SCHEMA = null;
 function unsubAll() { for (const k of Object.keys(unsubs)) { try { unsubs[k](); } catch (e) { /* closed */ } delete unsubs[k]; } }
-const userAcc = u => ({ id: u.sid || idFromEmail(u.email || u.id), role: u.role, name: u.name || u.email, title: u.title || ROLE[u.role], email: String(u.email || u.id).toLowerCase(), hub: u.hub || '' });
+const userAcc = u => ({ id: u.sid || idFromEmail(u.email || u.id), role: u.role, name: u.name || u.email, title: u.title || roleName(u), email: String(u.email || u.id).toLowerCase(), hub: u.hub || '', wsLead: u.role === 'WS' && !!u.wsLead });
 function normJob(j) { if (!j.type) j.type = 'req'; if (j.open == null) j.open = isOpenStatus(j.status); return j; }
 /* An engineer (by the role on their staff record) only needs their own requests: on Firebase they load just those,
    which keeps each opening of the app to a few hundred document reads (the free plan allows 50,000 a day). */
@@ -1633,6 +1651,7 @@ function subscribeAll() {
     SCHEMA = list.find(x => x.id === 'schema') || {};
     const hb = list.find(x => x.id === 'hubs'); setHubs(hb && hb.list); DATAV.inv++;
     setReturnDays(list.find(x => x.id === 'returns'));
+    setWsPerf(list.find(x => x.id === 'wsperf'));
     const p = list.find(x => x.id === 'policy'); POLICY = { autoMaxValue: p && +p.autoMaxValue >= 0 ? +p.autoMaxValue : 100, autoMaxQty: p && +p.autoMaxQty >= 0 ? +p.autoMaxQty : 5 };
     ready.settings = true; DATAV.set++; afterLoad();
   });
@@ -1645,7 +1664,7 @@ function subscribeAll() {
     const p = UI.profile, mine = p && list.find(u => String(u.email || u.id).toLowerCase() === p.email);
     if (mine && mine.active !== false && ROLE[mine.role]) {
       const wasTech = p.baseRole === 'TECH';
-      Object.assign(p, { role: mine.role, baseRole: mine.role, hub: mine.hub || '', name: mine.name || p.name, title: mine.title || ROLE[mine.role] });
+      Object.assign(p, { role: mine.role, baseRole: mine.role, hub: mine.hub || '', name: mine.name || p.name, title: mine.title || roleName(mine), wsLead: mine.role === 'WS' && !!mine.wsLead });
       if (wasTech !== (mine.role === 'TECH')) setTimeout(subscribeAll, 0);   /* became or stopped being an engineer: load the right data */
     }
     DATAV.set++; changed();
@@ -2151,7 +2170,9 @@ function stepOwner(j) {
   if (j.status === 'ATHUB' && j.ret && (j.ret.hubById || j.ret.hubBy)) return { id: j.ret.hubById || '', name: j.ret.hubBy || '' };
   return null;
 }
-const isOwner = (o, me) => !o || (o.id ? o.id === me.id : o.name === me.name);
+/* the Workshop Team Leader may also act on a repair another Workshop person accepted (16 Nov 2026); he can only pass
+   the Workshop's own steps, so this never lets him act for Stock */
+const isOwner = (o, me) => !o || isWsLead(me) || (o.id ? o.id === me.id : o.name === me.name);
 function myTurn(j, me) {
   me = me || ME(); if (!me) return false;
   if (wsHeld(j)) return false;   /* waits for the morning repair batch */
@@ -2275,6 +2296,11 @@ async function techCancel(id, d) {
   });
 }
 function checkTl(j, d) {
+  if (j.type === 'wsadd') {   /* a part the Workshop added: approve as it is, or reject with a reason */
+    if (d.mode !== 'reject') return null;
+    if (!(d.remarks || '').trim()) throw E('Write why you are rejecting it.');
+    return `Reject this Workshop part (${j.pn}${j.ret && j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.qty})?`;
+  }
   if (d.mode === 'reject') { const rs = d.reason || REJECT_REASONS[0]; if (rs === 'Other' && !(d.remarks || '').trim()) throw E('Explain why you are rejecting it.'); return `Reject ${j.type === 'rep' ? 'this van restock' : j.type === 'van' ? 'this van part use' : 'this request'}? ${j.type === 'rep' ? '' : 'The engineer sees your reason.'}`; }
   const q = parseInt(d.q, 10) || j.qty; if (!(q >= 1 && q <= 99)) throw E('Quantity must be between 1 and 99.');
   if (j.type === 'van' && q > j.qty) throw E(`The engineer asked for ${j.qty}. You can approve ${j.qty} or fewer.`);
@@ -2291,6 +2317,10 @@ function chargeAt(j, d, me, now) {
 async function tlDecide(id, d) {
   return jobStep(id, 'TL', 'TL', async (j, me) => {
     checkTl(j, d); let note = (d.remarks || '').trim(); const now = Date.now();
+    if (j.type === 'wsadd') {   /* approved: the Workshop accepts it and repairs it like any other part */
+      if (d.mode === 'reject') return saveJob(nextDoc(j, me, 'REJECTED', 'Rejected by Team Leader', note, { tl: { by: me.name, at: now, note, rejected: true }, outcome: 'Rejected' }));
+      return saveJob(nextDoc(j, me, 'WORKSHOP', 'Approved by Team Leader', note, { qtyApproved: j.qty, tl: { by: me.name, at: now, note } }));
+    }
     if (d.mode !== 'reject') {
       const q = parseInt(d.q, 10) || j.qty; if (q !== j.qty) note = `Quantity changed ${j.qty} → ${q}` + (note ? '. ' + note : '');
       const ch = chargeAt(j, d, me, now), chSet = ch ? ch.set : {}, hn = ch ? ch.txt + (note ? '. ' + note : '') : note;   /* the history says when the Team Leader changed the chargeable case */
@@ -2808,11 +2838,51 @@ async function sendReplacement(j, d, me, now, repId) {
   log({ t: 'Replacement dispatched', pn, sn, qty: 1, from, to: j.techName, ref: repId });
   return repId;
 }
+/* ---------- Workshop: add a part to repair (16 Nov 2026) ----------
+   A part that did not come back from an engineer, e.g. one taken from a scrapped machine. The Workshop (or the Workshop
+   Team Leader) records it with where it came from; the Team Leader approves or rejects it. Once approved it is repaired
+   like any other part: repaired → back to Stock (Stock puts it on a shelf), can't be repaired → the scrap pool.
+   The request (type 'wsadd') keeps the part in ret, as a returned part, so the Workshop steps work unchanged; it has no
+   engineer, no route and no return deadline, so the return reports leave it out. */
+/* 16 Nov 2026: two destinations. "stock": a part to repair for our stock (e.g. from a scrapped machine); the Team Leader
+   approves it first, and a repaired part goes back to stock (one that can't be repaired to the scrap pool). "customer": a
+   customer's part sent in for repair (e.g. cassettes); no approval, it goes straight into the Workshop person's repairs; when
+   it is repaired, or can't be repaired, the Workshop sends it to Stock and Stock sends it back to the customer. It is not
+   linked to a machine and never goes into stock. */
+function wsAddCheck(d) {
+  const dest = d.dest === 'customer' ? 'customer' : 'stock';
+  const pn = normPN(d.pn); if (!pn) throw E('Enter the part number.');
+  if (!PARTS[pn] && !PN_RE.test(pn)) throw E('Use letters, numbers, dots, dashes or slashes for the part number.');
+  const name = String(d.name || '').trim() || (PARTS[pn] && PARTS[pn].name) || ''; if (!name) throw E('Enter the part name.');
+  const sn = normSN(d.sn), qty = sn ? 1 : parseInt(d.qty, 10) || 1;
+  if (!(qty >= 1 && qty <= 99)) throw E('Quantity must be between 1 and 99.');
+  const customer = dest === 'customer' ? String(d.cust || '').trim().replace(/\s+/g, ' ').slice(0, 80) : '', ref = dest === 'customer' ? String(d.cref || '').trim().slice(0, 60) : '';
+  if (dest === 'customer' && !customer) throw E('Enter the customer.');
+  const from = dest === 'customer' ? customer : String(d.from || '').trim(); if (!from) throw E('Write where the part came from, e.g. the scrapped machine.');
+  if (sn) {
+    const inStock = LINES.find(l => normSN(l.sn) === sn); if (inStock) throw E(`Serial number ${sn} is in stock at ${locName(inStock.loc)}.`);
+    const open = JOBS.find(j => isOpenStatus(j.status) && j.ret && normSN(j.ret.sn) === sn && ['WORKSHOP', 'REPAIRING', 'REPAIRED', 'ATHUB', 'RETURNING', 'TL'].includes(j.status));
+    if (open) throw E(`Serial number ${sn} is already on ${open.id} (${stLabel(open)}).`);
+  }
+  return { dest, pn, name, sn, qty, from, customer, ref, note: String(d.note || '').trim() };
+}
+async function wsAddPart(d) {
+  const me = mustRole('WS'), a = wsAddCheck(d), now = Date.now(), id = newId('WSA'), hub = HUBS.includes(accHub(me)) ? accHub(me) : MAIN_HUB, cust = a.dest === 'customer';
+  const doc = { id, type: 'wsadd', dest: a.dest, pn: a.pn, desc: a.name, qty: a.qty, unit: +part(a.pn).price || 0, hub, techId: '', techName: '', byName: me.name, byId: me.id || '',
+    src: { from: a.from, note: a.note }, ret: { type: 'defective', pn: a.pn, sn: a.sn, qty: a.qty, name: a.name, wsAdd: true },
+    /* a customer's part: no approval, straight into this person's repairs (repair not started yet) */
+    status: cust ? 'REPAIRING' : 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
+    history: [{ at: now, by: me.name, byId: me.id || '', role: ROLE.WS, action: cust ? 'Customer part added to the Workshop' : 'Part added to the Workshop', note: `${a.sn ? 'SN ' + a.sn : '× ' + a.qty} · ${cust ? 'customer: ' + a.customer + (a.ref ? ' · ref ' + a.ref : '') : 'from: ' + a.from}${a.note ? ' · ' + a.note : ''}` }] };
+  if (cust) Object.assign(doc, { customer: a.customer, custRef: a.ref, ws: { inAt: now, by: me.name, byId: me.id || '' } });
+  await saveJob(doc);
+  log({ t: 'Added to the Workshop', pn: a.pn, sn: a.sn, qty: a.qty, from: a.from, to: 'Workshop', ref: id, note: a.note });
+  return doc;
+}
 async function wsAccept(id) {
   return jobStep(id, 'WORKSHOP', 'WS', async (j, me) => {
     if (wsHeld(j)) throw E(`This part comes in the repair batch at ${batchTxt(j.ret.wsAt)}.`);
     const doc = await saveJob(nextDoc(j, me, 'REPAIRING', 'Accepted by Workshop', j.ret.sn ? `SN ${j.ret.sn}` : `× ${j.ret.qty || 1}`, { ws: { inAt: Date.now(), by: me.name, byId: me.id || '' } }));
-    log({ t: 'Workshop received', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Stock', to: 'Workshop', ref: j.id });
+    log({ t: 'Workshop received', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: j.type === 'wsadd' ? 'Added by the Workshop' : 'Stock', to: 'Workshop', ref: j.id });
     return doc;
   });
 }
@@ -2850,6 +2920,7 @@ function checkFinish(j, d) {
   if (tmState(j) === 'new') throw E('Start the repair first.');
   if (!(d.partName || '').trim() && !normSN(d.partSn)) throw E('Enter the part name or the serial number.');
   if ((d.used || []).length !== usedLines(d).length) throw E('One of the parts you picked is no longer in stock. Check the list.');
+  if (d.outcome === 'ber' && isCustPart(j)) return `${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''} can’t be repaired: send it to Stock, to go back to ${j.customer} unrepaired?`;
   return d.outcome === 'ber' ? `Scrap ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''} as beyond economical repair? This closes the request.` : null;
 }
 async function wsFinish(id, d) {
@@ -2862,11 +2933,13 @@ async function wsFinish(id, d) {
       const prior = wsParts(j), usedTxt = prior.map(partTxt).concat(used.map(partTxt)).join(', ');
       const ws = Object.assign({}, j.ws, { tm: t, partName: (d.partName || '').trim(), partSn: normSN(d.partSn), diagnosis: (d.dx || '').trim(), fix: (d.fix || '').trim(), materials: [usedTxt, (d.materials || '').trim()].filter(Boolean).join('; '), used: prior.map(p => ({ pn: p.pn, name: p.name, sn: p.sn, qty: p.qty, price: p.price, cost: p.cost, from: p.from })).concat(used.map(l => ({ pn: l.pn, name: l.name, sn: l.sn, qty: l.qty, price: l.price, cost: l.cost, from: l.loc }))), notes: (d.wnote || '').trim(), hours: k.h, rate: k.rate, labour: k.lab, matCost: k.m, total: k.total, outcome: ok ? 'Repaired' : 'Beyond economical repair', doneAt: now, by: (j.ws && j.ws.by) || me.name, doneBy: me.name, days: Math.round((now - j.ws.inAt) / 864e4) / 10 });
       const note = `${ok ? 'Repaired' : 'Not repairable'} · ${fmtDur(t.acc)} × ${money(k.rate)}/h = ${money(k.lab)}${k.m ? ' + materials ' + money(k.m) : ''} · total ${money(k.total)}`;
-      const doc = ok ? nextDoc(j, me, 'REPAIRED', 'Repair finished', note, { ws }) : nextDoc(j, me, 'CLOSED', 'Scrapped by Workshop', note, { ws, outcome: 'Scrapped (beyond repair)' });
+      const cust = isCustPart(j);
+      const doc = cust ? nextDoc(j, me, 'TO_CUST', ok ? 'Repair finished · to send to the customer' : 'Not repairable · to send back to the customer', note, { ws })
+        : ok ? nextDoc(j, me, 'REPAIRED', 'Repair finished', note, { ws }) : nextDoc(j, me, 'CLOSED', 'Scrapped by Workshop', note, { ws, outcome: 'Scrapped (beyond repair)' });
       await saveJob(doc);
-      if (!ok) await putLine(SCRAP, j.ret.pn, { sn: j.ret.sn, qty: j.ret.qty || 1, cond: 'Scrap', name: (j.ws && j.ws.partName) || j.ret.name || j.desc, source: 'Scrapped ' + j.id });   /* keep it in the scrap pool to cannibalise for other repairs */
+      if (!ok && !cust) await putLine(SCRAP, j.ret.pn, { sn: j.ret.sn, qty: j.ret.qty || 1, cond: 'Scrap', name: (j.ws && j.ws.partName) || j.ret.name || j.desc, source: 'Scrapped ' + j.id });   /* keep it in the scrap pool to cannibalise for other repairs */
       for (const x of taken) log({ t: 'Used in repair', pn: x.pn, sn: x.sn, qty: x.qty, from: x.from, to: 'Workshop', ref: j.id, note: `For ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''}` });
-      log({ t: ok ? 'Repair finished' : 'Scrapped', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Workshop', to: ok ? 'Stock' : 'Scrap', ref: j.id, note: `${money(k.total)}${ws.fix ? ' · ' + ws.fix : ''}` });
+      log({ t: ok ? 'Repair finished' : cust ? 'Not repaired (customer part)' : 'Scrapped', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Workshop', to: ok || cust ? 'Stock' : 'Scrap', ref: j.id, note: `${money(k.total)}${ws.fix ? ' · ' + ws.fix : ''}${cust ? ' · for ' + j.customer : ''}` });
       return doc;
     } catch (e) { await putBack(taken); throw e; }
   });
@@ -2886,16 +2959,33 @@ async function wsUseParts(id, d) {
   });
 }
 /* the Workshop can scrap the part at any point of the repair, without finishing it: it goes to the scrap pool and the request closes */
-function checkScrap(j, d) { if (!(d.sreason || '').trim()) throw E('Say why the part can’t be repaired.'); return `Scrap ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''}? It goes to the scrap pool and the request closes. This can’t be undone.`; }
+function checkScrap(j, d) { if (!(d.sreason || '').trim()) throw E('Say why the part can’t be repaired.'); if (isCustPart(j)) return `Send ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''} to Stock, to go back to ${j.customer} unrepaired?`; return `Scrap ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ''}? It goes to the scrap pool and the request closes. This can’t be undone.`; }
 async function wsScrap(id, d) {
   return jobStep(id, 'REPAIRING', 'WS', async (j, me) => {
     checkScrap(j, d);
     const now = Date.now(), t = Object.assign({ acc: 0, since: null }, (j.ws && j.ws.tm) || {}); if (t.since) { t.acc += now - t.since; t.since = null; }
     const k = repairCost({}, j, t.acc), parts = wsParts(j), why = d.sreason.trim();
     const ws = Object.assign({}, j.ws, { tm: t, partName: j.ret.name || j.desc || '', partSn: normSN(j.ret.sn), diagnosis: why, fix: '', used: parts.map(p => ({ pn: p.pn, name: p.name, sn: p.sn, qty: p.qty, price: p.price, cost: p.cost, from: p.from })), materials: parts.map(partTxt).join(', '), notes: '', hours: k.h, rate: k.rate, labour: k.lab, matCost: k.m, total: k.total, outcome: 'Beyond economical repair', doneAt: now, by: (j.ws && j.ws.by) || me.name, doneBy: me.name, days: Math.round((now - ((j.ws && j.ws.inAt) || now)) / 864e4) / 10 });
+    if (isCustPart(j)) {   /* the customer's property: back to the customer, unrepaired, through Stock */
+      const doc = await saveJob(nextDoc(j, me, 'TO_CUST', 'Not repairable · to send back to the customer', `Can’t be repaired: ${why}${k.total ? ' · cost so far ' + money(k.total) : ''}`, { ws: Object.assign({}, ws, { outcome: 'Not repairable', doneAt: now, doneBy: me.name }) }));
+      log({ t: 'Not repaired (customer part)', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Workshop', to: 'Stock', ref: j.id, note: why + ' · for ' + j.customer });
+      return doc;
+    }
     const doc = await saveJob(nextDoc(j, me, 'CLOSED', 'Scrapped by Workshop', `Can’t be repaired: ${why}${k.total ? ' · cost so far ' + money(k.total) : ''}`, { ws, outcome: 'Scrapped (beyond repair)' }));
     await putLine(SCRAP, j.ret.pn, { sn: j.ret.sn, qty: j.ret.qty || 1, cond: 'Scrap', name: j.ret.name || j.desc, source: 'Scrapped ' + j.id });   /* its good pieces can be reused in other repairs */
     log({ t: 'Scrapped', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Workshop', to: 'Scrap', ref: j.id, note: why });
+    return doc;
+  });
+}
+/* Stock sends a customer's part back to the customer (16 Nov 2026): by driver, the customer collects it, or by courier
+   (company and receipt photo). The request closes; the part never enters stock. */
+function checkToCust(j, d) { deliveryOf(d, j.customer); if (d.deliv === 'courier') courierOf(d); return `Send ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + (j.ret.qty || 1)} to ${j.customer}?`; }
+async function stockToCustomer(id, d) {
+  return jobStep(id, 'TO_CUST', 'STOCK', async (j, me) => {
+    const dl = deliveryOf(d, j.customer), ok = j.ws && j.ws.outcome === 'Repaired', note = String(d.cnote || '').trim();
+    const toCust = Object.assign({ at: Date.now(), by: me.name, byId: me.id || '', note }, dl);
+    const doc = await saveJob(nextDoc(j, me, 'CLOSED', 'Sent to the customer', `${dl.courier}${note ? ' · ' + note : ''}`, { toCust, outcome: ok ? 'Repaired, returned to customer' : 'Not repaired, returned to customer' }));
+    log({ t: 'Returned to customer', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: 'Stock', to: j.customer, ref: j.id, note: `${ok ? 'Repaired' : 'Not repaired'} · ${dl.courier}${note ? ' · ' + note : ''}` });
     return doc;
   });
 }
@@ -3351,7 +3441,7 @@ const budKey = (sid, y) => `${sid}~${y}`;
 const budOffice = () => { const r = UI.profile && (UI.profile.baseRole || UI.profile.role); return ['TL', 'STOCK'].includes(r); };
 /* what a request costs the engineer's budget right now */
 function jobSpend(j) {
-  if (!j || j.split || j.chargeable || ['rep', 'hubrep', 'ret'].includes(j.type) || ['REJECTED', 'CANCELLED'].includes(j.status)) return 0;   /* a chargeable case is paid by the customer, not the engineer's budget */
+  if (!j || j.split || j.chargeable || ['rep', 'hubrep', 'ret', 'wsadd'].includes(j.type) || ['REJECTED', 'CANCELLED'].includes(j.status)) return 0;   /* a chargeable case is paid by the customer, not the engineer's budget */
   const up = +(j.unit != null ? j.unit : part(j.pn).price) || 0, items = (j.dispatch && j.dispatch.items) || [];
   const priceOf = it => it && +it.price > 0 ? +it.price : up;
   if (j.use && Array.isArray(j.use.units) && j.use.units.length) {   /* after the job: only what was installed */
@@ -3439,10 +3529,18 @@ const TABS = {
 };
 /* an engineer at a regional hub has no van: his "My van" tab is "My hub", the stock on his hub's shelf */
 const noVanMe = me => !!me && me.role === 'TECH' && !hasVan(me.id);
-const tabsFor = me => noVanMe(me) ? TABS.TECH.map(t => t[0] === 'van' ? ['van', 'My hub', 'hub'] : t) : TABS[me.role];
+const tabsFor = me => noVanMe(me) ? TABS.TECH.map(t => t[0] === 'van' ? ['van', 'My hub', 'hub'] : t) : isWsLead(me) ? TABS.WS.concat([['rep', 'Reports', 'chart']]) : TABS[me.role];
 const quickFor = me => noVanMe(me) ? [['sheet', 'new', 'plus', 'New request', 1], ['tab', 'van', 'hub', 'My hub'], ['tab', 'all', 'list', 'My requests']] : QUICK[me.role] || [];
 /* the Workshop sees parts sent for repair only from 08:00 on the next working day (the morning batch) */
-function myJobs(me) { return me.role === 'TECH' ? JOBS.filter(j => j.techId === me.id) : me.role === 'WS' ? JOBS.filter(j => j.status === 'WORKSHOP' ? !wsHeld(j) && inMyHub(stepHub(j), me) : j.ws && (j.ws.byId ? j.ws.byId === me.id : j.ws.by === me.name)) : JOBS; }
+function myJobs(me) { return me.role === 'TECH' ? JOBS.filter(j => j.techId === me.id) : me.role === 'WS' ? JOBS.filter(j => wsSees(j, me)) : JOBS; }
+/* the Workshop sees the parts sent to it (from the morning batch on), the repairs it accepted, and the parts it added
+   itself (waiting for the Team Leader, or rejected). The Workshop Team Leader sees every Workshop repair and every
+   added part (16 Nov 2026). */
+function wsSees(j, me) {
+  if (j.type === 'wsadd' && (isWsLead(me) || j.byId === me.id)) return true;
+  if (j.status === 'WORKSHOP') return !wsHeld(j) && inMyHub(stepHub(j), me);
+  return !!j.ws && (isWsLead(me) || (j.ws.byId ? j.ws.byId === me.id : j.ws.by === me.name));
+}
 function myTodo(me) {
   const list = myJobs(me).filter(j => myTurn(j, me));
   if (me.role === 'TL') return list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -3552,7 +3650,7 @@ const QUICK = {
   TECH: [['sheet', 'new', 'plus', 'New request', 1], ['sheet', 'vanuse', 'wrench', 'Use from van'], ['tab', 'van', 'van', 'My van'], ['tab', 'all', 'list', 'My requests']],
   TL: [['goReport', 'dash', 'chart', 'Dashboard'], ['goReport', 'returns', 'ret', 'Returns'], ['goReport', 'stock', 'box', 'Stock levels'], ['excel', '', 'download', 'Excel']],
   STOCK: [['sheet', 'receive', 'plus', 'Receive', 1], ['sheet', 'import', 'sheet', 'Import Excel'], ['sheet', 'sendvan', 'send', 'Send to van'], ['sheet', 'sendhub', 'hub', 'Send to a hub'], ['tab', 'inv', 'search', 'Find stock']],
-  WS: []
+  WS: [['sheet', 'wsadd', 'plus', 'Add part to repair', 1]]   /* a part that did not come from a return, e.g. from a scrapped machine (16 Nov 2026) */
 };
 const qaBtn = ([a, v, i, l, pri]) => `<button class="qa-b${pri ? ' pri' : ''}" data-a="${a}"${a === 'sheet' ? ` data-s="${v}"` : v ? ` data-v="${v}"` : ''}><span class="qa-i">${ic(i)}</span>${esc(l)}</button>`;
 const quick = list => list.length ? `<nav class="qa" aria-label="Shortcuts"${list.length > 4 ? ` style="grid-template-columns:repeat(${list.length},minmax(0,1fr))"` : ''}>${list.map(qaBtn).join('')}</nav>` : '';
@@ -3573,6 +3671,8 @@ function steps(j) {
   if (j.type === 'hubrep' && j.xfer) return [['Sent by the Muscat Main Hub', true], ['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']];
   if (j.type === 'hubrep') return [['Refill raised', true], ['Sent by the Muscat Main Hub', !!j.dispatch]].concat(dc, [['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']]);
   if (j.type === 'ret') return [['Sent back by the engineer', true], ['Received at ' + (HUB_NAME[j.hub] || j.hub), j.status === 'CLOSED']];
+  if (isCustPart(j)) return [['Added by the Workshop', true], ['Workshop repair done', !!w.doneAt], ['Sent to the customer', j.status === 'CLOSED' && !!j.toCust]];
+  if (j.type === 'wsadd') return [['Added by the Workshop', true], ['Team Leader approved', !!j.tl && !j.tl.rejected], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   const tail = [['Return sent', !!r.shippedAt], ['Return received at Stock', !!r.hubAt], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   if (j.type === 'van') return (j.van ? [['Asked to use from van', true], ['Team Leader approved', !!j.use || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)], ['Used from van stock', !!j.use]] : [['Used from van stock', true]]).concat(tail);   /* older records: used without approval */
   if (fromHub(j)) return [['Requested', true], ['Team Leader approved', !!j.tl && !j.tl.rejected && !j.tl.withdrawn], ['Taken from ' + (HUB_NAME[j.hub] || j.hub), !!j.dispatch], ['Replacement recorded', !!j.use]].concat(tail);
@@ -3596,6 +3696,7 @@ function kindPills(j) {
   if (j.type === 'van') s += '<span class="pill">From van</span>';
   if (j.type === 'hubrep') s += `<span class="pill">${j.xfer ? 'Hub transfer' : 'Hub refill'} · ${esc(j.to || '')}</span>`;
   if (j.type === 'ret') s += `<span class="pill">Return · ${esc(isVan(j.from) ? 'van' : j.from || '')}</span>`;
+  if (j.type === 'wsadd') s += isCustPart(j) ? '<span class="pill">Customer part</span>' : '<span class="pill">Workshop part</span>';
   if (j.chargeable) s += '<span class="pill">Chargeable</span>';
   if (fromHub(j)) s += `<span class="pill">From ${esc(j.hub)} stock</span>`;
   if (j.backorder) s += '<span class="pill">Back-order</span>';
@@ -3608,7 +3709,7 @@ function jobMeta(j, me) {
   return `${me.role !== 'TECH' ? esc(j.techName) + ' · ' : ''}<span class="mono">${esc(j.scn)}</span> · ${esc(j.machine)}${j.customer ? ' · ' + esc(j.customer) : ''}`;
 }
 /* one icon per step, so a list can be read at a glance */
-const ST_IC = { TL: 'check', STOCK: 'box', VAN_OK: 'van', DISPATCHED: 'truck', DRV_COUR: 'truck', RECEIVED: 'wrench', RETURN: 'ret', RETURNING: 'truck', ATHUB: 'hub', WORKSHOP: 'wrench', REPAIRING: 'gear', REPAIRED: 'check', CLOSED: 'check', REJECTED: 'ban', CANCELLED: 'ban' };
+const ST_IC = { TL: 'check', STOCK: 'box', VAN_OK: 'van', DISPATCHED: 'truck', DRV_COUR: 'truck', RECEIVED: 'wrench', RETURN: 'ret', RETURNING: 'truck', ATHUB: 'hub', WORKSHOP: 'wrench', REPAIRING: 'gear', REPAIRED: 'check', TO_CUST: 'truck', CLOSED: 'check', REJECTED: 'ban', CANCELLED: 'ban' };
 function jobRow(j, me) {
   const mine = myTurn(j, me), late = isLate(j);
   const tone = late ? 'bad' : !isOpenStatus(j.status) ? (j.status === 'CLOSED' ? 'ok' : j.status === 'REJECTED' ? 'bad' : '') : (ST[j.status] || {}).tone || '';
@@ -3617,7 +3718,7 @@ function jobRow(j, me) {
   else if (j.status === 'REPAIRING') extra = `${tmState(j) === 'running' ? 'Running' : tmState(j) === 'paused' ? 'Paused' : 'Not started'} · <span data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</span>`;
   const rem = j.status === 'RETURN' && (j.reminders || []).length ? `<span class="remline">${ic('bell', 'sm')}Team Leader reminder · ${esc(rel(j.reminders[j.reminders.length - 1].at))}</span>` : '';
   if (j.type === 'ret') return retRow(j, me, mine, tone);
-  const who = j.type === 'rep' ? `${esc(j.techName)}’s van` : j.type === 'hubrep' ? `${j.xfer ? 'To' : 'Refill ·'} ${esc(HUB_NAME[j.to] || j.to)}` : me.role !== 'TECH' ? esc(j.techName) : j.scn ? `<span class="mono">${esc(j.scn)}</span>` : '';
+  const who = isCustPart(j) ? `Customer · ${esc(j.customer || '')}` : j.type === 'wsadd' ? `Workshop · ${esc(j.byName || '')}` : j.type === 'rep' ? `${esc(j.techName)}’s van` : j.type === 'hubrep' ? `${j.xfer ? 'To' : 'Refill ·'} ${esc(HUB_NAME[j.to] || j.to)}` : me.role !== 'TECH' ? esc(j.techName) : j.scn ? `<span class="mono">${esc(j.scn)}</span>` : '';
   const title = j.desc || partName(j.pn) || (j.type === 'rep' ? 'Van restock' : 'Request');
   return `<button class="jcard ${mine ? 'mine' : ''} ${late ? 'late' : ''}" data-a="sheet" data-s="job" data-id="${esc(j.id)}">
     <span class="j-ic ${tone ? 't-' + tone : ''}">${ic(j.type === 'rep' ? 'van' : ST_IC[j.status] || 'box')}</span>
@@ -3778,7 +3879,7 @@ function invList() {
   return [...groups.keys()].sort().map(pn => {
     const g = groups.get(pn), p = part(pn), tot = sum(g, qtyOf);
     const lv = hubs.map(h => { const mn = +(p.min || {})[h] || 0, mx = +(p.max || {})[h] || 0, k = levelOf(qtyAt(h, pn), mn, mx); return k ? `<span class="lvl ${k}" title="${h}: min ${mn}${mx ? ', max ' + mx : ''}">${hubs.length > 1 ? h + ' ' : ''}${k === 'low' ? 'Below min' : k === 'over' ? 'Over max' : 'OK'}</span>` : ''; }).join('');
-    return `<section class="blk"><button class="grp" data-a="sheet" data-s="part" data-id="${esc(pn)}" aria-label="Part settings for ${esc(pn)}"><h2>${tag(pn)} ${esc(p.name || (g[0] || {}).name || '')}${p.autoRep ? '<span class="pill">Auto-Rep</span>' : ''}${p.restricted ? '<span class="pill">Restricted</span>' : ''}</h2><span class="lv">${tot} unit${tot === 1 ? '' : 's'}${p.price ? ' · ' + money(p.price) : ''}</span><span class="lvs">${lv}<span class="chev">${ic('edit', 'sm')}</span></span></button>
+    return `<section class="blk"><button class="grp" data-a="sheet" data-s="part" data-id="${esc(pn)}" aria-label="Part settings for ${esc(pn)}"><h2>${tag(pn)} ${esc(p.name || (g[0] || {}).name || '')}${p.autoRep ? '<span class="pill">Auto-Rep</span>' : ''}${p.restricted ? '<span class="pill">Restricted</span>' : ''}</h2><span class="lv">${tot} unit${tot === 1 ? '' : 's'}${p.price ? ' · ' + money(p.price) : ''}${ptsOf(pn) ? ' · ' + ptsTxt(ptsOf(pn)) + ' pts' : ''}</span><span class="lvs">${lv}<span class="chev">${ic('edit', 'sm')}</span></span></button>
       <div class="list">${g.length ? g.map(lineRow).join('') : '<div class="row"><div class="main"><div class="t2">None in stock</div></div></div>'}</div></section>`;
   }).join('');
 }
@@ -3869,7 +3970,7 @@ function chime(force) {
 }
 let headsT;
 const HEAD_TITLE = { TL: 'New part request', STOCK: 'Approved · ready to send', DISPATCHED: 'Part on the way to you', RECEIVED: 'Record the replacement', RETURN: 'Return due', RETURNING: 'Return on the way', ATHUB: 'Return to route', WORKSHOP: 'Part sent for repair', REPAIRING: 'Repair to finish', REPAIRED: 'Repaired part coming back' };
-function headTitle(j) { if (j.type === 'ret') return j.status === 'RETURNING' ? 'Parts coming back to the Main Hub' : stLabel(j); if (j.type === 'rep') return { TL: 'Van restock to approve', STOCK: 'Van restock to send', DISPATCHED: 'Restock on the way to your van' }[j.status] || 'Van restock'; return HEAD_TITLE[j.status] || stNext(j) || 'Update'; }
+function headTitle(j) { if (j.type === 'wsadd') return { TL: 'Workshop part to approve', WORKSHOP: 'Workshop part approved · ready to repair', REJECTED: 'Workshop part rejected', TO_CUST: 'Customer part to send' }[j.status] || HEAD_TITLE[j.status] || stLabel(j); if (j.type === 'ret') return j.status === 'RETURNING' ? 'Parts coming back to the Main Hub' : stLabel(j); if (j.type === 'rep') return { TL: 'Van restock to approve', STOCK: 'Van restock to send', DISPATCHED: 'Restock on the way to your van' }[j.status] || 'Van restock'; return HEAD_TITLE[j.status] || stNext(j) || 'Update'; }
 function headsUp(items) {
   if (!items.length) return;
   const it = items[0], more = items.length - 1;
@@ -3881,7 +3982,7 @@ function headsUp(items) {
 }
 function hideHeads() { clearTimeout(headsT); const h = $('#heads'); if (h) h.classList.remove('show'); }
 function hideHeadsFor(id) { const h = $('#heads'); if (h && h.classList.contains('show') && h.querySelector(`[data-id="${CSS.escape(id)}"]`)) hideHeads(); }
-const jobHead = j => ({ s: 'job', id: j.id, icon: j.type === 'rep' ? 'van' : ST_IC[j.status] || 'bell2', title: headTitle(j), urgent: j.urgency === 'urgent' && j.status === 'TL', line: j.type === 'ret' ? `${jobQty(j)} part${jobQty(j) === 1 ? '' : 's'} · ${j.desc || ''} · ${j.techName}` : `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${j.type === 'rep' ? j.techName + '’s van' : j.techName}` });
+const jobHead = j => ({ s: 'job', id: j.id, icon: j.type === 'rep' ? 'van' : ST_IC[j.status] || 'bell2', title: headTitle(j), urgent: j.urgency === 'urgent' && j.status === 'TL', line: j.type === 'wsadd' ? `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${isCustPart(j) ? 'for ' + (j.customer || 'the customer') : 'added by ' + (j.byName || 'the Workshop')}` : j.type === 'ret' ? `${jobQty(j)} part${jobQty(j) === 1 ? '' : 's'} · ${j.desc || ''} · ${j.techName}` : `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${j.type === 'rep' ? j.techName + '’s van' : j.techName}` });
 
 
 function sheetErr(e) {
@@ -3966,12 +4067,14 @@ SH.job = (d, p) => {
   const me = ME(), turn = myTurn(j, me), alts = altActions(j, me);
   let a = null;
   if (d.alt) a = altForm(j, me, d); else if (turn) a = actionForm(j, me, d);
-  const kind = j.type === 'rep' ? 'Van restock' : j.type === 'van' ? 'Van part use' : j.xfer ? 'Hub transfer' : 'Request';
+  const kind = j.type === 'rep' ? 'Van restock' : j.type === 'van' ? 'Van part use' : j.xfer ? 'Hub transfer' : isCustPart(j) ? 'Customer part' : j.type === 'wsadd' ? 'Workshop part' : 'Request';
   const r = j.ret || {}, w = j.ws || {};
   const st = steps(j), cur = st.findIndex(x => !x[1]), doneN = st.filter(x => x[1]).length;
   const pbar = ['REJECTED', 'CANCELLED'].includes(j.status) ? '' : `<div class="pbar" aria-label="${doneN} of ${st.length} steps done"><div class="segs">${st.map(([, ok], i) => `<i class="${ok ? 'on' : i === cur ? 'cur' : ''}"></i>`).join('')}</div><div class="lab"><span>${cur < 0 ? '<b>All steps done</b>' : `Next: <b>${esc(st[cur][0])}</b>`}</span><span>${doneN} of ${st.length}</span></div></div>`;
   const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
   const facts = j.xfer ? fact('To', esc(HUB_NAME[j.to] || j.to)) + fact('Received by', esc(j.techName)) + fact('Sent by', esc((j.dispatch && j.dispatch.by) || '')) + fact('Sent', fmtD(j.createdAt))
+    : isCustPart(j) ? fact('Customer', esc(j.customer || '')) + fact('Reference', esc(j.custRef || '–')) + fact('Added by', esc(j.byName || '')) + fact('Added', fmtD(j.createdAt))
+    : j.type === 'wsadd' ? fact('Added by', esc(j.byName || '')) + fact('Came from', esc((j.src || {}).from || '')) + fact('Hub', esc(HUB_NAME[jobHub(j)] || jobHub(j))) + fact('Added', fmtD(j.createdAt))
     : j.type === 'rep' ? fact('Van', esc(j.techName)) + fact('Why', esc(j.reason || 'Van restock')) + fact('Value', money(jobQty(j) * (+part(j.pn).price || 0))) + fact('Raised', fmtD(j.createdAt))
     : stockReq(j) ? fact('Engineer', esc(j.techName)) + fact('For', j.forHub ? esc((HUB_NAME[j.hub] || j.hub) + ' shelf') : 'Van stock') + fact('Value', money(jobQty(j) * (+(j.unit != null ? j.unit : part(j.pn).price) || 0))) + fact('Raised', fmtD(j.createdAt))
     : fact('Engineer', esc(j.techName)) + fact('Service call', `<span class="mono">${esc(j.scn || '–')}</span>`) + fact('Machine', `<span class="mono">${esc(j.machine || '–')}${j.machineSn && j.machineSn !== j.machine ? ' · SN ' + esc(j.machineSn) : ''}</span>`) + fact(j.customer || !j.site ? 'Customer' : 'Site', esc(j.customer || j.site || '–'));
@@ -3984,7 +4087,9 @@ SH.job = (d, p) => {
       j.dispatch && ['Sent', `${esc((j.dispatch.items || []).map(itemTxt).join(', ') || j.dispatch.sn)} · ${esc(isVan(j.dispatch.from) ? 'van stock' : j.dispatch.from)}${j.dispatch.courier ? ' · ' + esc(j.dispatch.courier) : ''}${j.dispatch.ref ? ' · ' + esc(j.dispatch.ref) : ''}`],
       (j.backorders || []).length && ['Back-orders', j.backorders.map(jobLink).join(' ')], (j.splits || []).length && ['Separate returns', j.splits.map(jobLink).join(' ')],
       j.use && j.use.units && j.use.units.some(u => u.removedSn) && ['Removed from machine', j.use.units.filter(u => u.removedSn).map(u => `${esc(u.removedPn)} <span class="mono">SN ${esc(u.removedSn)}</span>`).join('<br>')],
-      r.type && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}${r.pnExpected || r.snExpected ? ` (expected ${esc([r.pnExpected, r.snExpected ? 'SN ' + r.snExpected : ''].filter(Boolean).join(' '))}${r.diffWhy ? ': ' + esc(r.diffWhy) : ''})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
+      j.toCust && ['Sent to the customer', `${esc(j.toCust.courier || '')} · ${esc(j.toCust.by || '')}, ${fmtDT(j.toCust.at)}${j.toCust.note ? ' · ' + esc(j.toCust.note) : ''}`],
+      j.type === 'wsadd' && [isCustPart(j) ? 'Customer part' : 'Workshop part', `${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)} · ${isCustPart(j) ? 'customer' : 'from'} ${esc((j.src || {}).from || '')}${(j.src || {}).note ? ' · ' + esc(j.src.note) : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}`],
+      r.type && j.type !== 'wsadd' && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}${r.pnExpected || r.snExpected ? ` (expected ${esc([r.pnExpected, r.snExpected ? 'SN ' + r.snExpected : ''].filter(Boolean).join(' '))}${r.diffWhy ? ': ' + esc(r.diffWhy) : ''})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
       r.issue && ['Issue', esc(r.issue)],
       r.logs && ['Logs', safeLink(r.logs) ? `<a href="${esc(safeLink(r.logs))}" target="_blank" rel="noopener noreferrer">Open the logs</a> <span class="t3">${esc(r.logs.length > 60 ? r.logs.slice(0, 57) + '…' : r.logs)}</span>` : esc(r.logs)],
       (j.tmAsk || j.tm) && ['Technical Manager', [j.tmAsk && `Asked by ${esc(j.tmAsk.by)}, ${fmtDT(j.tmAsk.at)}: ${esc(j.tmAsk.note)}`, j.tm && `${j.tm.ok ? 'Approved' : '<b>Rejected</b>'} by ${esc(j.tm.by)}, ${fmtDT(j.tm.at)}${j.tm.note ? ': ' + esc(j.tm.note) : ''}`].filter(Boolean).join('<br>')],
@@ -4000,7 +4105,7 @@ SH.job = (d, p) => {
   let foot;
   if (!d.alt && turn && j.status === 'REPAIRING') {
     const tm = tmState(j), b2 = (v, l, c) => `<button class="btn ${c || ''}" data-a="ws" data-v="${v}" id="ws-${v}">${l}</button>`;
-    foot = d.mode === 'finish' ? b2('back', 'Back', 'sec') + b2('save', d.outcome === 'ber' ? 'Scrap part' : 'Save repair', d.outcome === 'ber' ? 'danger' : 'ok')
+    foot = d.mode === 'finish' ? b2('back', 'Back', 'sec') + b2('save', d.outcome === 'ber' ? (isCustPart(j) ? 'Save · not repaired' : 'Scrap part') : 'Save repair', d.outcome === 'ber' ? 'danger' : 'ok')
       : tm === 'new' ? `<button class="btn sec" data-a="close">Close</button>` + b2('start', 'Start repair', 'ok')
         : (tm === 'running' ? b2('pause', 'Pause repair', 'sec') : b2('resume', 'Resume repair', 'sec')) + b2('finish', 'Finish repair', 'ok');
   }
@@ -4074,7 +4179,7 @@ function altActions(j, me) {
   if (((me.role === 'STOCK' && j.status === 'STOCK') || (me.role === 'TL' && j.status === 'TL')) && ['req', 'rep'].includes(j.type) && myTurn(j, me)) out.push(['pnfix', 'Change part number']);
   if (me.role === 'TECH' && j.techId === me.id && j.status === 'RETURN' && j.ret && j.ret.type === 'defective') out.push(['fixsn', 'Correct serial number']);
   if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && tmState(j) !== 'new' && d0(j)) out.push(['fixtime', 'Correct repair time']);
-  if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && d0(j)) out.push(['scrap', 'Scrap · can’t be repaired']);
+  if (me.role === 'WS' && j.status === 'REPAIRING' && myTurn(j, me) && d0(j)) out.push(['scrap', isCustPart(j) ? 'Can’t be repaired · back to the customer' : 'Scrap · can’t be repaired']);
   if (me.role === 'TL' && lastUndo(j) && inMyHub(jobHub(j), me)) out.push(['undo', 'Undo the last step']);
   return out;
 }
@@ -4107,7 +4212,8 @@ function altForm(j, me, d) {
     case 'askmain': return { title: 'Ask the Muscat Main Hub', form: box(`<p style="margin:0">The part isn’t on the shelf at ${esc(HUB_NAME[j.hub] || j.hub)}? Then Stock at the Muscat Main Hub sends <b>${esc(j.pn)} × ${j.qtyApproved || j.qty}</b> to you instead, like any other request.</p>${area(d, 'anote', 'Note (optional)', 'e.g. Shelf empty, or the part there is damaged')}`), op: { label: 'Ask the Muscat Main Hub', run: () => techAskMain(j.id, d), ok: 'Sent to Stock at the Muscat Main Hub' } };
     case 'withdraw': return { title: 'Withdraw approval', form: box(`<p style="margin:0">${j.type === 'van' ? 'The engineer has not used this part yet.' : 'Stock has not sent this part yet.'} Withdrawing closes the ${j.type === 'rep' ? 'restock' : 'request'} as rejected, and the engineer sees your reason.</p>${area(d, 'wnote', 'Why are you withdrawing it? (required)', 'e.g. Customer replaced the machine')}`), op: { label: 'Withdraw approval', cls: 'danger', danger: true, yes: 'Yes, withdraw', check: () => checkWithdraw(j, d), run: () => tlWithdraw(j.id, d), ok: 'Approval withdrawn' } };
     case 'fixsn': return { title: 'Correct serial number', form: box(`<p style="margin:0">Current serial number of the part you are returning: <b class="mono">${esc(j.ret.sn || '(none)')}</b></p>${inp(d, 'fsn', 'Correct serial number *', 'As printed on the part', { mono: true })}${inp(d, 'fwhy', 'Why is it changing? *', 'e.g. Typing mistake')}<span class="hint">The old value is kept in the history and the inventory log.</span>`), op: { label: 'Save correction', run: () => techFixSn(j.id, d), stay: true, ok: 'Serial number corrected' } };
-    case 'scrap': return { title: 'Scrap the part', form: box(`<p style="margin:0">Can’t repair <b class="mono">${esc(j.ret.pn)}${j.ret.sn ? ' SN ' + esc(j.ret.sn) : ''}</b>? Scrap it here. It goes to the scrap pool (its good pieces can be used in other repairs) and the request closes.</p>${area(d, 'sreason', 'Why can’t it be repaired? *', 'e.g. Main board burnt, no spare available')}${wsParts(j).length ? `<span class="hint">Spare parts already used (${money(sum(wsParts(j), p => +p.cost || 0))}) stay on the repair cost.</span>` : ''}`), op: { label: 'Scrap part', cls: 'danger', danger: true, yes: 'Yes, scrap it', check: () => checkScrap(j, d), run: () => wsScrap(j.id, d), ok: 'Scrapped. The part is in the scrap pool.' } };
+    case 'scrap': if (isCustPart(j)) return { title: 'Can’t be repaired', form: box(`<p style="margin:0">Can’t repair <b class="mono">${esc(j.ret.pn)}${j.ret.sn ? ' SN ' + esc(j.ret.sn) : ''}</b>? It is ${esc(j.customer)}’s part: it goes to Stock, who sends it back to the customer unrepaired.</p>${area(d, 'sreason', 'Why can’t it be repaired? *', 'e.g. Main board burnt, no spare available')}${wsParts(j).length ? `<span class="hint">Spare parts already used (${money(sum(wsParts(j), p => +p.cost || 0))}) stay on the repair cost.</span>` : ''}`), op: { label: 'Send to Stock', danger: true, yes: 'Yes, send it', check: () => checkScrap(j, d), run: () => wsScrap(j.id, d), ok: 'Sent to Stock, to go back to the customer' } };
+      return { title: 'Scrap the part', form: box(`<p style="margin:0">Can’t repair <b class="mono">${esc(j.ret.pn)}${j.ret.sn ? ' SN ' + esc(j.ret.sn) : ''}</b>? Scrap it here. It goes to the scrap pool (its good pieces can be used in other repairs) and the request closes.</p>${area(d, 'sreason', 'Why can’t it be repaired? *', 'e.g. Main board burnt, no spare available')}${wsParts(j).length ? `<span class="hint">Spare parts already used (${money(sum(wsParts(j), p => +p.cost || 0))}) stay on the repair cost.</span>` : ''}`), op: { label: 'Scrap part', cls: 'danger', danger: true, yes: 'Yes, scrap it', check: () => checkScrap(j, d), run: () => wsScrap(j.id, d), ok: 'Scrapped. The part is in the scrap pool.' } };
     case 'undo': return undoForm(j, d);
     case 'fixtime': return { title: 'Correct repair time', form: box(`<p style="margin:0">Timer now: <b data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</b>. Enter the time actually worked so far. ${tmState(j) === 'running' ? 'The timer keeps running from the corrected time.' : ''}</p><div class="two">${inp(d, 'fh', 'Hours', '0', { type: 'number', num: true })}${inp(d, 'fm', 'Minutes', '0', { type: 'number', num: true })}</div>${inp(d, 'fwhy', 'Why are you correcting it? *', 'e.g. Forgot to start the timer')}<span class="hint">The Team Leader sees every correction in the repair report and the Excel file.</span>`), op: { label: 'Save time', run: () => wsFixTime(j.id, d), stay: true, ok: 'Repair time corrected' } };
   }
@@ -4118,6 +4224,12 @@ function actionForm(j, me, d) {
   const r = j.ret || {};
   switch (j.status) {
     case 'TL': {
+      if (j.type === 'wsadd') {   /* a part the Workshop added to repair (16 Nov 2026) */
+        if (!d.mode) d.mode = 'approve'; const src = j.src || {};
+        return { form: box(`<div class="infobox">${ic('wrench', 'sm')}<span>${esc(j.byName || 'The Workshop')} added <b class="mono">${esc(j.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || j.qty)}</b> (${esc(j.desc || '')}) to repair. From: <b>${esc(src.from || '')}</b>${src.note ? ' · ' + esc(src.note) : ''}. After you approve, the Workshop repairs it: a repaired part goes back to Stock, one that can’t be repaired goes to the scrap pool.</span></div>
+          ${segBtns(d, 'mode', [['approve', 'Approve'], ['reject', 'Reject']])}${area(d, 'remarks', d.mode === 'reject' ? 'Why are you rejecting it? *' : 'Remarks (optional)', 'Visible to the Workshop')}`),
+          op: { label: d.mode === 'reject' ? 'Reject' : 'Approve', cls: d.mode === 'reject' ? 'danger' : 'ok', danger: true, yes: 'Yes, reject', check: () => checkTl(j, d), run: () => tlDecide(j.id, d), ok: d.mode === 'reject' ? 'Rejected' : 'Approved. Next: the Workshop repairs it' } };
+      }
       if (!d.mode) d.mode = 'approve'; if (d.q == null) d.q = j.qty; if (!d.reason) d.reason = REJECT_REASONS[0];
       if (d.charge == null && canCharge(j)) d.charge = j.chargeable ? '1' : '';
       const rep = j.type === 'rep', van = j.type === 'van', charged = canCharge(j) ? d.charge === '1' : !!j.chargeable, why = rep ? ((j.history || []).find(h => /Needs Team Leader/.test(h.action)) || {}).note : '';
@@ -4257,14 +4369,21 @@ function actionForm(j, me, d) {
       }
       if (!d.outcome) d.outcome = 'fixed';
       if (d.partName == null) d.partName = r.name || j.desc || ''; if (d.partSn == null) d.partSn = r.sn || '';
-      return { form: box(`${timer}${fld('Result', segBtns(d, 'outcome', [['fixed', 'Repaired'], ['ber', 'Beyond repair (scrap)']]))}
+      return { form: box(`${timer}${fld('Result', segBtns(d, 'outcome', [['fixed', 'Repaired'], ['ber', isCustPart(j) ? 'Can’t be repaired' : 'Beyond repair (scrap)']]), isCustPart(j) ? `Either way it goes to Stock, who sends it back to ${esc(j.customer)}.` : '')}
         <div class="two">${inp(d, 'partName', 'Part name', 'e.g. Card reader')}${inp(d, 'partSn', 'Serial number', '', { mono: true })}</div><span class="hint">Part name or serial number required</span>
         ${area(d, 'dx', 'What was wrong', 'e.g. Shutter motor stalls')}${area(d, 'fix', 'How it was fixed', 'e.g. Replaced motor, cleaned head, tested')}
         ${fld(done.length ? 'Spare parts used (more can be added)' : 'Parts used (hub stock or scrap)', `${doneList}${picker}`, 'Scrap parts are free · they leave stock when you save')}
         ${inp(d, 'materials', 'Other things used (no cost)', 'e.g. Cleaning kit, cable ties')}
         <div class="infobox">Rate ${money(SETTINGS.rate)} per hour</div>
         ${area(d, 'wnote', 'Notes', 'Optional')}
-        <div id="live-cost" aria-live="polite">${costBox(d, j)}</div>`), op: { label: 'Save repair', danger: true, yes: 'Yes, scrap it', check: () => checkFinish(j, d), run: () => wsFinish(j.id, d), ok: res => res.status === 'REPAIRED' ? `Repair saved: ${money(res.ws.total)}. Next: Stock` : 'Scrapped and saved' } };
+        <div id="live-cost" aria-live="polite">${costBox(d, j)}</div>`), op: { label: 'Save repair', danger: true, yes: 'Yes, scrap it', check: () => checkFinish(j, d), run: () => wsFinish(j.id, d), ok: res => res.status === 'REPAIRED' || res.status === 'TO_CUST' ? `Repair saved: ${money(res.ws.total)}. Next: Stock` : 'Scrapped and saved' } };
+    }
+    case 'TO_CUST': {   /* Stock sends a customer's part back to the customer (16 Nov 2026) */
+      const ok = j.ws && j.ws.outcome === 'Repaired', why = !ok ? ((j.history || []).slice().reverse().find(h => /Not repairable/.test(h.action)) || {}).note || '' : '';
+      const hint = d.deliv === 'collect' ? `${j.customer} collects it from Stock.` : d.deliv === 'driver' ? `Driver: ${DRIVER_NAME}. He takes it to ${j.customer}.` : d.deliv === 'courier' ? `A courier takes it to ${j.customer}. Add the courier company and a photo of the receipt.` : 'Required: by driver, the customer collects it, or by courier.';
+      return { form: box(`<p style="margin:0">${ok ? 'Repaired' : '<b>Not repaired</b>'} customer part <b class="mono">${esc(j.ret.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> for <b>${esc(j.customer)}</b>${j.custRef ? ' · ref ' + esc(j.custRef) : ''}.${why ? ' Workshop: ' + esc(why) : ''}</p>
+        ${fld('Delivery method *', segBtns(d, 'deliv', DELIVERY_CUST), hint)}${d.deliv === 'courier' ? courierFields(d) : ''}${area(d, 'cnote', 'Note', 'Optional · e.g. handed to the branch')}`),
+        op: { label: 'Send to the customer', check: () => checkToCust(j, d), run: () => stockToCustomer(j.id, d), ok: 'Sent to the customer' } };
     }
     case 'REPAIRED':
       if (!d.hub) d.hub = (j.dispatch && HUBS.includes(j.dispatch.from)) ? j.dispatch.from : myHub();
@@ -4647,6 +4766,25 @@ SH.vanadd = d => {
   };
 };
 
+/* ---------- Workshop: add a part to repair (16 Nov 2026) ---------- */
+SH.wsadd = d => {
+  const known = PARTS[normPN(d.pn)];
+  if (!d.dest) d.dest = 'stock';
+  const cust = d.dest === 'customer';
+  return {
+    title: 'Add part to repair', sub: 'A part that didn’t come from a return',
+    body: `${fld('Where does it go after the repair?', segBtns(d, 'dest', [['stock', 'Back to stock'], ['customer', 'Back to the customer']]))}
+      <div class="infobox">${ic('wrench', 'sm')}<span>${cust ? 'A customer’s part sent in for repair (e.g. cassettes). No approval: it goes straight to your repairs. When it is repaired, or can’t be repaired, you send it to Stock and Stock sends it back to the customer. It is not linked to a machine and never goes into stock.' : 'For our stock, e.g. a part from a scrapped machine. The Team Leader approves it first. Then you repair it like any other part: a repaired part goes back to Stock, one that can’t be repaired goes to the scrap pool.'}</span></div>
+      ${inp(d, 'pn', 'Part number *', 'e.g. 01750123456', { mono: true, live: 'rcvsug', auto: 'pn' })}<div id="live-rcvsug">${rcvSuggest(d)}</div>${inp(d, 'name', known ? 'Part name' : 'Part name *', known ? known.name || '' : 'Filled in for known part numbers')}
+      <div class="two">${inp(d, 'sn', 'Serial number', 'As printed on the part', { mono: true })}${inp(d, 'qty', 'Quantity', '1', { type: 'number', num: true })}</div><span class="hint">With a serial number the quantity is 1. Leave the serial number empty for parts that have none.</span>
+      ${cust ? `<div class="two">${inp(d, 'cust', 'Customer *', 'e.g. Bank Muscat')}${inp(d, 'cref', 'Customer reference', 'Optional · e.g. delivery note')}</div>` : inp(d, 'from', 'Where did it come from? *', 'e.g. Scrapped machine ABO-FFM6047')}
+      ${area(d, 'note', 'Note', 'Optional · condition, what is wrong')}`,
+    op: cust
+      ? { label: 'Add to my repairs', check: () => { const a = wsAddCheck(d); return `Add ${a.pn}${a.sn ? ' SN ' + a.sn : ' × ' + a.qty} from ${a.customer} to your repairs?`; }, run: () => wsAddPart(d), ok: 'Added to your repairs' }
+      : { label: 'Send to Team Leader', check: () => { const a = wsAddCheck(d); return `Add ${a.pn}${a.sn ? ' SN ' + a.sn : ' × ' + a.qty} (from ${a.from}) and send it to the Team Leader to approve?`; }, run: () => wsAddPart(d), ok: 'Sent to the Team Leader to approve' }
+  };
+};
+
 /* ---------- Stock: receive parts ---------- */
 function rcvSuggest(d) {
   const q = normPN(d.pn); if (!q) return '';
@@ -4683,8 +4821,8 @@ SH.part = (d, p) => {
   const levels = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th scope="col">Where</th><th scope="col">In stock</th><th scope="col">Min</th><th scope="col">Max</th><th scope="col">Level</th></tr></thead><tbody>${HUBS.map(h => { const q = qtyAt(h, pn), mn = +pp.min[h] || 0, mx = +pp.max[h] || 0, k = levelOf(q, mn, mx); return `<tr><td>${esc(HUB_NAME[h])}</td><td class="r">${q}</td><td class="r">${mn || '–'}</td><td class="r">${mx || '–'}</td><td>${k ? `<span class="lvl ${k}">${k === 'low' ? 'Below min' : k === 'over' ? 'Over max' : 'OK'}</span>` : ''}</td></tr>`; }).join('')}<tr><td>All vans</td><td class="r">${vans}</td><td class="r">${pp.vanMin || '–'}</td><td class="r">${pp.vanMax || '–'}</td><td class="t3">per van</td></tr></tbody></table></div>`;
   if (!d.edit) return {
     title: pp.name || pn, sub: esc(pn),
-    body: `<div class="card">${dl([['Part number', `<span class="mono">${esc(pn)}</span>`], ['Unit price', money(pp.price)], ['Auto-Rep', pp.autoRep ? `On · tops vans up to ${pp.vanMax || pp.vanMin} when below ${pp.vanMin}` : 'Off'], ['Approval', pp.restricted ? 'Restricted · Team Leader approves' : `Automatic up to ${money(POLICY.autoMaxValue)} / ${POLICY.autoMaxQty} units`], pp.updatedAt && ['Last changed', `${fmtDT(pp.updatedAt)} · ${esc(pp.updatedBy || '')}`]])}</div>${levels}`,
-    foot: can ? `<button class="btn sec" data-a="close">Close</button><button class="btn" data-a="set" data-k="edit" data-v="1">${ic('edit', 'sm')}Edit settings</button>` : ''
+    body: `<div class="card">${dl([['Part number', `<span class="mono">${esc(pn)}</span>`], ['Unit price', money(pp.price)], ['Auto-Rep', pp.autoRep ? `On · tops vans up to ${pp.vanMax || pp.vanMin} when below ${pp.vanMin}` : 'Off'], ['Approval', pp.restricted ? 'Restricted · Team Leader approves' : `Automatic up to ${money(POLICY.autoMaxValue)} / ${POLICY.autoMaxQty} units`], ['Weightage', ptsOf(pn) ? `${ptsTxt(ptsOf(pn))} points per repaired unit` : 'Not set'], pp.updatedAt && ['Last changed', `${fmtDT(pp.updatedAt)} · ${esc(pp.updatedBy || '')}`]])}</div>${levels}`,
+    foot: can ? `<button class="btn sec" data-a="close">Close</button><button class="btn" data-a="set" data-k="edit" data-v="1">${ic('edit', 'sm')}Edit settings</button>` : canSetWs(me) ? `<button class="btn sec" data-a="close">Close</button><button class="btn" data-a="wsPtsOpen" data-id="${esc(pn)}">${ic('edit', 'sm')}Set weightage</button>` : ''
   };
   return {
     title: 'Part settings', sub: esc(pn),
@@ -5417,9 +5555,9 @@ SH.help = d => {
 /* ==========================================================================
    Reports for the Team Leader and the Operations Manager (on screen) and the Excel workbook
    ========================================================================== */
-const REPORTS = [['dash', 'Dashboard'], ['returns', 'Returns'], ['stock', 'Stock levels'], ['eng', 'Engineers'], ['moves', 'Movements'], ['cons', 'Consumption'], ['cost', 'Repair cost'], ['trace', 'Serial trace'], ['audit', 'Audit log']];
+const REPORTS = [['dash', 'Dashboard'], ['returns', 'Returns'], ['stock', 'Stock levels'], ['eng', 'Engineers'], ['moves', 'Movements'], ['cons', 'Consumption'], ['cost', 'Repair cost'], ['wsperf', 'Workshop performance'], ['wsparts', 'Repaired parts'], ['trace', 'Serial trace'], ['audit', 'Audit log']];
 function reportsView(me) {
-  if (!['TL', 'MGR'].includes(me.role)) return '<div class="err">Only the Team Leader or the Operations Manager can see reports.</div>';
+  if (!['TL', 'MGR'].includes(me.role) && !isWsLead(me)) return '<div class="err">Only the Team Leader, the Operations Manager or the Workshop Team Leader can see reports.</div>';
   const r = REPORTS.some(x => x[0] === UI.report) ? UI.report : 'dash';
   return `<div class="filters" role="group" aria-label="Report">${REPORTS.map(([v, l]) => `<button class="${r === v ? 'on' : ''}" aria-pressed="${r === v}" data-a="report" data-v="${v}">${l}</button>`).join('')}</div><div id="live-rep" class="blk" style="gap:18px">${REPORT_FN[r]()}</div>`;
 }
@@ -5822,7 +5960,7 @@ function repTrace() {
   if (UI.traceq && (!UI.traceRes || UI.traceRes.q !== normSN(UI.traceq))) setTimeout(runTrace, 0);
   return `${fld('Serial number', `<div class="searchbox">${ic('search')}<input class="inp mono" id="traceq" data-q="traceq" placeholder="e.g. CR19Z1111" value="${esc(UI.traceq || '')}" autocomplete="off" aria-describedby="trace-h"></div>`, '<span id="trace-h">Shows receipts, dispatches, installations, removals, returns, repairs and where it is now.</span>', 'traceq')}<div id="live-trace" aria-live="polite">${traceList()}</div>`;
 }
-const REPORT_FN = { dash: repDash, returns: repReturns, stock: repStock, eng: repEng, moves: repMoves, cons: repCons, cost: repCost, trace: repTrace, audit: repAudit };
+const REPORT_FN = { dash: repDash, returns: repReturns, stock: repStock, eng: repEng, moves: repMoves, cons: repCons, cost: repCost, wsperf: repWsPerf, wsparts: repWsParts, trace: repTrace, audit: repAudit };
 
 /* ---------- Excel workbook ---------- */
 const cv = x => x == null ? '' : x;
@@ -5851,7 +5989,7 @@ function buildSheets(jobs, led, adj) {
   S.push(['Repairs', ['Request', 'Part number', 'Part name', 'Serial number', 'Machine', 'Model', 'Customer', 'Workshop in', 'Repair started', 'Done', 'Workshop time', 'Hours', 'Rate OMR/h', 'Labour OMR', 'Parts used', 'Materials OMR', 'Total OMR', 'What was wrong', 'How fixed', 'Time corrected', 'Notes', 'Outcome', 'By'],
     jobs.filter(j => j.ws && j.ws.doneAt).map(j => [j.id, (j.ret || {}).pn || j.pn, j.ws.partName || '', j.ws.partSn || (j.ret || {}).sn || '', j.machine || '', j.model || '', j.customer || '', isoDT(j.ws.inAt), isoDT(j.ws.tm && j.ws.tm.startedAt), isoDT(j.ws.doneAt), fmtDur((j.ws.tm && j.ws.tm.acc) || 0), j.ws.hours, j.ws.rate, j.ws.labour, j.ws.materials || '', j.ws.matCost, j.ws.total, j.ws.diagnosis || '', j.ws.fix || '', (j.ws.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${x.why}`).join('; '), j.ws.notes || '', j.ws.outcome, j.ws.doneBy || j.ws.by])]);
   S.push(['Returns', ['Request', 'Engineer', 'Return type', 'Part number', 'Serial number', 'Qty', 'Issue description', 'Replacement recorded', 'Due', 'Sent', 'Hours to return', 'Overdue', 'Reminders', 'Courier', 'Reference', 'At Stock', 'Serial corrected from', 'Arrived with different SN (expected)', 'Missing component', 'Damage on arrival', 'Stock decision', 'Status'],
-    jobs.filter(j => j.ret).map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, j.ret.issue || '', isoDT(j.use && j.use.at), isoDT(retDue(j)), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.missing || '', j.ret.damage || '', j.ret.route || '', stLabel(j)])]);
+    jobs.filter(j => j.ret && j.type !== 'wsadd').map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, j.ret.issue || '', isoDT(j.use && j.use.at), isoDT(retDue(j)), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.missing || '', j.ret.damage || '', j.ret.route || '', stLabel(j)])]);
   const rep = []; for (const j of jobs) { if (!j.use || j.type === 'rep') continue; const units = Array.isArray(j.use.units) ? j.use.units : [{ sn: (j.dispatch && j.dispatch.sn) || '', used: j.use.replaced, removedPn: j.use.removedPn, removedSn: j.use.removedSn }];
     for (const u of units) { const n = u.bulk ? u.used : u.used ? 1 : 0; if (!n) continue; rep.push([j.id, isoDT(j.use.at), j.techName, j.customer || '', j.model || '', j.scn || '', j.machine || '', j.pn, u.bulk ? '' : u.sn || '', n, u.bulk ? j.pn : u.removedPn || '', u.bulk ? '' : u.removedSn || '', j.type === 'van' ? 'Van stock' : 'Request']); } }
   S.push(['Parts replaced', ['Request', 'Date', 'Engineer', 'Customer', 'Model', 'SCN', 'Machine', 'Installed PN', 'Installed SN', 'Qty', 'Removed PN', 'Removed SN', 'Source'], rep]);
@@ -5926,7 +6064,7 @@ function addDashCharts(X, data, sheetName, blocks) {
 }
 let exporting = false;
 async function exportExcel() {
-  const me = ME(); if (!me || !['TL', 'MGR'].includes(me.role)) return toast('Only the Team Leader or the Operations Manager can export the database.', 'bad');
+  const me = ME(); if (!me || (!['TL', 'MGR'].includes(me.role) && !isWsLead(me))) return toast('Only the Team Leader, the Operations Manager or the Workshop Team Leader can export the database.', 'bad');
   if (!DL) return toast('Excel download works in the published app.', 'bad');
   if (exporting) return; exporting = true;
   try {
@@ -5963,7 +6101,7 @@ async function exportExcel() {
    on time, machines, stock health and money. Everything is worked out on the phone from the data SPMS already loads.
    ========================================================================== */
 const SLOW_DAYS = 90;   /* stock that has not left its hub for this many days counts as not moving */
-const isUse = j => !['rep', 'hubrep', 'ret'].includes(j.type);   /* requests and van use, not restocks or refills */
+const isUse = j => !['rep', 'hubrep', 'ret', 'wsadd'].includes(j.type);   /* requests and van use, not restocks, refills or parts the Workshop added */
 const dur = ms => ms < HOUR ? `${Math.max(1, Math.round(ms / 60000))} min` : durDH(ms);
 const omr = v => Math.round(+v || 0).toLocaleString('en-GB');
 const toneOf = pct => pct >= 90 ? 'ok' : pct >= 70 ? 'warn' : 'bad';
@@ -6210,6 +6348,283 @@ function moneyCard(jobs, r, S) {
     ${noneNote('Parts are valued at the price on the request (else the parts list); chargeable cases are paid by the customer, so they don’t use the engineer’s budget.')}</div>`;
 }
 /* ==========================================================================
+   Workshop performance (16 Nov 2026)
+   - Part weightage: the points one repaired unit of a part number is worth (settings/wsperf.pts, by part number).
+   - Targets: points per week for each Workshop member (settings/wsperf.targets, by member id).
+   - Leave and public holidays: each working day (Sunday to Thursday) a member is on leave, or that is a public holiday,
+     takes 1/5 off his weekly target.
+   - Points: the part's weightage × the quantity, only for parts the Workshop finished as Repaired; they go to the person
+     who accepted the repair (ws.byId), not to a lead who finished it for him.
+   - Reports → Workshop performance (one week) and Reports → Repaired parts (every repaired part, one row each), both with Excel.
+   Only the Workshop Team Leader and the Technical Manager change targets, leave, holidays and weightage; the Sender emails
+   the same weekly figures every Sunday morning (sender.js, wsWeekly).
+   ========================================================================== */
+const WS_DAYS = 5;   /* working days in a week, Sunday to Thursday */
+const r2 = v => Math.round((+v || 0) * 100) / 100;
+const ptsTxt = v => r2(v).toLocaleString('en-GB', { maximumFractionDigits: 2 });
+function setWsPerf(d) {
+  d = d || {};
+  const obj = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {}, arr = v => Array.isArray(v) ? v.filter(x => x && x.from && x.to) : [];
+  WSPERF = { pts: obj(d.pts), targets: obj(d.targets), leave: arr(d.leave), holidays: arr(d.holidays), updatedAt: d.updatedAt || 0, by: d.by || '' };
+}
+const ptsOf = pn => { const v = +(WSPERF.pts || {})[normPN(pn)]; return v > 0 ? v : 0; };
+const wsMembers = () => ACCOUNTS.filter(a => a.role === 'WS').slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+/* a part the Workshop finished as Repaired (an undone finish takes these fields away again) */
+const isRepairedJob = j => !!(j && j.ws && j.ws.outcome === 'Repaired' && +j.ws.doneAt && j.status !== 'REPAIRING' && j.ret && j.ret.pn);
+const repQty = j => j.ret.sn ? 1 : Math.max(1, +j.ret.qty || 1);
+const repPts = j => r2(ptsOf(j.ret.pn) * repQty(j));
+const repFrom = j => isCustPart(j) ? 'Customer part · ' + (j.customer || '') : j.type === 'wsadd' ? 'Workshop part · ' + ((j.src && j.src.from) || '') : 'Return · ' + (j.techName || '');
+const repOf = (j, m) => j.ws.byId ? j.ws.byId === m.id : j.ws.by === m.name;
+/* the days off in one week for one member: public holidays and his leave, on working days only */
+const dayIn = (list, day) => list.some(x => x.from <= day && day <= x.to);
+function wsTargetOf(id, start) {
+  const base = +(WSPERF.targets || {})[id] || 0, mine = (WSPERF.leave || []).filter(l => l.sid === id);
+  let hol = 0, lv = 0;
+  for (let i = 0; i < WS_DAYS; i++) { const day = ymd(addDays(start, i)); if (dayIn(WSPERF.holidays || [], day)) hol++; else if (dayIn(mine, day)) lv++; }
+  const avail = WS_DAYS - hol - lv;
+  return { base, hol, lv, avail, target: base ? r2(base * avail / WS_DAYS) : 0 };
+}
+function wsResult(points, t) {
+  if (!t.base) return { k: 'none', label: 'No target', diff: 0 };
+  if (!t.avail) return { k: 'off', label: 'Off all week', diff: r2(points) };
+  const diff = r2(points - t.target);
+  if (diff > 0) return { k: 'over', label: 'Overachieved', diff };
+  if (diff === 0) return { k: 'on', label: 'On target', diff };
+  return { k: 'below', label: 'Below target', diff, pct: Math.round(points / t.target * 100) };
+}
+const resTxt = r => r.k === 'over' ? `Overachieved (+${ptsTxt(r.diff)})` : r.k === 'below' ? `Below target (${ptsTxt(r.diff)}, ${r.pct}%)` : r.label;
+const resPill = r => r.k === 'over' || r.k === 'on' ? `<span class="lvl ok">${esc(resTxt(r))}</span>` : r.k === 'below' ? `<span class="lvl low">${esc(resTxt(r))}</span>` : `<span class="muted">${esc(r.label)}</span>`;
+/* one week (Sunday 00:00 to the next Sunday): each member's repaired parts, points, target and result */
+function wsPerfModel(jobs, start) {
+  const end = addDays(start, 7);
+  const reps = jobs.filter(j => isRepairedJob(j) && j.ws.doneAt >= start && j.ws.doneAt < end).sort((a, b) => a.ws.doneAt - b.ws.doneAt);
+  const mem = wsMembers().map(a => ({ id: a.id, name: a.name, lead: !!a.wsLead }));
+  for (const j of reps) if (!mem.some(m => repOf(j, m))) mem.push({ id: j.ws.byId || '', name: j.ws.by || '(not recorded)', gone: true });
+  const rows = mem.map(m => { const mine = reps.filter(j => repOf(j, m)), points = r2(sum(mine, repPts)), t = wsTargetOf(m.id, start); return { m, reps: mine, n: sum(mine, repQty), points, t, res: wsResult(points, t) }; });
+  return { start, end, reps, rows, n: sum(reps, repQty), points: r2(sum(reps, repPts)) };
+}
+
+/* ---------- saving (Workshop Team Leader or Technical Manager) ---------- */
+function mustSetWs() { const me = ME(); if (!canSetWs(me)) throw E('Only the Workshop Team Leader or the Technical Manager can change this.'); return me; }
+async function wsPerfSave(change) {
+  const me = mustSetWs();
+  const [doc] = await apiBulk('settings', [{ id: 'wsperf', fn: cur => {
+    const c = Object.assign({ pts: {}, targets: {}, leave: [], holidays: [] }, cur ? clone(cur) : {}); delete c.id;
+    change(c); c.updatedAt = Date.now(); c.by = me.name; return c;
+  } }]);
+  setWsPerf(doc); DATAV.set++; return doc;
+}
+const sameMap = (a, b) => { const ka = Object.keys(a || {}), kb = Object.keys(b || {}); return ka.length === kb.length && ka.every(k => +a[k] === +b[k]); };
+const okPts = (v, what) => { const s = String(v == null ? '' : v).trim(); if (s === '') return null; const n = +s; if (!(n >= 0) || n > 100000) throw E(`Enter 0 or more for ${what}.`); return r2(n); };
+async function saveWsTargets(d) {
+  const mem = wsMembers(), next = Object.assign({}, WSPERF.targets);
+  for (const m of mem) { const v = okPts(d['t_' + m.id], m.name); if (v == null) delete next[m.id]; else next[m.id] = v; }
+  if (sameMap(next, WSPERF.targets)) return 0;
+  await wsPerfSave(c => { c.targets = next; });
+  log({ t: 'Workshop targets changed', qty: 0, note: mem.map(m => `${m.name} ${next[m.id] != null ? ptsTxt(next[m.id]) : '–'}`).join(', ') + ' points a week' });
+  return 1;
+}
+async function saveWsPts(d) {
+  const next = Object.assign({}, WSPERF.pts), changed = [];
+  for (const k of Object.keys(d)) {
+    if (!k.startsWith('w_')) continue;
+    const pn = normPN(k.slice(2)), v = okPts(d[k], pn), old = +next[pn] || 0;
+    if (v == null || v === 0) { if (next[pn] != null) { delete next[pn]; changed.push(`${pn} ${ptsTxt(old)} → none`); } }
+    else if (v !== old) { next[pn] = v; changed.push(`${pn} ${old ? ptsTxt(old) : 'none'} → ${ptsTxt(v)}`); }
+  }
+  if (!changed.length) return 0;
+  await wsPerfSave(c => { c.pts = next; });
+  log({ t: 'Part weightage changed', qty: 0, note: changed.slice(0, 20).join(', ') + (changed.length > 20 ? ` and ${changed.length - 20} more` : '') });
+  return changed.length;
+}
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+async function addWsOff(d) {
+  const me = mustSetWs(), hol = d.wkind === 'hol';
+  const from = String(d.wfrom || '').trim(), to = String(d.wto || '').trim() || from, note = String(d.wnote || '').trim();
+  if (!hol && !d.wwho) throw E('Choose the Workshop member.');
+  if (!YMD_RE.test(from) || fromYmd(from) == null) throw E('Choose the first day.');
+  if (!YMD_RE.test(to) || fromYmd(to) == null || to < from) throw E('The last day can’t be before the first day.');
+  if (fromYmd(to) - fromYmd(from) > 366 * DAY) throw E('Choose at most one year at a time.');
+  if (hol && !note) throw E('Write the name of the holiday, e.g. National Day.');
+  const who = hol ? null : wsMembers().find(m => m.id === d.wwho); if (!hol && !who) throw E('Choose the Workshop member.');
+  const e = { id: 'O' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), from, to, note, by: me.name, at: Date.now() };
+  if (who) Object.assign(e, { sid: who.id, name: who.name });
+  await wsPerfSave(c => {
+    if (hol) { if ((c.holidays || []).some(x => x.from <= to && from <= x.to)) throw E('A public holiday is already set on some of these days.'); c.holidays = (c.holidays || []).concat([e]); }
+    else { if ((c.leave || []).some(x => x.sid === who.id && x.from <= to && from <= x.to)) throw E(`${who.name} already has leave on some of these days.`); c.leave = (c.leave || []).concat([e]); }
+  });
+  log({ t: hol ? 'Public holiday added' : 'Workshop leave added', qty: 0, note: `${hol ? note : who.name}: ${offDays(e)}${!hol && note ? ' · ' + note : ''}` });
+  return e;
+}
+async function delWsOff(id) {
+  let gone = null;
+  await wsPerfSave(c => { for (const k of ['leave', 'holidays']) { const x = (c[k] || []).find(o => o.id === id); if (x) { gone = Object.assign({ hol: k === 'holidays' }, x); c[k] = c[k].filter(o => o.id !== id); } } if (!gone) throw E('This entry was already removed.'); });
+  log({ t: gone.hol ? 'Public holiday removed' : 'Workshop leave removed', qty: 0, note: `${gone.hol ? gone.note : gone.name}: ${offDays(gone)}` });
+  return gone;
+}
+const offDays = o => { const f = t => fmtD(fromYmd(t)); return o.from === o.to ? f(o.from) : `${f(o.from)} – ${f(o.to)}`; };
+
+/* ---------- Reports → Workshop performance ---------- */
+const wsWeekStart = () => { const cur = weekOf(Date.now()); return UI.wsWeek && UI.wsWeek <= cur ? UI.wsWeek : cur; };
+function repWsPerf() {
+  const me = ME(), cur = weekOf(Date.now()), start = wsWeekStart(), M = wsPerfModel(JOBS, start), edit = canSetWs(me);
+  const below = M.rows.filter(r => r.res.k === 'below').length, over = M.rows.filter(r => r.res.k === 'over').length;
+  const nav = `<div class="filters" role="group" aria-label="Week"><button data-a="wsWeek" data-v="-1">‹ Previous week</button><button class="${start === cur ? 'on' : ''}" aria-pressed="${start === cur}" data-a="wsWeek" data-v="0">This week</button><button data-a="wsWeek" data-v="1" ${start >= cur ? 'disabled' : ''}>Next week ›</button></div>`;
+  const tools = edit ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Settings</h2></div><div class="chips"><button class="btn sm sec" data-a="sheet" data-s="wstargets">${ic('edit', 'sm')}Targets</button><button class="btn sm sec" data-a="sheet" data-s="wsleave">${ic('edit', 'sm')}Leave &amp; holidays</button><button class="btn sm sec" data-a="sheet" data-s="wspts">${ic('edit', 'sm')}Part weightage</button></div><span class="hint">Only you and the ${edit && isTM(me) ? 'Workshop Team Leader' : 'Technical Manager'} can change these.</span></div>` : '';
+  const offTxt = t => [t.hol ? `${t.hol} holiday${t.hol === 1 ? '' : 's'}` : '', t.lv ? `${t.lv} leave day${t.lv === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ') || '–';
+  const rows = M.rows.map(r => `<tr><td>${esc(r.m.name)}${r.m.lead ? ' <span class="t3 muted">Workshop Team Leader</span>' : ''}${r.m.gone ? ' <span class="t3 muted">(no longer active)</span>' : ''}</td><td class="r">${r.n}</td><td class="r"><b>${ptsTxt(r.points)}</b></td><td class="r">${r.t.base ? ptsTxt(r.t.target) + (r.t.target !== r.t.base ? ` <span class="t3 muted">of ${ptsTxt(r.t.base)}</span>` : '') : '–'}</td><td>${esc(offTxt(r.t))}</td><td>${resPill(r.res)}</td></tr>`);
+  const parts = M.reps.slice().reverse().map(j => `<tr data-a="sheet" data-s="job" data-id="${esc(j.id)}" tabindex="0"><td>${esc(fmtDT(j.ws.doneAt))}</td><td>${esc(j.ws.by || '')}</td><td class="mono">${esc(j.ret.pn)}</td><td>${esc(j.ret.name || partName(j.ret.pn) || '')}</td><td class="mono">${esc(j.ret.sn || '× ' + repQty(j))}</td><td class="r">${ptsTxt(repPts(j))}</td></tr>`);
+  return `${nav}<div class="card">${cardH('Week ' + rangeText({ start, end: M.end }) + (start === cur ? ' (this week)' : ''), allLoaded() ? '' : 'newest requests')}<span class="hint">Points = the part’s weightage × the quantity, for parts finished as Repaired. The target is the weekly target less 1/5 for each leave day or public holiday from Sunday to Thursday.</span></div>
+    ${tools}
+    <div class="kpis">${kpi('Parts repaired', M.n)}${kpi('Points', ptsTxt(M.points))}${kpi('Below target', below, below ? 'bad' : '')}${kpi('Overachieved', over)}</div>
+    <section class="blk"><div class="sec-h"><h2>By Workshop member</h2></div>${tbl(['Member', 'Parts repaired', 'Points', 'Target', 'Days off', 'Result'], rows, 'No Workshop members yet.')}</section>
+    <section class="blk"><div class="sec-h"><h2>Parts repaired this week</h2></div>${tbl(['Finished', 'Member', 'Part number', 'Part name', 'Serial / qty', 'Points'], parts, 'No parts repaired this week.')}</section>
+    <button class="btn" data-a="wsPerfExcel">${ic('download', 'sm')}Download Excel · this week</button>`;
+}
+/* ---------- Reports → Repaired parts: every part the Workshop repaired, one row each ---------- */
+const WSP_RANGES = [['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['month', 'This month'], ['year', 'This year'], ['all', 'All']];
+function wspRange() {
+  const now = Date.now(), m = WSP_RANGES.some(x => x[0] === UI.wspMode) ? UI.wspMode : '30', end = addDays(dayStart(now), 1);
+  if (m === 'all') return { mode: m, start: 0, end };
+  if (m === 'month') { const d = new Date(now); return { mode: m, start: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), end }; }
+  if (m === 'year') return { mode: m, start: new Date(new Date(now).getFullYear(), 0, 1).getTime(), end };
+  return { mode: m, start: addDays(end, -+m), end };
+}
+function wspRows(jobs) {
+  const r = wspRange(), who = UI.wspWho || '', q = String(UI.wspq || '').trim().toUpperCase();
+  return jobs.filter(j => isRepairedJob(j) && j.ws.doneAt >= r.start && j.ws.doneAt < r.end && (!who || (j.ws.byId || j.ws.by) === who)
+    && (!q || [j.ret.pn, j.ret.sn, j.ret.name, j.ws.by, j.customer, j.id].some(x => String(x || '').toUpperCase().includes(q)))).sort((a, b) => b.ws.doneAt - a.ws.doneAt);
+}
+function wspList() {
+  const rs = wspRows(JOBS);
+  return `<div class="kpis">${kpi('Parts repaired', sum(rs, repQty))}${kpi('Points', ptsTxt(sum(rs, repPts)))}${kpi('Repair cost', money(sum(rs, j => +j.ws.total || 0)).replace('OMR ', '') + '<small>OMR</small>')}${kpi('Average time', rs.length ? (Math.round(sum(rs, j => +j.ws.hours || 0) / rs.length * 10) / 10) + ' h' : '–')}</div>
+    ${tbl(['Finished', 'Workshop member', 'Part number', 'Part name', 'Serial / qty', 'Came from', 'Hours', 'Cost', 'Points'], rs.slice(0, 300).map(j => `<tr data-a="sheet" data-s="job" data-id="${esc(j.id)}" tabindex="0"><td>${esc(fmtDT(j.ws.doneAt))}</td><td>${esc(j.ws.by || '')}</td><td class="mono">${esc(j.ret.pn)}</td><td>${esc(j.ret.name || partName(j.ret.pn) || '')}</td><td class="mono">${esc(j.ret.sn || '× ' + repQty(j))}</td><td>${esc(repFrom(j))}</td><td class="r">${j.ws.hours != null ? j.ws.hours : ''}</td><td class="r">${j.ws.total != null ? money(j.ws.total) : ''}</td><td class="r">${ptsTxt(repPts(j))}</td></tr>`), 'No repaired parts in this period.')}
+    ${rs.length > 300 ? `<p class="note">Showing the newest 300 of ${rs.length}. The Excel file has them all.</p>` : ''}`;
+}
+function repWsParts() {
+  const r = wspRange(), people = [...new Map(JOBS.filter(isRepairedJob).map(j => [j.ws.byId || j.ws.by, j.ws.by || j.ws.byId])).entries()].concat(wsMembers().map(m => [m.id, m.name]));
+  const opts = [...new Map(people).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+  return `<div class="filters" role="group" aria-label="Period">${WSP_RANGES.map(([v, l]) => `<button class="${r.mode === v ? 'on' : ''}" aria-pressed="${r.mode === v}" data-a="wspMode" data-v="${v}">${l}</button>`).join('')}</div>
+    <div class="two"><div class="fld"><label class="lbl" for="wsp-who">Workshop member</label><select class="inp" id="wsp-who" data-wsp="wspWho"><option value="">Everyone</option>${opts.map(([v, l]) => `<option value="${esc(v)}" ${UI.wspWho === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+    <div class="fld"><label class="lbl" for="wsp-q">Search</label><input class="inp" id="wsp-q" data-q="wspq" value="${esc(UI.wspq || '')}" placeholder="Part number, serial, name, customer" autocomplete="off"></div></div>
+    <div class="card">${cardH('Repaired parts · ' + (r.mode === 'all' ? 'all time' : rangeText(r)), allLoaded() ? '' : 'newest requests')}<span class="hint">Each part the Workshop finished as Repaired, one row each: from returns, Workshop parts and customer parts.</span></div>
+    <div id="live-wsp" class="blk" style="gap:18px">${wspList()}</div>
+    <button class="btn" data-a="wsPartsExcel">${ic('download', 'sm')}Download Excel · repaired parts</button>`;
+}
+
+/* ---------- Excel ---------- */
+async function saveSheets(filename, sheets) {
+  if (!DL) return toast('Excel download works in the published app.', 'bad');
+  const X = await needXLSX(), wb = X.utils.book_new();
+  for (const [name, head, rows] of sheets) {
+    const ws = X.utils.aoa_to_sheet([head, ...rows]);
+    ws['!cols'] = head.map((h, i) => ({ wch: Math.min(42, Math.max(String(h).length, ...rows.slice(0, 200).map(r => String(r[i] == null ? '' : r[i]).length)) + 2) }));
+    if (rows.length) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: head.length - 1 } }) };
+    X.utils.book_append_sheet(wb, ws, name);
+  }
+  savedToast(await DL.save({ filename, data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Saved ' + filename);
+}
+const REP_HEAD = ['Finished', 'Workshop member', 'Part number', 'Part name', 'Serial number', 'Quantity', 'Weightage', 'Points', 'Came from', 'Request'];
+const repRow = j => [fmtDT(j.ws.doneAt), j.ws.by || '', j.ret.pn, j.ret.name || partName(j.ret.pn) || '', j.ret.sn || '', repQty(j), ptsOf(j.ret.pn), repPts(j), repFrom(j), j.id];
+function wsPerfSheets(M) {
+  return [['Summary', ['Member', 'Parts repaired', 'Points', 'Weekly target', 'Holidays', 'Leave days', 'Target this week', 'Result', 'Difference'],
+    M.rows.map(r => [r.m.name, r.n, r.points, r.t.base || '', r.t.hol, r.t.lv, r.t.base ? r.t.target : '', r.res.label, r.t.base && r.t.avail ? r.res.diff : ''])],
+  ['Repaired parts', REP_HEAD, M.reps.map(repRow)],
+  ['Parts list', ['Part number', 'Part name', 'Weightage'], Object.values(PARTS).filter(p => p.pn).sort((a, b) => String(a.pn).localeCompare(String(b.pn))).map(p => [p.pn, p.name || '', ptsOf(p.pn)])]];
+}
+let wsXlsBusy = false;
+async function wsPerfExcel() {
+  const me = ME(); if (!me || (!['TL', 'MGR'].includes(me.role) && !isWsLead(me))) return toast('Only the Team Leader, the Operations Manager or the Workshop Team Leader can download this.', 'bad');
+  if (wsXlsBusy) return; wsXlsBusy = true;
+  try { const start = wsWeekStart(), M = wsPerfModel(await allJobs(), start); await saveSheets(`SPMS-Workshop-week-${ymd(start)}.xlsx`, wsPerfSheets(M)); }
+  catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Download failed', 'bad'); }
+  finally { wsXlsBusy = false; }
+}
+async function wsPartsExcel() {
+  const me = ME(); if (!me || (!['TL', 'MGR'].includes(me.role) && !isWsLead(me))) return toast('Only the Team Leader, the Operations Manager or the Workshop Team Leader can download this.', 'bad');
+  if (wsXlsBusy) return; wsXlsBusy = true;
+  try {
+    const rs = wspRows(await allJobs());
+    await saveSheets(`SPMS-repaired-parts-${ymd(Date.now())}.xlsx`, [['Repaired parts', REP_HEAD.slice(0, 9).concat(['Customer reference', 'Repair hours', 'Labour (OMR)', 'Parts used (OMR)', 'Total (OMR)', 'Request']),
+      rs.map(j => repRow(j).slice(0, 9).concat([j.custRef || '', j.ws.hours != null ? +j.ws.hours : '', j.ws.labour != null ? +j.ws.labour : '', j.ws.matCost != null ? +j.ws.matCost : '', j.ws.total != null ? +j.ws.total : '', j.id]))]]);
+  } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Download failed', 'bad'); }
+  finally { wsXlsBusy = false; }
+}
+/* Part weightage: the full parts list with its weightage, to fill in and upload again */
+async function wsPtsTemplate() {
+  try { await saveSheets('SPMS-part-weightage.xlsx', [['Part weightage', ['Part number', 'Part name', 'Weightage'], Object.values(PARTS).filter(p => p.pn).sort((a, b) => String(a.pn).localeCompare(String(b.pn))).map(p => [p.pn, p.name || '', ptsOf(p.pn) || ''])]]); }
+  catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Download failed', 'bad'); }
+}
+async function readWsPtsFile(file) {
+  const s = UI.sheet; if (!s || s.name !== 'wspts' || !file) return; const d = s.d;
+  d._err = ''; d.wimp = null; renderSheet();
+  try {
+    if (file.size > 10 * 1024 * 1024) throw E('This file is bigger than 10 MB.');
+    if (!/\.(xlsx|xlsm|xls|csv)$/i.test(file.name)) throw E('Choose an Excel file (.xlsx or .xls) or a .csv file.');
+    const X = await needXLSX(), wb = X.read(await file.arrayBuffer(), { type: 'array' });
+    const rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+    const key = v => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+    const hi = rows.findIndex(r => r.some(c => key(c) === 'partnumber') && r.some(c => ['weightage', 'weight', 'points'].includes(key(c))));
+    if (hi < 0) throw E('The first sheet needs the columns Part number and Weightage.');
+    const pc = rows[hi].findIndex(c => key(c) === 'partnumber'), wc = rows[hi].findIndex(c => ['weightage', 'weight', 'points'].includes(key(c)));
+    let n = 0; const bad = [], unknown = [];
+    for (const r of rows.slice(hi + 1)) {
+      const pn = normPN(r[pc]); if (!pn) continue; const raw = String(r[wc] == null ? '' : r[wc]).trim();
+      if (!PARTS[pn]) { unknown.push(pn); continue; }
+      if (raw !== '' && !(+raw >= 0 && +raw <= 100000)) { bad.push(pn); continue; }
+      if (String(raw === '' ? 0 : r2(raw)) !== String(ptsOf(pn))) { d['w_' + pn] = raw === '' ? '' : String(r2(raw)); n++; }
+    }
+    d.wimp = { name: file.name, n, bad, unknown };
+  } catch (e) { d._err = e instanceof UserError ? e.message : 'Could not read this file. Save it as .xlsx or .csv and try again.'; if (!(e instanceof UserError)) console.error(e); }
+  if (UI.sheet === s) renderSheet();
+}
+
+/* ---------- the settings panels ---------- */
+const noWsSet = title => ({ title, body: '<div class="err">Only the Workshop Team Leader or the Technical Manager can change this.</div>' });
+SH.wstargets = d => {
+  if (!canSetWs(ME())) return noWsSet('Targets');
+  const mem = wsMembers();
+  if (!d._i) { for (const m of mem) d['t_' + m.id] = WSPERF.targets[m.id] != null ? String(WSPERF.targets[m.id]) : ''; d._i = 1; }
+  return { title: 'Workshop targets', sub: 'Points per week for each member',
+    body: (mem.length ? mem.map(m => inp(d, 't_' + m.id, m.name + (m.wsLead ? ' · Workshop Team Leader' : ''), 'Points per week', { type: 'number', num: true })).join('') : emptyBox('No Workshop members yet', 'Add them in Staff accounts.'))
+      + '<span class="hint">Leave days and public holidays (Sunday to Thursday) take 1/5 off the target for that week. Leave a box empty for no target.</span>',
+    op: mem.length ? { label: 'Save targets', run: () => saveWsTargets(d), ok: n => n ? 'Targets saved' : 'Nothing changed' } : null };
+};
+SH.wsleave = d => {
+  if (!canSetWs(ME())) return noWsSet('Leave & holidays');
+  if (!d.wkind) d.wkind = 'leave';
+  const hol = d.wkind === 'hol', since = ymd(addDays(Date.now(), -60)), mem = wsMembers();
+  const list = (WSPERF.holidays || []).map(x => Object.assign({ hol: true }, x)).concat(WSPERF.leave || []).filter(x => x.to >= since).sort((a, b) => a.from < b.from ? -1 : a.from > b.from ? 1 : 0);
+  const rows = list.length ? `<div class="list">${list.map(x => `<div class="row"><span class="lead info">${ic(x.hol ? 'check' : 'user', 'sm')}</span><div class="main"><div class="t1">${x.hol ? 'Public holiday · ' + esc(x.note) : 'Leave · ' + esc(x.name)}</div><div class="t3">${esc(offDays(x))}${!x.hol && x.note ? ' · ' + esc(x.note) : ''}</div></div><button class="btn sm danger" data-a="wsOffDel" data-id="${esc(x.id)}" aria-label="Remove ${esc(x.hol ? x.note : x.name)} ${esc(offDays(x))}">Remove</button></div>`).join('')}</div>` : '<p class="note">No leave or holidays from the last 60 days on.</p>';
+  const date = (k, label) => fld(label, `<input class="inp" type="date" id="f-${k}" data-d="${k}" value="${esc(d[k] || '')}">`, '', 'f-' + k);
+  return { title: 'Leave & holidays', sub: 'Days taken off the Workshop targets',
+    body: rows + box(`<div class="sec-h" style="padding:0"><h2>Add</h2></div>
+      ${fld('What', segBtns(d, 'wkind', [['leave', 'Leave'], ['hol', 'Public holiday']]))}
+      ${hol ? '' : fld('Workshop member *', `<select class="inp" id="f-wwho" data-d="wwho"><option value="">Choose…</option>${mem.map(m => `<option value="${esc(m.id)}" ${d.wwho === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>`, '', 'f-wwho')}
+      <div class="two">${date('wfrom', 'First day *')}${date('wto', 'Last day')}</div>
+      ${inp(d, 'wnote', hol ? 'Holiday name *' : 'Note', hol ? 'e.g. National Day' : 'e.g. annual leave')}
+      <span class="hint">Leave the last day empty for one day. Only Sunday to Thursday count.</span>`),
+    op: { label: hol ? 'Add holiday' : 'Add leave', run: () => addWsOff(d), stay: true, ok: e => e.sid ? `Leave added for ${e.name}` : 'Holiday added' } };
+};
+const LIVE_WSPTS = d => {
+  const q = String(d.q || '').trim().toUpperCase(), all = Object.values(PARTS).filter(p => p.pn);
+  const hits = all.filter(p => !q || normPN(p.pn).includes(q) || String(p.name || '').toUpperCase().includes(q)).sort((a, b) => String(a.pn).localeCompare(String(b.pn)));
+  if (!all.length) return emptyBox('The parts list is empty', 'Stock adds parts in Inventory.');
+  return `<div class="list">${hits.slice(0, 40).map(p => { const pn = normPN(p.pn), k = 'w_' + pn; return `<div class="row"><div class="main"><div class="t1">${tag(pn)} ${esc(p.name || '')}</div><div class="t3">Now: ${ptsOf(pn) ? ptsTxt(ptsOf(pn)) + ' points' : 'not set'}</div></div><input class="inp num" style="max-width:110px" type="number" min="0" step="any" inputmode="decimal" data-d="${esc(k)}" id="f-${esc(k)}" aria-label="Weightage for ${esc(pn)}" placeholder="0" value="${esc(d[k] != null ? d[k] : ptsOf(pn) || '')}"></div>`; }).join('') || '<p class="note">No part matches.</p>'}</div>${hits.length > 40 ? `<p class="note">${hits.length - 40} more: type more of the part number or name.</p>` : ''}`;
+};
+SH.wspts = (d, p) => {
+  if (!canSetWs(ME())) return noWsSet('Part weightage');
+  if (d.q == null) d.q = p && p.id ? p.id : '';
+  const imp = d.wimp;
+  return { title: 'Part weightage', sub: 'Points for each repaired unit of a part',
+    body: `${fld('Find a part', `<input class="inp" id="f-q" data-d="q" data-live="wspts" placeholder="Part number or name" value="${esc(d.q)}" autocomplete="off">`, '', 'f-q')}
+      <div id="live-wspts">${LIVE_WSPTS(d)}</div>
+      ${imp ? `<div class="infobox" role="status">${esc(imp.name)}: ${imp.n} weightage${imp.n === 1 ? '' : 's'} to change.${imp.unknown.length ? ` ${imp.unknown.length} part number${imp.unknown.length === 1 ? ' is' : 's are'} not in the parts list and ${imp.unknown.length === 1 ? 'was' : 'were'} skipped: ${esc(imp.unknown.slice(0, 8).join(', '))}${imp.unknown.length > 8 ? '…' : ''}.` : ''}${imp.bad.length ? ` Not a number, skipped: ${esc(imp.bad.slice(0, 8).join(', '))}.` : ''} Tap Save weightage to keep them.</div>` : ''}
+      <div class="card"><div class="sec-h" style="padding:0"><h2>Excel</h2></div><div class="chips"><button class="btn sm sec" data-a="wsPtsTemplate">${ic('download', 'sm')}Download parts list</button><label class="btn sm sec" for="f-wsptsfile">${ic('sheet', 'sm')}Upload Excel</label><input type="file" id="f-wsptsfile" accept=".xlsx,.xls,.xlsm,.csv" hidden></div><span class="hint">Download the whole parts list, fill the Weightage column, then upload it. 0 or empty = no points.</span></div>
+      <span class="hint">Points for a repaired part = weightage × quantity.</span>`,
+    op: { label: 'Save weightage', run: () => saveWsPts(d), ok: k => k ? `Weightage saved for ${k} part${k === 1 ? '' : 's'}` : 'Nothing changed' } };
+};
+/* ==========================================================================
    Firebase build (Google AI Studio or any web host): passwords, built-in Team Leaders, staff accounts,
    change password, install as an app. Nothing here runs inside Claude.
    ========================================================================== */
@@ -6345,10 +6760,15 @@ async function fbSendResetMany(ids, progress) {
 function pwProgress(n, total) { const t = $('#acc-prog'); if (t) t.innerHTML = `<div class="prog-line"><i style="width:${Math.round(n / total * 100)}%"></i></div><span class="hint">Sending ${Math.min(n + 1, total)} of ${total}…</span>`; }
 
 /* ---------- staff accounts (Team Leader) ---------- */
-const ROLE_WORDS = { TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'], MGR: ['operations manager', 'regional operations manager', 'ops manager', 'mgr'] };
+/* the roles in the staff forms. "WSL", the Workshop Team Leader (16 Nov 2026), is saved as role WS with wsLead: true */
+const ACCT_ROLES = [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['WSL', WSL_NAME], ['DRIVER', 'Driver'], ['TL', 'Team Leader'], ['MGR', 'Operations Manager']];
+const formRole = u => u.role === 'WS' && u.wsLead ? 'WSL' : u.role;
+const roleLabel = r => r === 'WSL' ? WSL_NAME : ROLE[r] || r;
+const ROLE_WORDS = { WSL: ['workshop team leader', 'workshop teamleader', 'workshop leader', 'workshop lead', 'ws team leader', 'ws lead'], TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'], MGR: ['operations manager', 'regional operations manager', 'ops manager', 'mgr'] };
 function roleOf(v) {
   const t = String(v || '').trim().toLowerCase(); if (ROLE[t.toUpperCase()]) return t.toUpperCase(); for (const [k, ws] of Object.entries(ROLE_WORDS)) if (ws.includes(t)) return k;
   /* the Team sheet's Role column: "request part from Sohar HUB", "Teamleader approval", "Stock approval", "Workshop approval" */
+  if (/^workshop\b/.test(t) && /\blead/.test(t)) return 'WSL';
   if (/team\s*leader/.test(t)) return 'TL'; if (/^stock\b|logistic/.test(t)) return 'STOCK'; if (/^workshop\b/.test(t)) return 'WS'; if (/^driver\b|courier|delivery/.test(t)) return 'DRIVER'; if (/^request\b/.test(t)) return 'TECH';
   return '';
 }
@@ -6361,7 +6781,7 @@ function hubFromRole(v) {
   const hit = HUB_INFO.filter(x => lev(core, x.name.toUpperCase().replace(/[^A-Z]/g, '').replace(/HUB$/, '')) <= 1);
   return hit.length === 1 ? hit[0].code : '';
 }
-const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', DRIVER: 'Driver', TL: 'Team Leader', MGR: 'Operations Manager' };
+const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', WSL: WSL_NAME, DRIVER: 'Driver', TL: 'Team Leader', MGR: 'Operations Manager' };
 function acctHub(v) {
   const h = hubOf(v); if (h) return h;
   const c = guessCountry(v) || (/\bOMAN\b/i.test(String(v || '')) ? 'Oman' : '');
@@ -6374,7 +6794,7 @@ function checkAcct(a) {
   if (!a.name) return 'Name missing';
   if (a.uae) return 'UAE staff are not in SPMS Oman';
   if (!EMAIL_RE.test(a.email)) return 'Email or username missing or not valid (a username uses only letters, numbers, . _ -)';
-  if (!ROLE[a.role]) return `Role “${a.rawRole || ''}” is not used in SPMS`;
+  if (!ROLE[a.role] && a.role !== 'WSL') return `Role “${a.rawRole || ''}” is not used in SPMS`;
   if (!a.pw) return 'Password missing';
   const weak = pwProblem(a.pw); if (weak) return weak + ' (' + PW_RULE.replace(/\.$/, '') + ')';
   if (a.role === 'TECH' && a.budget === false) return 'Engineer budget is not a number (OMR)';
@@ -6403,11 +6823,12 @@ async function fbCreateAccount(a, opt) {
   /* the login exists: does it already have this password? (then nothing needs changing) */
   if (!made) { try { await auth2.signInWithEmailAndPassword(a.email, fbPw(a.pw)); same = true; } catch (e) { /* a different password */ } finally { try { await auth2.signOut(); } catch (e) { /* already signed out */ } } }
   const me = ME(), now = Date.now(), old = USERS.find(u => (u.email || u.id) === a.email);
-  const role = (old && old.role === 'TL') || builtinTL(a.email) ? 'TL' : builtinMgr(a.email) ? 'MGR' : a.role;
+  const lead = a.role === 'WSL', role = (old && old.role === 'TL') || builtinTL(a.email) ? 'TL' : builtinMgr(a.email) ? 'MGR' : lead ? 'WS' : a.role;   /* the Workshop Team Leader is saved as Workshop with wsLead */
   /* the short id (van, requests) must be unique: ahmed@cns-me.com and the username ahmed would otherwise share one */
   let sid = (old && old.sid) || idFromEmail(a.email);
   if (!old) { const base = sid; for (let n = 2; USERS.some(u => (u.email || u.id) !== a.email && (u.sid || idFromEmail(u.email || u.id)) === sid); n++) sid = base + n; }   /* an import never demotes a Team Leader (built-in ones stay Team Leader) */
-  const doc = { email: a.email, sid, name: a.name, role, title: role === a.role ? a.title || acctTitle(role, a.hub) : (old && old.title) || acctTitle(role, a.hub), hub: a.hub, active: true, createdAt: (old && old.createdAt) || now, createdBy: (old && old.createdBy) || me.name, updatedAt: now, updatedBy: me.name, pwAt: made ? now : (old && old.pwAt) || now };
+  const asked = lead ? 'WS' : a.role, isLead = lead && role === 'WS';
+  const doc = { email: a.email, sid, name: a.name, role, wsLead: isLead, title: role === asked ? a.title || acctTitle(isLead ? 'WSL' : role, a.hub) : (old && old.title) || acctTitle(role, a.hub), hub: a.hub, active: true, createdAt: (old && old.createdAt) || now, createdBy: (old && old.createdBy) || me.name, updatedAt: now, updatedBy: me.name, pwAt: made ? now : (old && old.pwAt) || now };
   if (made) doc.mustChange = null; else if (old && old.mustChange !== undefined) doc.mustChange = old.mustChange;   /* the sender reads it: have they chosen their own password? */
   await api.set('users', a.email, doc);
   let pw = 'new';
@@ -6431,10 +6852,13 @@ async function fbCreateMany(rows, onProgress) {
 const importMsg = r => [`${r.made} account${r.made === 1 ? '' : 's'} created`, r.same ? `${r.same} already had this password` : '', r.set ? `${r.set} existing login${r.set === 1 ? '' : 's'} got the new password` : '', r.own ? `${r.own} kept the password they chose` : '', r.kept.length ? `${r.kept.length} couldn’t get the new password` : '', r.budgets ? `${r.budgets} budget${r.budgets === 1 ? '' : 's'} set` : '', r.budFail ? `${r.budFail} budget${r.budFail === 1 ? '' : 's'} not saved` : ''].filter(Boolean).join(' · ');
 async function fbSaveAcct(email, d) {
   const me = mustRole('TL'), u = USERS.find(x => (x.email || x.id) === email); if (!u) throw E('This account no longer exists.');
-  const role = d.role, active = d.active !== 'no', hub = HUBS.includes(d.hub) ? d.hub : u.hub, name = (d.name || '').trim();
+  const lead = d.role === 'WSL', role = lead ? 'WS' : d.role, active = d.active !== 'no', hub = HUBS.includes(d.hub) ? d.hub : u.hub, name = (d.name || '').trim();   /* the Workshop Team Leader: Workshop with wsLead */
   if (!name) throw E('Enter the name.');
   if (email === me.email && (role !== 'TL' || !active)) throw E('You can’t remove your own Team Leader access. Make someone else Team Leader first, and let them change your account.');
-  await api.update('users', email, { name, role, hub, title: (d.title || '').trim() || acctTitle(role, hub), active, updatedAt: Date.now(), updatedBy: me.name });
+  /* a new role with the title left as it was: the title of the new role, if the old one was the automatic one */
+  const was = formRole(u), auto = t => !t || t === u.role || t.startsWith(ROLE_TITLE[was] || '~'), t0 = (d.title || '').trim();
+  const title = d.role !== was && t0 === (u.title || '') && auto(t0) ? acctTitle(d.role, hub) : t0 || acctTitle(d.role, hub);
+  await api.update('users', email, { name, role, wsLead: lead, hub, title, active, updatedAt: Date.now(), updatedBy: me.name });
 }
 async function fbDeleteAccount(email) {
   const me = mustRole('TL');
@@ -6554,7 +6978,7 @@ SH.accounts = d => {
         <button class="btn sm ${selOn ? '' : 'sec'}" data-a="accSelMode">${selOn ? 'Cancel' : 'Select'}</button></div>
       ${selOn ? `${segBtns(d, 'selAct', [['pw', 'Send password email'], ['remove', 'Remove']])}<div style="display:flex;gap:8px;align-items:center;padding:2px 2px 0"><p class="note" style="padding:0;margin:0;flex:1">${toPw ? 'Tick the people, then press Send. Each one gets an email with a link to choose a password.' : 'Tick the accounts to remove, then press Remove.'}</p>${selList.length ? `<button class="btn sm ${allSel ? 'sec' : ''}" data-a="accAll" style="flex:none">${allSel ? 'Clear' : 'Select all'}</button>` : ''}</div><div id="acc-prog" aria-live="polite"></div>` : ''}
       <div class="list">${list.map(u => {
-        const id = u.email || u.id, role = `<span class="chip plain">${esc(ROLE[u.role] || u.role)}${u.hub ? ' · ' + esc(u.hub) : ''}</span>`;
+        const id = u.email || u.id, role = `<span class="chip plain">${esc(roleName(u))}${u.hub ? ' · ' + esc(u.hub) : ''}</span>`;
         const nm = `<div class="main"><div class="t1">${esc(u.name)}${u.active === false ? ' <span class="chip bad">No access</span>' : ''}</div><div class="t3 mono">${esc(loginShow(id))}${isUserLogin(id) ? ' · username' : ''}</div></div>`;
         if (selOn) {
           const why = noPick(u);
@@ -6572,7 +6996,7 @@ SH.accounts = d => {
   } else if (d.mode === 'add') {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
     body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email or username *', 'first.last@cns-me.com or a username', { hint: 'No email? Type a username (letters, numbers, . _ -). They sign in with that username and password.' })}
-      ${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader'], ['MGR', 'Operations Manager']]))}${fld('Hub', hubSeg(d, 'hub'))}
+      ${fld('Role', segBtns(d, 'role', ACCT_ROLES))}${fld('Hub', hubSeg(d, 'hub'))}
       ${inp(d, 'pw', 'First password *', 'e.g. Start#2026a', { hint: PW_RULE + ' They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
     op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: toLogin(d.email), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a, { force: true }); }, stay: true,
       ok: r => r.skip ? 'Mohamed Said’s account is built in and can’t be changed.' : r.made ? 'Account created' : r.pw === 'same' ? 'Saved. This login already had this password.' : r.pw === 'set' ? 'Saved. This login already existed — its password is now the one you typed.' : 'Saved, but this login already existed and SPMS couldn’t change its password. Open the person and tap “Send password email”.' };
@@ -6586,7 +7010,7 @@ SH.accounts = d => {
       <div class="card"><div class="sec-h" style="padding:0"><h2>2 · Choose the file</h2></div><label class="drop" for="f-accfile">${ic('inbox')}<b>${d.acc ? esc(d.acc.name) : 'Drop the Excel file here'}</b><span>${d.acc ? 'Choose another file' : 'or tap to choose it'}</span><input class="vh" type="file" id="f-accfile" accept=".xlsx,.xlsm,.xls,.csv"></label>${d.accBusy ? '<div class="infobox" role="status">Reading the file…</div>' : ''}</div>
       ${d.acc ? `<section class="blk"><div class="sec-h"><h2>3 · Check and create</h2><span class="t3 muted">${esc(d.acc.sheet)}</span></div>
         <div class="kpis k3">${kpi('Ready', ready.length)}${kpi('New logins', fresh)}${kpi('Skipped', bad.length, bad.length ? 'warn' : '')}</div>
-        ${ready.length ? tbl(['Name', 'Email', 'Role', 'Hub'].concat(hasBud ? ['Budget (OMR)'] : []), ready.slice(0, 200).map(r => `<tr><td>${esc(r.name)}${known.has(r.email) ? ' <span class="chip plain">has login</span>' : ''}</td><td class="mono">${esc(loginShow(r.email))}</td><td>${esc(ROLE[r.role])}</td><td>${esc(r.hub)}</td>${hasBud ? `<td class="r">${r.role === 'TECH' && typeof r.budget === 'number' ? esc(r.budget.toLocaleString('en', { maximumFractionDigits: 3 })) : '<span class="muted">—</span>'}</td>` : ''}</tr>`)) : '<div class="infobox">Nobody to add from this file.</div>'}
+        ${ready.length ? tbl(['Name', 'Email', 'Role', 'Hub'].concat(hasBud ? ['Budget (OMR)'] : []), ready.slice(0, 200).map(r => `<tr><td>${esc(r.name)}${known.has(r.email) ? ' <span class="chip plain">has login</span>' : ''}</td><td class="mono">${esc(loginShow(r.email))}</td><td>${esc(roleLabel(r.role))}</td><td>${esc(r.hub)}</td>${hasBud ? `<td class="r">${r.role === 'TECH' && typeof r.budget === 'number' ? esc(r.budget.toLocaleString('en', { maximumFractionDigits: 3 })) : '<span class="muted">—</span>'}</td>` : ''}</tr>`)) : '<div class="infobox">Nobody to add from this file.</div>'}
         ${bad.length ? `<div class="sec-h"><h2>Skipped</h2></div>${tbl(['Row', 'Name', 'Why'], bad.slice(0, 100).map(b => `<tr class="flag"><td class="r">${b.row}</td><td>${esc(b.name || b.email)}</td><td class="wrap">${esc(b.why)}</td></tr>`))}` : ''}
         <div id="acc-prog" aria-live="polite"></div><p class="note">Safe to run again. Someone who already has a login gets the password in the file, unless they have already chosen their own.</p></section>` : ''}`;
     if (ready.length) op = { label: `Create ${ready.length} account${ready.length === 1 ? '' : 's'}`, yes: 'Yes, create', check: () => `Create SPMS logins for ${ready.length} people? Their first password is the one in the file.`, run: () => fbCreateMany(ready, accProgress), stay: true, after: r => { if (UI.sheet) UI.sheet.p = Object.assign({}, UI.sheet.p, { kept: r.kept }); }, ok: importMsg };
@@ -6601,7 +7025,7 @@ SH.acct = (d, p) => {
         <div class="infobox">${ic('lock', 'sm')}This is Mohamed Said’s built-in account. It can’t be changed or removed.</div>`,
       foot: `<button class="btn sec" data-a="close">Close</button>` };
   }
-  if (!d._i) { Object.assign(d, { name: u.name, role: u.role, hub: u.hub || HUBS[0], title: u.title || '', active: u.active === false ? 'no' : 'yes' }); d._i = 1; }
+  if (!d._i) { Object.assign(d, { name: u.name, role: formRole(u), hub: u.hub || HUBS[0], title: u.title || '', active: u.active === false ? 'no' : 'yes' }); d._i = 1; }
   const sid = u.sid || idFromEmail(u.email || u.id), bi = budgetInfo(sid);
   if (!d._b) { d.bamt = bi.set ? String(bi.amount) : ''; d.bused = bi.set || bi.used ? bi.used.toFixed(3) : ''; d._bamt0 = d.bamt; d._bused0 = d.bused; d._b = 1; }
   const budBox = d.role !== 'TECH' ? '' : `<div class="card"><div class="sec-h" style="padding:0"><h2>Budget ${bi.year}</h2>${bi.set ? `<span class="t3 muted">${Math.round(bi.pct * 100)}% used</span>` : ''}</div>
@@ -6610,7 +7034,7 @@ SH.acct = (d, p) => {
       <span class="hint">Each request he sends is added to “used”. Rejected, cancelled, faulty or unused parts are given back, and van parts count when he uses them. Change “used so far” only to start from your own figure.</span></div>`;
   return {
     title: u.name, sub: esc(loginShow(u.email || u.id)) + (isUserLogin(u.email || u.id) ? ' · signs in with a username' : ''),
-    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['DRIVER', 'Driver'], ['TL', 'Team Leader'], ['MGR', 'Operations Manager']]))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
+    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', ACCT_ROLES))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
       ${budBox}
       <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div>${isUserLogin(u.email || u.id) ? `<p class="note" style="padding:0">This person signs in with the username <b class="mono">${esc(loginShow(u.email || u.id))}</b> and has no email, so SPMS can’t send them a password link. If they forget their password, remove this account and add them again with a new username.</p>` : `<p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button>`}</div>
@@ -7070,7 +7494,7 @@ async function fbAuthChanged(user) {
       sec = loadSecurity();   /* read again now that the staff entry exists (the rules let only staff read it) */
     }
     if (!d || !ROLE[d.role] || d.active === false) { fail(d && d.active === false ? 'Your access to SPMS was removed. Ask the Team Leader.' : 'Your login works, but you aren’t on the SPMS staff list yet. Ask the Team Leader to add you.'); await FB.auth.signOut().catch(() => {}); return; }
-    UI.profile = { id: d.sid || idFromEmail(email), email, role: d.role, name: d.name || email, title: d.title || ROLE[d.role], hub: d.hub || '', full: !!(bt && bt.full && d.role === 'TL'), baseRole: d.role };
+    UI.profile = { id: d.sid || idFromEmail(email), email, role: d.role, name: d.name || email, title: d.title || roleName(d), hub: d.hub || '', full: !!(bt && bt.full && d.role === 'TL'), baseRole: d.role, wsLead: d.role === 'WS' && !!d.wsLead };
     UI.pwDoc = d;
     await sec;
     /* older accounts with no password date yet: start the 90-day clock now (the rules let a person set only their own pwAt/mustChange) */
@@ -7133,7 +7557,7 @@ function addVanNeed(d, pn) {
   for (const l of LINES.filter(y => y.loc === d.from && y.pn === pn && !d.picks.some(p => p.id === y.key))) { if (left <= 0) break; const n = l.sn ? 1 : Math.min(qtyOf(l), left); d.picks.push({ id: l.key, qty: n }); left -= n; }
 }
 const sd = () => UI.sheet ? UI.sheet.d : {};
-const LIVE = { machsug: machSuggest, pnsug: pnSuggest, descsug: descSuggest, pnfixsug: d => pnFixSuggest(d, UI.sheet && JOB(UI.sheet.p.id)), usesug: useSuggest, tladd: tlAddSuggest, rcvqty: rcvQty, rcvsug: rcvSuggest, vanav: vanAvail, gpsprev: gpsPreview };
+const LIVE = { wspts: d => LIVE_WSPTS(d), machsug: machSuggest, pnsug: pnSuggest, descsug: descSuggest, pnfixsug: d => pnFixSuggest(d, UI.sheet && JOB(UI.sheet.p.id)), usesug: useSuggest, tladd: tlAddSuggest, rcvqty: rcvQty, rcvsug: rcvSuggest, vanav: vanAvail, gpsprev: gpsPreview };
 /* remember which folds are open so a re-render keeps them as the user left them */
 document.addEventListener('toggle', e => { const k = e.target && e.target.dataset && e.target.dataset.fold; if (k && UI.sheet) UI.sheet.d['_f_' + k] = e.target.open; }, true);
 const A = {
@@ -7150,6 +7574,14 @@ const A = {
   filter(ds) { UI.filter = ds.v; UI.tab = 'all'; render(); },
   invLoc(ds) { UI.invLoc = ds.v; render(); },
   report(ds) { UI.report = ds.v; render(); },
+  /* Workshop performance (16 Nov 2026) */
+  wsWeek(ds) { const cur = weekOf(Date.now()), s = wsWeekStart(); UI.wsWeek = +ds.v === 0 ? cur : Math.min(cur, addDays(s, 7 * +ds.v)); const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report](); else render(); },
+  wspMode(ds) { UI.wspMode = ds.v; const c = $('#live-rep'); if (c && UI.tab === 'rep') c.innerHTML = REPORT_FN[UI.report](); else render(); },
+  wsPerfExcel() { wsPerfExcel(); },
+  wsPartsExcel() { wsPartsExcel(); },
+  wsPtsTemplate() { wsPtsTemplate(); },
+  wsPtsOpen(ds) { openSheet('wspts', { id: ds.id }); },
+  wsOffDel(ds) { const s = UI.sheet; if (!s || s.busy) return; const x = (WSPERF.leave || []).concat(WSPERF.holidays || []).find(o => o.id === ds.id); if (!x) return; s.d._err = ''; s.d._confirm = { text: `Remove ${x.sid ? 'the leave of ' + x.name : 'the holiday ' + x.note} (${offDays(x)})?`, danger: true, yes: 'Yes, remove', run: () => delWsOff(ds.id), stay: true, ok: 'Removed' }; renderSheet(); const y = $('#f-yes'); if (y) y.focus(); },
   goReport(ds) { UI.tab = 'rep'; UI.report = ds.v; render(); $('#scr').scrollTop = 0; },
   dashMode(ds) {
     const v = String(ds.v); if (v === 'custom' && UI.dashMode !== 'custom') { const r = dashRange(); UI.dashFrom = ymd(r.start); UI.dashTo = ymd(addDays(r.end, -1)); }   /* Custom starts from the period on screen */
@@ -7298,6 +7730,7 @@ function liveSearch(k) {
   else if (k === 'iq') { const c = $('#live-inv'); if (c) c.innerHTML = invList(); }
   else if (k === 'auditq') { const c = $('#live-audit'); if (c) c.innerHTML = auditList(); }
   else if (k === 'traceq') runTrace();
+  else if (k === 'wspq') { const c = $('#live-wsp'); if (c) c.innerHTML = wspList(); }
 }
 document.addEventListener('input', e => {
   const el = e.target; if (!el.dataset) return;
@@ -7325,6 +7758,8 @@ document.addEventListener('change', e => {
     if (el.dataset.dashf === 'hub') { UI.dashHub = el.value; if (UI.dashEng && el.value && engHub(UI.dashEng) !== el.value) UI.dashEng = ''; } else UI.dashEng = el.value;
     const c = $('#live-rep'); if (c && UI.tab === 'rep') { c.innerHTML = REPORT_FN[UI.report] ? REPORT_FN[UI.report]() : ''; const f = c.querySelector(`[data-dashf="${el.dataset.dashf}"]`); if (f) f.focus({ preventScroll: true }); } return;
   }
+  if (el.dataset && el.dataset.wsp) { UI[el.dataset.wsp] = el.value; const c = $('#live-wsp'); if (c) c.innerHTML = wspList(); return; }   /* Repaired parts: one member */
+  if (el.id === 'f-wsptsfile' && el.files && el.files[0]) { readWsPtsFile(el.files[0]); el.value = ''; return; }
   if (el.id === 'f-file' && el.files && el.files[0]) { readImportFile(el.files[0]); el.value = ''; return; }
   if (el.id === 'f-accfile' && el.files && el.files[0]) { readAccountsFile(el.files[0]); return; }
   if (el.id === 'f-machfile' && el.files && el.files[0]) { readMachinesFile(el.files[0]); el.value = ''; return; }
