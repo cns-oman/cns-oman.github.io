@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261116133032">
+<meta name="spms-build" content="20261116180427">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -404,6 +404,8 @@ a.btn { text-decoration: none; }
 .seg { display: flex; background: var(--fill); border-radius: 14px; padding: 4px; gap: 4px; }
 .seg button { flex: 1 1 0; border: 0; background: none; padding: 10px 8px; border-radius: 11px; font-weight: 600; font-size: 13.5px; color: var(--ink-2); }
 .seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(16,24,40,.12); }
+.seg.wrap3 { flex-wrap: wrap; }   /* Full access · work as: six roles in two rows of three */
+.seg.wrap3 button { flex: 1 1 calc(33.333% - 4px); }
 .alts { display: flex; flex-wrap: wrap; gap: 8px; }
 .alts .btn { flex: 1 1 auto; }
 .actions2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -5014,8 +5016,10 @@ SH.sent = (d, p) => {
 };
 SH.profile = () => {
   const me = ME();
-  /* full access (Mohamed Said): switch to any role to do its steps, in every hub */
-  const full = me.full ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Full access · work as</h2></div><div class="seg" role="group">${['TL', 'STOCK', 'WS', 'DRIVER', 'TECH'].map(r => `<button type="button" class="${me.role === r ? 'on' : ''}" aria-pressed="${me.role === r}" data-a="workAs" data-v="${r}">${esc(ROLE[r])}</button>`).join('')}</div><span class="hint">You can do every step in SPMS, in every hub. Pick a role to see its screens and do its steps.</span></div>` : '';
+  /* full access (Mohamed Said): switch to any role to do its steps, in every hub. WSL = Workshop Team Leader (16 Nov 2026):
+     Workshop with the lead mark (every Workshop repair, Reports) */
+  const onAs = r => r === 'WSL' ? isWsLead(me) : r === 'WS' ? me.role === 'WS' && !me.wsLead : me.role === r;
+  const full = me.full ? `<div class="card"><div class="sec-h" style="padding:0"><h2>Full access · work as</h2></div><div class="seg wrap3" role="group">${['TL', 'STOCK', 'WS', 'WSL', 'DRIVER', 'TECH'].map(r => `<button type="button" class="${onAs(r) ? 'on' : ''}" aria-pressed="${onAs(r)}" data-a="workAs" data-v="${r}">${esc(r === 'WSL' ? WSL_NAME : ROLE[r])}</button>`).join('')}</div><span class="hint">You can do every step in SPMS, in every hub. Pick a role to see its screens and do its steps.</span></div>` : '';
   return { title: 'Profile', sub: roleName(me) + (me.full ? ' · full access' : ''), body: full + `<div class="card" style="flex-direction:row;align-items:center"><span class="avatar mini">${esc(initials(me.name))}</span><div style="min-width:0"><b>${esc(me.name)}</b><div class="t3 muted">${esc(me.title || ROLE[me.role])}</div><div class="mono muted" style="font-size:12px">${esc(me.email)}</div></div></div>
     <div class="list"><div class="row"><span class="lead ${UI.shared === 'live' && UI.canWrite !== false ? 'ok' : 'warn'}">${ic(UI.shared === 'live' ? 'check' : 'alert', 'sm')}</span><div class="main"><div class="t1">${UI.shared === 'live' ? (UI.canWrite === false ? 'Connected · view only' : 'Connected · shared with the team') : 'This device only'}</div><div class="t3">${UI.shared === 'live' ? 'Changes show up on every device straight away' : 'Nothing here is shared'}</div></div></div>
       <button class="row" data-a="soundToggle" aria-pressed="${soundOn()}"><span class="lead info">${ic('bell2', 'sm')}</span><div class="main"><div class="t1">Sound and vibration alerts</div><div class="t3">When something needs you while SPMS is open</div></div><span class="chip ${soundOn() ? 'ok' : ''}">${soundOn() ? 'On' : 'Off'}</span></button>
@@ -7659,7 +7663,7 @@ const A = {
   photoZoom(ds, el) { el.classList.toggle('zoom'); },
   photoClose() { photoClose(); },
   photoDel(ds) { const d = sd(); if (d[ds.k]) d[ds.k].splice(+ds.i, 1); d._err = ''; renderSheet(); },
-  workAs(ds) { const me = ME(); if (!me || !me.full || !ROLE[ds.v]) return; me.role = ds.v; UI.tab = 'todo'; closeSheet(); render(); $('#scr').scrollTop = 0; toast(ds.v === me.baseRole ? `Back to ${ROLE[ds.v]}` : `Working as ${ROLE[ds.v]}`); },
+  workAs(ds) { const me = ME(), lead = ds.v === 'WSL', r = lead ? 'WS' : ds.v; if (!me || !me.full || !ROLE[r]) return; me.role = r; me.wsLead = lead; UI.tab = 'todo'; closeSheet(); render(); $('#scr').scrollTop = 0; const nm = lead ? WSL_NAME : ROLE[r]; toast(r === me.baseRole ? `Back to ${nm}` : `Working as ${nm}`); },   /* WSL: the Workshop Team Leader (16 Nov 2026) */
   reload() { try { location.reload(); } catch (e) { toast('Close and open the link again'); } },
   headsOpen(ds) { hideHeads(); openSheet(ds.s || 'job', { id: ds.id }); },
   headsClose() { hideHeads(); },
