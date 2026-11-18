@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261116180427">
+<meta name="spms-build" content="20261117222830">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -406,6 +406,8 @@ a.btn { text-decoration: none; }
 .seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(16,24,40,.12); }
 .seg.wrap3 { flex-wrap: wrap; }   /* Full access · work as: six roles in two rows of three */
 .seg.wrap3 button { flex: 1 1 calc(33.333% - 4px); }
+.seg.wrap4 { flex-wrap: wrap; }   /* Staff accounts: eight roles in two rows of four */
+.seg.wrap4 button { flex: 1 1 calc(25% - 4px); }
 .alts { display: flex; flex-wrap: wrap; gap: 8px; }
 .alts .btn { flex: 1 1 auto; }
 .actions2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -984,7 +986,7 @@ const TEST_ACCOUNTS = FIREBASE_BUILD && !FB_TEST ? [] : [
 let ACCOUNTS = TEST_ACCOUNTS.concat(FIREBASE_BUILD ? [] : STAFF);
 let USERS = [];   /* Firebase build: everyone in the users collection, active or not (the Team Leader's Accounts screen) */
 const idFromEmail = e => String(e || '').trim().toLowerCase().split('@')[0].replace(/[^a-z0-9.]/g, '');
-const ROLE = { TECH: 'Engineer', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver', MGR: 'Operations Manager' };
+const ROLE = { TECH: 'Engineer', TL: 'Team Leader', STOCK: 'Stock', WS: 'Workshop', DRIVER: 'Driver', MGR: 'Operations Manager', SC: 'Service Coordinator' };   /* SC: told about cash-charge returns, read only (17 Nov 2026) */
 /* the Technical Manager approves the requests Stock sends him (built in; also in the Sender) */
 const TECH_MANAGERS = ['mohamed.said@cns-me.com'], TM_NAME = 'Technical Manager';
 const isTM = me => !!me && TECH_MANAGERS.includes(String(me.email || '').toLowerCase());
@@ -2726,12 +2728,33 @@ const safeLink = v => /^https?:\/\//i.test(String(v || '')) ? String(v) : '';
 /* a replaced or faulty part goes back with a description of the issue (required, 11 Nov 2026) */
 const ISSUE_MSG = 'Describe the issue: what was wrong with this part.';
 function issueText(v) { const s = String(v || '').trim().replace(/\s+/g, ' '); if (!s) throw E(ISSUE_MSG); return s.slice(0, 500); }
+/* cash charge (17 Nov 2026): a part the engineer replaced on a chargeable case goes back with a photo of the Delivery Note
+   the customer signed (required). He sends it to Stock as usual, or chooses No return when the part stays with the
+   customer (e.g. cash cassettes, broken glass): the request closes. Either way the Service Coordinator is told (Sender). */
+const DN_MAX = 1;   /* one photo of the signed Delivery Note */
+const ccReturn = j => !!j && !!j.chargeable && !!j.ret && j.ret.type === 'defective' && !j.ret.arrived;
+const ccCase = j => !!j && !!j.chargeable && !!j.ret && (((j.ret.dn || []).length > 0) || !!j.ret.noReturn);
+const DN_MSG = 'Add a photo of the Delivery Note signed by the customer.';
+function dnOf(d) {
+  const p = ((d && d.dn) || []).filter(x => /^data:image\//.test(x)).slice(0, DN_MAX);
+  if (!p.length) throw E(DN_MSG);
+  return p;
+}
+const noReturnOf = (j, d) => ccReturn(j) && d && d.ccto === 'none';
 async function techShip(id, d) {
   return jobStep(id, 'RETURN', 'TECH', async (j, me) => {
-    const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), via = returnVia(d, me.name), courier = via.courier;
+    const cc = ccReturn(j), dn = cc ? dnOf(d) : null, now = Date.now();
     const issue = j.ret.type === 'defective' ? issueText(d.issue) : '';
+    const what = `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty}`;
+    if (noReturnOf(j, d)) {
+      const doc = await saveJob(nextDoc(j, me, 'CLOSED', 'No return · left with the customer', `${what} stays with the customer (cash charge) · Delivery Note photo added${issue ? ' · Issue: ' + issue : ''}`,
+        { ret: Object.assign({}, j.ret, { noReturn: true, dn, dnAt: now, dnBy: me.name }, issue ? { issue } : {}), outcome: 'Left with the customer', closedAt: now }));
+      log({ t: 'Left with the customer', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: me.name, to: j.customer || j.site || 'Customer', ref: j.id, note: 'Cash charge · no return' });
+      return doc;
+    }
+    const ref = (d.ref || '').trim() || 'RTN-' + id.slice(-6), via = returnVia(d, me.name), courier = via.courier;
     const logs = j.ret.type === 'defective' && j.ret.arrived ? logsLink(d.logs) : '';
-    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${j.ret.type === 'defective' ? 'Defective' : 'Unused'} ${j.ret.pn}${j.ret.sn ? ' SN ' + j.ret.sn : ' × ' + j.ret.qty} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}${issue ? ' · Issue: ' + issue : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: Date.now(), ref }, via, logs ? { logs } : {}, issue ? { issue } : {}) }));
+    const doc = await saveJob(nextDoc(j, me, 'RETURNING', 'Return sent to Stock', `${what} · ${courier} · ${ref}${logs ? ' · logs link added' : ''}${dn ? ' · Delivery Note photo added' : ''}${issue ? ' · Issue: ' + issue : ''}`, { ret: Object.assign({}, j.ret, { shippedAt: now, ref }, via, logs ? { logs } : {}, issue ? { issue } : {}, dn ? { dn, dnAt: now, dnBy: me.name } : {}) }));
     log({ t: 'Return sent', pn: j.ret.pn, sn: j.ret.sn, qty: j.ret.qty || 1, from: me.name, to: 'Stock', ref: j.id, note: `${courier} · ${ref}` });
     return doc;
   });
@@ -3527,7 +3550,8 @@ const TABS = {
   STOCK: [['todo', 'To do', 'inbox'], ['inv', 'Inventory', 'box'], ['all', 'All requests', 'list']],
   WS: [['todo', 'To do', 'inbox'], ['all', 'Repairs', 'wrench']],
   DRIVER: [['todo', 'To do', 'inbox'], ['all', 'All requests', 'list']],
-  MGR: [['rep', 'Reports', 'chart']]   /* the Operations Manager: the dashboard and reports, read only */
+  MGR: [['rep', 'Reports', 'chart']],   /* the Operations Manager: the dashboard and reports, read only */
+  SC: [['cc', 'Cash charge', 'wallet']]   /* the Service Coordinator: cash-charge cases, read only (17 Nov 2026) */
 };
 /* an engineer at a regional hub has no van: his "My van" tab is "My hub", the stock on his hub's shelf */
 const noVanMe = me => !!me && me.role === 'TECH' && !hasVan(me.id);
@@ -3597,6 +3621,7 @@ function render() {
   else if (UI.tab === 'inv') body += invView(me);
   else if (UI.tab === 'van') body += noVanMe(me) ? hubView(me) : vanView(me);
   else if (UI.tab === 'todo') body += todoView(me);
+  else if (UI.tab === 'cc') body += ccView(me);
   else body += allView(me);
   if (me.role === 'TECH' && ['van', 'all'].includes(UI.tab)) body +=`<button class="fab" data-a="sheet" data-s="new">${ic('plus')}New request</button>`;
   scr.innerHTML = body; scr.scrollTop = top; putFocus(f);
@@ -3606,6 +3631,7 @@ const PAGE_TITLES = {
   inv: ['Inventory', 'Hub and van stock, levels and changes'],
   rep: ['Reports', 'Returns, stock, engineers, consumption, cost and the audit trail'],
   db: ['Database', 'Every record, settings and the Excel export. Only you can see this.'],
+  cc: ['Cash charge', 'Cash-charge parts sent back to Stock or left with the customer'],
   all: { TECH: ['My requests', 'Every part you asked for and where it is now'], TL: ['All requests', 'Every request, restock and van use'], STOCK: ['All requests', 'Every request, restock and van use'], WS: ['Repairs', 'Parts sent to the Workshop'] }
 };
 function tabTitle(me) { if (UI.tab === 'van' && noVanMe(me)) return 'My hub'; let t = PAGE_TITLES[UI.tab]; if (t && !Array.isArray(t)) t = t[me.role]; return t ? t[0] : (tabsFor(me).find(x => x[0] === UI.tab) || [, 'SPMS'])[1]; }
@@ -3675,7 +3701,8 @@ function steps(j) {
   if (j.type === 'ret') return [['Sent back by the engineer', true], ['Received at ' + (HUB_NAME[j.hub] || j.hub), j.status === 'CLOSED']];
   if (isCustPart(j)) return [['Added by the Workshop', true], ['Workshop repair done', !!w.doneAt], ['Sent to the customer', j.status === 'CLOSED' && !!j.toCust]];
   if (j.type === 'wsadd') return [['Added by the Workshop', true], ['Team Leader approved', !!j.tl && !j.tl.rejected], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
-  const tail = [['Return sent', !!r.shippedAt], ['Return received at Stock', !!r.hubAt], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
+  const tail = r.noReturn ? [['No return · left with the customer', true], ['Closed', j.status === 'CLOSED']]   /* cash charge: the part stayed on site (17 Nov 2026) */
+    : [['Return sent', !!r.shippedAt], ['Return received at Stock', !!r.hubAt], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   if (j.type === 'van') return (j.van ? [['Asked to use from van', true], ['Team Leader approved', !!j.use || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)], ['Used from van stock', !!j.use]] : [['Used from van stock', true]]).concat(tail);   /* older records: used without approval */
   if (fromHub(j)) return [['Requested', true], ['Team Leader approved', !!j.tl && !j.tl.rejected && !j.tl.withdrawn], ['Taken from ' + (HUB_NAME[j.hub] || j.hub), !!j.dispatch], ['Replacement recorded', !!j.use]].concat(tail);
   const tm = j.tmAsk ? [['Technical Manager approved', !!(j.tm && j.tm.ok)]] : [];
@@ -3806,6 +3833,29 @@ function allList(me) {
   const shown = all.slice(0, 200);
   const more = allLoaded() ? '' : `<button class="btn sec block" data-a="older">${ic('clock', 'sm')}Load older requests</button>`;
   return `${shown.length ? `<div class="jobs">${shown.map(j => jobRow(j, me)).join('')}</div>` : emptyBox(q ? 'No matches' : 'Nothing here', q ? 'Try another search.' : '')}${all.length > shown.length ? `<p class="note">Showing 200 of ${all.length}. Search to narrow it.</p>` : ''}${more}`;
+}
+
+/* ---------- Service Coordinator: cash-charge cases (17 Nov 2026) ---------- */
+/* chargeable replaced parts the engineer sent back to Stock with the Delivery Note photo, or left with the customer
+   (No return). Read only: the coordinator updates the cash charge case outside SPMS. */
+function ccView() {
+  return `${searchBox('ccq', 'ccq', 'Search part, SCN, machine, serial, engineer', UI.ccq || '')}<div id="live-cc">${ccList()}</div>`;
+}
+function ccList() {
+  const q = String(UI.ccq || '').trim().toLowerCase();
+  const all = JOBS.filter(ccCase).filter(j => !q || jobText(j).includes(q)).sort((a, b) => (+b.ret.dnAt || +b.updatedAt || 0) - (+a.ret.dnAt || +a.updatedAt || 0));
+  const shown = all.slice(0, 200);
+  const more = allLoaded() ? '' : `<button class="btn sec block" data-a="older">${ic('clock', 'sm')}Load older requests</button>`;
+  return `${shown.length ? `<div class="jobs">${shown.map(ccRow).join('')}</div>` : emptyBox(q ? 'No matches' : 'No cash-charge cases yet', q ? 'Try another search.' : 'When an engineer sends back a cash-charge part, or leaves it with the customer, it shows here with the Delivery Note photo.')}${all.length > shown.length ? `<p class="note">Showing 200 of ${all.length}. Search to narrow it.</p>` : ''}${more}`;
+}
+function ccRow(j) {
+  const r = j.ret, title = r.name || j.desc || partName(r.pn) || 'Part';
+  return `<button class="jcard" data-a="sheet" data-s="job" data-id="${esc(j.id)}">
+    <span class="j-ic ${r.noReturn ? 't-warn' : 't-ok'}">${ic(r.noReturn ? 'pin' : 'ret')}</span>
+    <span class="j-main"><span class="j-t1"><b>${esc(title)}</b><span class="when">${rel(+r.dnAt || j.updatedAt)}</span></span>
+      <span class="j-t2">${tag(r.pn)}<span class="num">${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</span><span>· ${esc(j.techName || '')}</span></span>
+      <span class="j-t3"><span class="pill">${r.noReturn ? 'No return · left with the customer' : 'Sent to Stock'}</span><span class="mono">${esc(j.machine || '–')} · ${esc(j.scn || '–')}</span></span></span>
+  </button>`;
 }
 
 /* ---------- engineer van ---------- */
@@ -4092,6 +4142,7 @@ SH.job = (d, p) => {
       j.toCust && ['Sent to the customer', `${esc(j.toCust.courier || '')} · ${esc(j.toCust.by || '')}, ${fmtDT(j.toCust.at)}${j.toCust.note ? ' · ' + esc(j.toCust.note) : ''}`],
       j.type === 'wsadd' && [isCustPart(j) ? 'Customer part' : 'Workshop part', `${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)} · ${isCustPart(j) ? 'customer' : 'from'} ${esc((j.src || {}).from || '')}${(j.src || {}).note ? ' · ' + esc(j.src.note) : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}`],
       r.type && j.type !== 'wsadd' && ['Return', `${r.type === 'defective' ? 'Defective' : 'Unused'} ${esc(r.pn)} ${r.sn ? `<span class="mono">SN ${esc(r.sn)}</span>` : '× ' + (r.qty || 1)}${r.snWas ? ` (corrected from ${esc(r.snWas)})` : ''}${r.backWas ? ` (Stock changed it from ${esc(r.backWas.pn)}${r.backWas.sn ? ' SN ' + esc(r.backWas.sn) : ''}: ${esc(r.backWas.why || '')})` : ''}${r.pnExpected || r.snExpected ? ` (expected ${esc([r.pnExpected, r.snExpected ? 'SN ' + r.snExpected : ''].filter(Boolean).join(' '))}${r.diffWhy ? ': ' + esc(r.diffWhy) : ''})` : ''}${j.status === 'RETURN' ? ' · ' + esc(dueText(retDue(j))) : ''}${r.shippedAt && viaTxt(r) ? ' · sent ' + esc(viaTxt(r)) : ''}${r.missing ? `<br><b class="bad-t">Missing: ${esc(r.missing)}</b>` : ''}${r.damage ? `<br><b class="bad-t">Damaged: ${esc(r.damage)}</b>` : ''}`],
+      r.noReturn && ['No return', `Left with the customer (cash charge)${r.dnBy ? ' · ' + esc(r.dnBy) : ''}${r.dnAt ? ', ' + fmtDT(r.dnAt) : ''}`],
       r.issue && ['Issue', esc(r.issue)],
       r.logs && ['Logs', safeLink(r.logs) ? `<a href="${esc(safeLink(r.logs))}" target="_blank" rel="noopener noreferrer">Open the logs</a> <span class="t3">${esc(r.logs.length > 60 ? r.logs.slice(0, 57) + '…' : r.logs)}</span>` : esc(r.logs)],
       (j.tmAsk || j.tm) && ['Technical Manager', [j.tmAsk && `Asked by ${esc(j.tmAsk.by)}, ${fmtDT(j.tmAsk.at)}: ${esc(j.tmAsk.note)}`, j.tm && `${j.tm.ok ? 'Approved' : '<b>Rejected</b>'} by ${esc(j.tm.by)}, ${fmtDT(j.tm.at)}${j.tm.note ? ': ' + esc(j.tm.note) : ''}`].filter(Boolean).join('<br>')],
@@ -4100,7 +4151,7 @@ SH.job = (d, p) => {
   const altRow = !d.alt && alts.length ? `<div class="alts">${alts.map(([v, l, x]) => x === 'remind' ? `<button class="btn sm sec" data-a="remind" data-id="${esc(j.id)}">${ic('bell', 'sm')}${esc(l)}</button>` : `<button class="btn sm sec" data-a="alt" data-v="${v}">${esc(l)}</button>`).join('')}</div>` : '';
   let body = head + (a ? a.form : '') + altRow + info;
   const dRc = (j.dispatch && j.dispatch.receipt) || [], rRc = r.receipt || [];
-  if ((j.reqPhotos || []).length || (j.rcvPhotos || []).length || dRc.length || rRc.length) body += `<section class="blk"><div class="card">${photoStrip(j.reqPhotos, 'Request photos')}${photoStrip(j.rcvPhotos, 'Photos when received')}${photoStrip(dRc, (j.dispatch || {}).delivery === 'drvcour' ? 'Courier receipt · added by the driver' : 'Courier receipt · sent by Stock')}${photoStrip(rRc, 'Courier receipt · return')}</div></section>`;
+  if ((j.reqPhotos || []).length || (j.rcvPhotos || []).length || dRc.length || rRc.length || (r.dn || []).length) body += `<section class="blk"><div class="card">${photoStrip(r.dn, 'Delivery Note · signed by the customer')}${photoStrip(j.reqPhotos, 'Request photos')}${photoStrip(j.rcvPhotos, 'Photos when received')}${photoStrip(dRc, (j.dispatch || {}).delivery === 'drvcour' ? 'Courier receipt · added by the driver' : 'Courier receipt · sent by Stock')}${photoStrip(rRc, 'Courier receipt · return')}</div></section>`;
   if (w.doneAt) body += `<section class="blk"><div class="sec-h"><h2>Repair report</h2></div><div class="card">${dl([(w.partName || w.partSn) && ['Part', `${esc(w.partName || '')} ${w.partSn ? '<span class="mono">SN ' + esc(w.partSn) + '</span>' : ''}`], w.diagnosis && ['What was wrong', esc(w.diagnosis)], w.fix && ['How fixed', esc(w.fix)], w.materials && ['Things used', esc(w.materials)], ['Workshop time', `${fmtDur((w.tm && w.tm.acc) || 0)} (${w.hours} h) × ${money(w.rate)}/h = ${money(w.labour)}`], w.matCost ? ['Materials', money(w.matCost)] : null, w.timeFixed && ['Time corrected', (w.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${esc(x.why)} (${esc(x.by)})`).join('<br>')], w.notes && ['Notes', esc(w.notes)], ['Total', `<b>${money(w.total)}</b>`], ['Time at workshop', `${w.days} days`], ['By', `${esc(w.doneBy || w.by)} · ${fmtDT(w.doneAt)}`]])}</div></section>`;
   if (!['REJECTED', 'CANCELLED'].includes(j.status)) body += `<details class="fold"><summary>All steps<span class="t3">${doneN} of ${st.length}</span></summary><div class="fold-b"><ul class="steps">${st.map(([l, ok], i) => `<li class="${ok ? 'done' : i === cur ? 'cur' : ''}">${esc(l)}</li>`).join('')}</ul></div></details>`;
   body += histFold(j, turn);
@@ -4332,7 +4383,15 @@ function actionForm(j, me, d) {
       return { form: box(`${units}${photoField(d, 'photos', 'Photo of the part', needPhoto)}<span class="hint">Return removed and faulty parts within ${daysWord(returnDays(jobHub(j)))}</span>${area(d, 'note', 'Note', 'What you found and fixed')}`), op: { label: 'Save', check: () => { planUse(j, d); if (usePhotoNeeded(j, d) && !(d.photos && d.photos.length)) throw E('Add a photo of the part before you save (needed when a part arrived faulty or a used part goes back).'); return null; }, run: () => techUse(j.id, d) } };
     }
     case 'RETURN': {
-      return { form: box(`<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part <b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b> to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>${r.type === 'defective' ? area(d, 'issue', 'Issue description *', r.arrived ? 'What is wrong with this part? e.g. arrived dead, error code, noise' : 'What was wrong with the part you removed? e.g. card reader jams, error code') + '<span class="hint">Required for a replaced or faulty part. Stock and the Workshop see it.</span>' : ''}${r.type === 'defective' && r.arrived ? inp(d, 'logs', 'Link to the logs *', 'https://…', { hint: 'Upload the machine logs for this faulty part (for example to OneDrive or SharePoint) and paste the link here.' }) : ''}${returnField(d)}${inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`), op: { label: 'Send return', check: () => { if (r.type === 'defective') issueText(d.issue); if (r.type === 'defective' && r.arrived) logsLink(d.logs); returnVia(d); return null; }, run: () => techShip(j.id, d) } };
+      /* cash charge (17 Nov 2026): a replaced part needs the photo of the signed Delivery Note, and can stay with the customer */
+      const cc = ccReturn(j); if (cc && !d.ccto) d.ccto = 'stock';
+      const noRet = noReturnOf(j, d), what = `<b class="mono">${esc(r.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || 1)}</b>`;
+      const intro = noRet ? `<p style="margin:0">The defective part ${what} stays with the customer. Nothing goes back to Stock and the request closes.</p>`
+        : `<p style="margin:0">Send ${r.type === 'defective' ? 'the defective' : 'the unused'} part ${what} to ${isOutHub(j.hub) ? 'Stock at the Muscat Main Hub' : 'Stock'}. ${esc(dueText(retDue(j)))}.</p>`;
+      const ccBox = cc ? fld('Cash charge: where does the part go? *', segBtns(d, 'ccto', [['stock', 'Send to Stock'], ['none', 'No return · left with the customer']]), noRet ? 'For a part left on site, e.g. a cash cassette or broken glass. The Service Coordinator gets the details and the Delivery Note photo.' : 'It goes back to Stock as usual. The Service Coordinator also gets the details and the Delivery Note photo.')
+        + photoField(d, 'dn', 'Photo of the signed Delivery Note', true, { max: DN_MAX, need: 'A photo of the Delivery Note signed by the customer is required.', ok: 'The Service Coordinator, the Team Leader and Stock can see it.' }) : '';
+      return { form: box(`${intro}${ccBox}${r.type === 'defective' ? area(d, 'issue', 'Issue description *', r.arrived ? 'What is wrong with this part? e.g. arrived dead, error code, noise' : 'What was wrong with the part you removed? e.g. card reader jams, error code') + `<span class="hint">Required for a replaced or faulty part. ${noRet ? 'The Service Coordinator sees it.' : 'Stock and the Workshop see it.'}</span>` : ''}${r.type === 'defective' && r.arrived ? inp(d, 'logs', 'Link to the logs *', 'https://…', { hint: 'Upload the machine logs for this faulty part (for example to OneDrive or SharePoint) and paste the link here.' }) : ''}${noRet ? '' : returnField(d) + inp(d, 'ref', 'Waybill / reference', 'Optional', { mono: true })}`),
+        op: { label: noRet ? 'Save · no return' : 'Send return', check: () => { if (cc) dnOf(d); if (r.type === 'defective') issueText(d.issue); if (r.type === 'defective' && r.arrived) logsLink(d.logs); if (noRet) return `Leave ${r.pn}${r.sn ? ' SN ' + r.sn : ''} with the customer? Nothing goes back to Stock and the request closes.`; returnVia(d); return null; }, run: () => techShip(j.id, d), ok: noRet ? 'Saved · no return' : undefined } };
     }
     case 'RETURNING': {
       if (!d.diff) d.diff = 'no'; if (!d.miss) d.miss = 'no'; if (!d.dmg) d.dmg = 'no';
@@ -4583,7 +4642,7 @@ function compressPhoto(file) {
   });
 }
 async function addPhotos(key, files) {
-  const s = UI.sheet; if (!s) return; const d = s.d; d[key] = d[key] || []; const max = key === 'rcpt' ? RCPT_MAX : PHOTO_MAX;
+  const s = UI.sheet; if (!s) return; const d = s.d; d[key] = d[key] || []; const max = key === 'rcpt' ? RCPT_MAX : key === 'dn' ? DN_MAX : PHOTO_MAX;
   for (const f of files) {
     if (d[key].length >= max) { toast(max === 1 ? 'One photo here.' : `Up to ${max} photos.`); break; }
     if (!/^image\//.test(f.type)) continue;
@@ -6765,10 +6824,12 @@ function pwProgress(n, total) { const t = $('#acc-prog'); if (t) t.innerHTML = `
 
 /* ---------- staff accounts (Team Leader) ---------- */
 /* the roles in the staff forms. "WSL", the Workshop Team Leader (16 Nov 2026), is saved as role WS with wsLead: true */
-const ACCT_ROLES = [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['WSL', WSL_NAME], ['DRIVER', 'Driver'], ['TL', 'Team Leader'], ['MGR', 'Operations Manager']];
+const ACCT_ROLES = [['TECH', 'Engineer'], ['STOCK', 'Stock'], ['WS', 'Workshop'], ['WSL', WSL_NAME], ['DRIVER', 'Driver'], ['TL', 'Team Leader'], ['MGR', 'Operations Manager'], ['SC', 'Service Coordinator']];
+/* the role buttons in the staff forms: eight roles, in two rows of four (17 Nov 2026) */
+const roleSeg = d => segBtns(d, 'role', ACCT_ROLES).replace('<div class="seg"', '<div class="seg wrap4"');
 const formRole = u => u.role === 'WS' && u.wsLead ? 'WSL' : u.role;
 const roleLabel = r => r === 'WSL' ? WSL_NAME : ROLE[r] || r;
-const ROLE_WORDS = { WSL: ['workshop team leader', 'workshop teamleader', 'workshop leader', 'workshop lead', 'ws team leader', 'ws lead'], TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'], MGR: ['operations manager', 'regional operations manager', 'ops manager', 'mgr'] };
+const ROLE_WORDS = { WSL: ['workshop team leader', 'workshop teamleader', 'workshop leader', 'workshop lead', 'ws team leader', 'ws lead'], TECH: ['technician', 'tech', 'cs', 'cs engineer', 'engineer', 'field engineer', 'station engineer'], STOCK: ['stock', 'logistics', 'logistices', 'store', 'storekeeper', 'stock controller'], WS: ['workshop', 'ws', 'repair', 'workshop engineer'], DRIVER: ['driver', 'courier', 'delivery', 'delivery driver'], TL: ['team leader', 'tl', 'leader', 'manager', 'admin'], MGR: ['operations manager', 'regional operations manager', 'ops manager', 'mgr'], SC: ['service coordinator', 'service co-ordinator', 'service coordination', 'coordinator', 'sc'] };
 function roleOf(v) {
   const t = String(v || '').trim().toLowerCase(); if (ROLE[t.toUpperCase()]) return t.toUpperCase(); for (const [k, ws] of Object.entries(ROLE_WORDS)) if (ws.includes(t)) return k;
   /* the Team sheet's Role column: "request part from Sohar HUB", "Teamleader approval", "Stock approval", "Workshop approval" */
@@ -6785,7 +6846,7 @@ function hubFromRole(v) {
   const hit = HUB_INFO.filter(x => lev(core, x.name.toUpperCase().replace(/[^A-Z]/g, '').replace(/HUB$/, '')) <= 1);
   return hit.length === 1 ? hit[0].code : '';
 }
-const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', WSL: WSL_NAME, DRIVER: 'Driver', TL: 'Team Leader', MGR: 'Operations Manager' };
+const ROLE_TITLE = { TECH: 'CS Engineer', STOCK: 'Logistics', WS: 'Workshop', WSL: WSL_NAME, DRIVER: 'Driver', TL: 'Team Leader', MGR: 'Operations Manager', SC: 'Service Coordinator' };
 function acctHub(v) {
   const h = hubOf(v); if (h) return h;
   const c = guessCountry(v) || (/\bOMAN\b/i.test(String(v || '')) ? 'Oman' : '');
@@ -6955,7 +7016,7 @@ async function downloadAccountsTemplate() {
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Could not make the template', 'bad'); }
 }
 function accProgress(n, total) { const t = $('#acc-prog'); if (t) t.innerHTML = `<div class="prog-line"><i style="width:${Math.round(n / total * 100)}%"></i></div><span class="hint">Creating ${n} of ${total}…</span>`; }
-const ROLE_ORDER = { TL: 0, MGR: 1, TECH: 2, STOCK: 3, WS: 4, DRIVER: 5 };
+const ROLE_ORDER = { TL: 0, MGR: 1, TECH: 2, STOCK: 3, WS: 4, DRIVER: 5, SC: 6 };
 SH.accounts = d => {
   const me = ME(); if (!me || me.role !== 'TL') return { title: 'Staff accounts', body: '<div class="err">Only the Team Leader manages accounts.</div>' };
   if (!d.mode) d.mode = USERS.length > 1 ? 'list' : 'excel';
@@ -7000,7 +7061,7 @@ SH.accounts = d => {
   } else if (d.mode === 'add') {
     if (!d.role) d.role = 'TECH'; if (!d.hub) d.hub = HUBS[0];
     body = `${inp(d, 'name', 'Name *', 'Full name')}${inp(d, 'email', 'Work email or username *', 'first.last@cns-me.com or a username', { hint: 'No email? Type a username (letters, numbers, . _ -). They sign in with that username and password.' })}
-      ${fld('Role', segBtns(d, 'role', ACCT_ROLES))}${fld('Hub', hubSeg(d, 'hub'))}
+      ${fld('Role', roleSeg(d))}${fld('Hub', hubSeg(d, 'hub'))}
       ${inp(d, 'pw', 'First password *', 'e.g. Start#2026a', { hint: PW_RULE + ' They can change it later in their profile.' })}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}`;
     op = { label: 'Add person', run: async () => { const a = { name: (d.name || '').trim(), email: toLogin(d.email), role: d.role, hub: d.hub, pw: String(d.pw || '').trim(), title: (d.title || '').trim() }; const why = checkAcct(a); if (why) throw E(why + '.'); return fbCreateAccount(a, { force: true }); }, stay: true,
       ok: r => r.skip ? 'Mohamed Said’s account is built in and can’t be changed.' : r.made ? 'Account created' : r.pw === 'same' ? 'Saved. This login already had this password.' : r.pw === 'set' ? 'Saved. This login already existed — its password is now the one you typed.' : 'Saved, but this login already existed and SPMS couldn’t change its password. Open the person and tap “Send password email”.' };
@@ -7038,7 +7099,7 @@ SH.acct = (d, p) => {
       <span class="hint">Each request he sends is added to “used”. Rejected, cancelled, faulty or unused parts are given back, and van parts count when he uses them. Change “used so far” only to start from your own figure.</span></div>`;
   return {
     title: u.name, sub: esc(loginShow(u.email || u.id)) + (isUserLogin(u.email || u.id) ? ' · signs in with a username' : ''),
-    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', segBtns(d, 'role', ACCT_ROLES))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
+    body: `${inp(d, 'name', 'Name *', '')}${fld('Role', roleSeg(d))}${fld('Hub', hubSeg(d, 'hub'))}${inp(d, 'title', 'Title', acctTitle(d.role, d.hub))}
       ${fld('Access', segBtns(d, 'active', [['yes', 'Can sign in'], ['no', 'No access']]), d.active === 'no' ? 'They are signed out the next time SPMS loads. Their history stays.' : '')}
       ${budBox}
       <div class="card"><div class="sec-h" style="padding:0"><h2>Password</h2></div>${isUserLogin(u.email || u.id) ? `<p class="note" style="padding:0">This person signs in with the username <b class="mono">${esc(loginShow(u.email || u.id))}</b> and has no email, so SPMS can’t send them a password link. If they forget their password, remove this account and add them again with a new username.</p>` : `<p class="note" style="padding:0">Forgot their password? SPMS emails them a link to choose a new one.</p><button class="btn sm sec" data-a="acctReset" data-id="${esc(u.email || u.id)}">${ic('lock', 'sm')}Send password email</button>`}</div>
@@ -7731,6 +7792,7 @@ document.addEventListener('click', e => {
 function liveSearch(k) {
   const me = ME(); if (!me) return;
   if (k === 'q') { const c = $('#live-all'); if (c) c.innerHTML = allList(me); }
+  else if (k === 'ccq') { const c = $('#live-cc'); if (c) c.innerHTML = ccList(); }
   else if (k === 'iq') { const c = $('#live-inv'); if (c) c.innerHTML = invList(); }
   else if (k === 'auditq') { const c = $('#live-audit'); if (c) c.innerHTML = auditList(); }
   else if (k === 'traceq') runTrace();
