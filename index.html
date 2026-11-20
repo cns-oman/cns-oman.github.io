@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261117222830">
+<meta name="spms-build" content="20261119142224">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -3839,7 +3839,8 @@ function allList(me) {
 /* chargeable replaced parts the engineer sent back to Stock with the Delivery Note photo, or left with the customer
    (No return). Read only: the coordinator updates the cash charge case outside SPMS. */
 function ccView() {
-  return `${searchBox('ccq', 'ccq', 'Search part, SCN, machine, serial, engineer', UI.ccq || '')}<div id="live-cc">${ccList()}</div>`;
+  return `<button class="btn sec block" data-a="ccxl">${ic('download', 'sm')}Download Excel · all cases</button>
+  ${searchBox('ccq', 'ccq', 'Search part, SCN, machine, serial, engineer', UI.ccq || '')}<div id="live-cc">${ccList()}</div>`;
 }
 function ccList() {
   const q = String(UI.ccq || '').trim().toLowerCase();
@@ -3955,7 +3956,7 @@ function dbView(me) {
     ${UI.fbMode ? '' : `<div class="card"><div class="sec-h" style="padding:0"><h2>Passwords</h2><button class="btn sm sec" data-a="sheet" data-s="pwreset">${ic('ret', 'sm')}Reset a password</button></div><span class="hint">Everyone can change their own password in their profile</span></div>`}
     <div class="card"><div class="sec-h" style="padding:0"><h2>Machine list</h2><button class="btn sm sec" data-a="sheet" data-s="machines">${ic('sheet', 'sm')}${UI.machInfo ? 'Update' : 'Import Excel'}</button></div><span class="hint">${ensureMachines(() => { if (UI.tab === 'db') render(); }) && UI.machInfo ? `${UI.machInfo.n.toLocaleString('en-GB')} machines · engineers type the ATM code or serial number and SPMS fills in the rest` : MACHINES ? 'No machines yet. Import the ATM / CDM list so new requests fill in the machine details.' : 'Loading…'}</span></div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Hubs</h2><button class="btn sm sec" data-a="sheet" data-s="hubs">${ic('edit', 'sm')}Manage hubs</button></div><div class="chips">${HUB_INFO.map(h => `<span class="chip plain" title="${esc(h.name)}"><b>${esc(h.code)}</b>&nbsp;${esc(h.name)}${h.country ? ' · ' + esc(h.country) : ''}</span>`).join('')}</div></div>
-    <button class="btn" data-a="excel">${ic('download', 'sm')}Download Excel · 10 sheets, with graphs</button>
+    <button class="btn" data-a="excel">${ic('download', 'sm')}Download Excel · 11 sheets, with graphs</button>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Delete requests</h2><button class="btn sm danger" data-a="sheet" data-s="deljobs">${ic('ban', 'sm')}Choose…</button></div><span class="hint">Delete one or more requests made for testing, open or finished. All other requests stay.</span></div>
     <div class="card"><div class="sec-h" style="padding:0"><h2>Test data</h2><button class="btn sm danger" data-a="sheet" data-s="wipe">${ic('ban', 'sm')}Delete…</button></div><span class="hint">Clear the requests, inventory log and stock left over from testing, so the reports and the dashboard start from zero</span></div>
     <section class="blk"><div class="sec-h"><h2>All records</h2>${JOBS.length > rows.length ? `<span class="t3 muted">Newest ${rows.length} of ${JOBS.length}</span>` : ''}</div><div class="tbl-wrap"><table class="tbl"><thead><tr>${cols.map(c => `<th scope="col">${c}</th>`).join('')}</tr></thead><tbody>${rows.map(j => `<tr data-a="sheet" data-s="job" data-id="${esc(j.id)}" tabindex="0" aria-label="Open ${esc(j.id)}" class="${isLate(j) ? 'flag' : ''}"><td class="mono">${esc(j.id)}</td><td>${esc({ req: 'Request', rep: 'Van restock', van: 'Van use' }[j.type] || 'Request')}</td><td>${esc(j.techName)}</td><td>${esc(j.pn)} × ${jobQty(j)}</td><td class="mono">${esc(j.scn || '')}</td><td>${esc(stLabel(j))}</td><td class="mono">${esc(j.ret ? j.ret.sn : '')}</td><td class="r">${j.ws && j.ws.total != null ? money(j.ws.total) : ''}</td></tr>`).join('') || `<tr><td colspan="${cols.length}" class="muted">No records yet.</td></tr>`}</tbody></table></div>${allLoaded() ? '' : `<button class="btn sec block" data-a="older">${ic('clock', 'sm')}Load older requests</button>`}</section>`;
@@ -6043,6 +6044,16 @@ const REQ_COLS = [
   ['Materials OMR', j => j.ws && j.ws.matCost != null ? j.ws.matCost : ''], ['Repair total OMR', j => j.ws && j.ws.total != null ? j.ws.total : ''], ['Outcome', j => j.outcome || ''], ['Closed', j => isoDT(j.closedAt)], ['Last update', j => isoDT(j.updatedAt)]
 ];
 const DB_COLS = REQ_COLS.map(c => c[0]);
+/* Cash charge cases, one row each (19 Nov 2026): the Service Coordinator downloads them from the Cash charge tab,
+   and the database workbook has the same sheet. */
+const CC_HEAD = ['Request', 'Date', 'Engineer', 'Part number', 'Part name', 'Serial number', 'Qty', 'Machine ID', 'Service call number', 'Customer', 'Where the part went'];
+function ccRows(jobs) {
+  return jobs.filter(ccCase).sort((a, b) => (+b.ret.dnAt || +b.updatedAt || 0) - (+a.ret.dnAt || +a.updatedAt || 0)).map(j => {
+    const r = j.ret;
+    return [j.id, isoDT(+r.dnAt || r.shippedAt || j.updatedAt), j.techName || '', r.pn || '', r.name || j.desc || partName(r.pn) || '', r.sn || '', r.qty || 1,
+      j.machine || '', j.scn || '', j.customer || '', r.noReturn ? 'No return · left with the customer' : 'Sent to Stock'];
+  });
+}
 function buildSheets(jobs, led, adj) {
   const S = [];
   S.push(['Requests', DB_COLS, jobs.map(j => REQ_COLS.map(c => cv(c[1](j))))]);
@@ -6053,6 +6064,7 @@ function buildSheets(jobs, led, adj) {
     jobs.filter(j => j.ws && j.ws.doneAt).map(j => [j.id, (j.ret || {}).pn || j.pn, j.ws.partName || '', j.ws.partSn || (j.ret || {}).sn || '', j.machine || '', j.model || '', j.customer || '', isoDT(j.ws.inAt), isoDT(j.ws.tm && j.ws.tm.startedAt), isoDT(j.ws.doneAt), fmtDur((j.ws.tm && j.ws.tm.acc) || 0), j.ws.hours, j.ws.rate, j.ws.labour, j.ws.materials || '', j.ws.matCost, j.ws.total, j.ws.diagnosis || '', j.ws.fix || '', (j.ws.timeFixes || []).map(x => `${fmtDur(x.from)} → ${fmtDur(x.to)}: ${x.why}`).join('; '), j.ws.notes || '', j.ws.outcome, j.ws.doneBy || j.ws.by])]);
   S.push(['Returns', ['Request', 'Engineer', 'Return type', 'Part number', 'Serial number', 'Qty', 'Issue description', 'Replacement recorded', 'Due', 'Sent', 'Hours to return', 'Overdue', 'Reminders', 'Courier', 'Reference', 'At Stock', 'Serial corrected from', 'Arrived with different SN (expected)', 'Missing component', 'Damage on arrival', 'Stock decision', 'Status'],
     jobs.filter(j => j.ret && j.type !== 'wsadd').map(j => [j.id, j.techName, j.ret.type, j.ret.pn, j.ret.sn || '', j.ret.qty || 1, j.ret.issue || '', isoDT(j.use && j.use.at), isoDT(retDue(j)), isoDT(j.ret.shippedAt), j.ret.shippedAt && j.use && j.use.at ? Math.round((j.ret.shippedAt - j.use.at) / HOUR * 10) / 10 : '', isLate(j) || (j.ret.shippedAt && j.ret.shippedAt > j.ret.due) ? 'Yes' : '', (j.reminders || []).length || '', j.ret.courier || '', j.ret.ref || '', isoDT(j.ret.hubAt), j.ret.snWas || '', j.ret.snExpected || '', j.ret.missing || '', j.ret.damage || '', j.ret.route || '', stLabel(j)])]);
+  S.push(['Cash charge', CC_HEAD, ccRows(jobs)]);
   const rep = []; for (const j of jobs) { if (!j.use || j.type === 'rep') continue; const units = Array.isArray(j.use.units) ? j.use.units : [{ sn: (j.dispatch && j.dispatch.sn) || '', used: j.use.replaced, removedPn: j.use.removedPn, removedSn: j.use.removedSn }];
     for (const u of units) { const n = u.bulk ? u.used : u.used ? 1 : 0; if (!n) continue; rep.push([j.id, isoDT(j.use.at), j.techName, j.customer || '', j.model || '', j.scn || '', j.machine || '', j.pn, u.bulk ? '' : u.sn || '', n, u.bulk ? j.pn : u.removedPn || '', u.bulk ? '' : u.removedSn || '', j.type === 'van' ? 'Van stock' : 'Request']); } }
   S.push(['Parts replaced', ['Request', 'Date', 'Engineer', 'Customer', 'Model', 'SCN', 'Machine', 'Installed PN', 'Installed SN', 'Qty', 'Removed PN', 'Removed SN', 'Source'], rep]);
@@ -6125,6 +6137,12 @@ function addDashCharts(X, data, sheetName, blocks) {
   CFB.utils.cfb_del(z, '/Sh33tJ5');
   return CFB.write(z, { fileType: 'zip', type: 'array', compression: true });
 }
+function xlSheet(X, head, rows) {
+  const ws = X.utils.aoa_to_sheet([head, ...rows]);
+  ws['!cols'] = head.map((h, i) => ({ wch: Math.min(42, Math.max(String(h).length, ...rows.slice(0, 200).map(r => String(r[i]).length)) + 2) }));
+  if (rows.length) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: head.length - 1 } }) };
+  return ws;
+}
 let exporting = false;
 async function exportExcel() {
   const me = ME(); if (!me || (!['TL', 'MGR'].includes(me.role) && !isWsLead(me))) return toast('Only the Team Leader, the Operations Manager or the Workshop Team Leader can export the database.', 'bad');
@@ -6147,15 +6165,32 @@ async function exportExcel() {
     const dash = dashSheet(dashData(jobs, led)), dws = X.utils.aoa_to_sheet(dash.aoa);
     dws['!cols'] = [{ wch: 40 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 12 }];
     X.utils.book_append_sheet(wb, dws, 'Dashboard');
-    for (const [name, head, rows] of sheets) {
-      const ws = X.utils.aoa_to_sheet([head, ...rows]);
-      ws['!cols'] = head.map((h, i) => ({ wch: Math.min(42, Math.max(String(h).length, ...rows.slice(0, 200).map(r => String(r[i]).length)) + 2) }));
-      if (rows.length) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: head.length - 1 } }) };
-      X.utils.book_append_sheet(wb, ws, name);
-    }
+    for (const [name, head, rows] of sheets) X.utils.book_append_sheet(wb, xlSheet(X, head, rows), name);
     let data = X.write(wb, { bookType: 'xlsx', type: 'array' }); const filename = `SPMS-database-${stamp}.xlsx`;
     try { if (X.CFB) data = addDashCharts(X, data, 'Dashboard', dash.blocks); } catch (e) { console.warn('Excel graphs left out', e); }
     savedToast(await DL.save({ filename, data }), 'Saved ' + filename);
+  } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Export failed', 'bad'); }
+  finally { exporting = false; }
+}
+/* the Cash charge tab's own download (19 Nov 2026): every cash-charge case, all dates */
+async function exportCashCharge() {
+  const me = ME(); if (!me || !(TABS[me.role] || []).some(t => t[0] === 'cc')) return toast('Only the Service Coordinator can download the cash-charge cases.', 'bad');
+  if (!DL) return toast('Excel download works in the published app.', 'bad');
+  if (exporting) return; exporting = true;
+  try {
+    toast('Preparing Excel…');
+    const rows = ccRows(await allJobs()).map(r => r.map(x => x == null ? '' : x));
+    const d0 = new Date(), stamp = `${d0.getFullYear()}-${p2(d0.getMonth() + 1)}-${p2(d0.getDate())}`;
+    if (!window.XLSX) { try { await loadJs(XLSX_URL); } catch (e) { /* CSV fallback below */ } }
+    const X = window.XLSX;
+    if (!X) {
+      const q = x => { const t = String(x == null ? '' : x); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+      const fn = `SPMS-cash-charge-${stamp}.csv`;
+      return savedToast(await DL.save({ filename: fn, data: '\ufeff' + [CC_HEAD, ...rows].map(r => r.map(q).join(',')).join('\r\n') }), 'Excel library unavailable, saved ' + fn + ' (opens in Excel)');
+    }
+    const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, xlSheet(X, CC_HEAD, rows), 'Cash charge');
+    const filename = `SPMS-cash-charge-${stamp}.xlsx`;
+    savedToast(await DL.save({ filename, data: X.write(wb, { bookType: 'xlsx', type: 'array' }) }), 'Saved ' + filename);
   } catch (e) { if (!(e && e.code === 'declined')) toast(e.message || 'Export failed', 'bad'); }
   finally { exporting = false; }
 }
@@ -7771,6 +7806,7 @@ const A = {
   async saveReturns() { try { await setReturnDeadline($('#rd-mmh').value, $('#rd-other').value); await flushLog(); delete UI.drafts.rdMmh; delete UI.drafts.rdOther; render(); toast('Return deadline saved'); } catch (e) { toast(e.message, 'bad'); } },
   async savePolicy() { try { await setPolicy($('#p-autoMaxValue').value, $('#p-autoMaxQty').value); await flushLog(); delete UI.drafts.autoMaxValue; delete UI.drafts.autoMaxQty; render(); toast('Auto-Rep limits saved'); } catch (e) { toast(e.message, 'bad'); } },
   excel() { exportExcel(); },
+  ccxl() { exportCashCharge(); },
   impTemplate() { downloadTemplate(); },
   vanPick(ds) { const d = sd(); d.picks = (d.picks || []).concat([{ id: ds.id, qty: 1 }]); d.vq = ''; d._err = ''; renderSheet(); const q = $('#f-vq'); if (q) q.focus(); },
   vanUnpick(ds) { const d = sd(); d.picks = (d.picks || []).filter(p => p.id !== ds.id); renderSheet(); },
