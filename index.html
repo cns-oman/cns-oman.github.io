@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261121101838">
+<meta name="spms-build" content="20261121130931">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -8253,38 +8253,66 @@ const dropZone = e => e.target && e.target.closest ? e.target.closest('.drop') :
 document.addEventListener('dragover', e => { const z = dropZone(e); if (z) { e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = dropZone(e); if (z) z.classList.remove('over'); });
 document.addEventListener('drop', e => { const z = dropZone(e); if (!z) return; e.preventDefault(); z.classList.remove('over'); const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) { if (UI.sheet && UI.sheet.name === 'accounts') readAccountsFile(f); else if (UI.sheet && UI.sheet.name === 'machines') readMachinesFile(f); else if (UI.sheet && UI.sheet.name === 'vanadd') readVanFile(f); else readImportFile(f); } });
-/* ---------- the phone's Back button (20 Nov 2026) ----------
+/* ---------- the phone's Back button (20 Nov 2026; Back on the home tab asks first, 21 Nov 2026) ----------
    Back goes back in the page history. SPMS had none of its own, so in the Android app Back closed SPMS at once. Now each
    open layer has one history entry: a tab other than the first (home) tab, a panel, a photo. Back closes the top one
-   (the photo, else the panel, else back to the first tab); on the first tab with nothing open, Back closes SPMS as
-   before. Closing a layer on the screen (×, Close, Esc, a tab) takes its entry away again (history.go). */
+   (the photo, else the panel, else back to the first tab). Under them, once signed in, sits one more entry, the guard:
+   Back on the first tab with nothing open takes it and shows "Press Back again to close SPMS"; a second Back within
+   2 seconds closes SPMS (after 2 seconds, or a touch, the guard is back). Closing a layer on the screen (×, Close, Esc,
+   a tab) takes its entry away again (history.go).
+   Chrome's Back skips an entry when the page added the next one without a touch in between. So SPMS adds entries
+   (pushState) only right after a touch, and otherwise steps forward onto entries it already has (history.go): the guard
+   after the 2 seconds, or an entry Back skipped. Before the first touch there is no guard yet, so Back closes SPMS. */
+const BACK_AGAIN_MS = 2000;
+function onHomeTab() { const me = ME(), tabs = me && !UI.gate ? tabsFor(me) || [] : []; return !tabs.length || !tabs.some(t => t[0] === UI.tab) || UI.tab === tabs[0][0]; }
+const guardOn = () => !!ME() && !UI.gate && !UI.hAsked;
 function backDepth() {
-  let n = 0; const me = ME();
-  if (me && !UI.gate) { const tabs = tabsFor(me) || []; if (tabs.length && tabs.some(t => t[0] === UI.tab) && UI.tab !== tabs[0][0]) n++; }
+  let n = guardOn() ? 1 : 0;
+  if (!onHomeTab()) n++;
   if (UI.sheet) n++;
   if ($('#pv')) n++;
   return n;
 }
+/* a new entry only right after a touch (transient user activation), else Chrome would skip the one below it on Back */
+const canPush = () => { const u = navigator.userActivation; return !u || !!u.isActive; };
+function hGo(n) {
+  const from = UI.hDepth || 0; UI.hDepth = from + n; UI.hBusy = true; history.go(n);
+  clearTimeout(UI.hBusyT); UI.hBusyT = setTimeout(() => { if (UI.hBusy) { UI.hBusy = false; UI.hDepth = from; UI.hTop = from; queueBack(); } }, 1000);   /* the entry was not there */
+}
 function backSync() {
   UI.hQueued = false; if (UI.hBusy) return;
-  const want = backDepth(), have = UI.hDepth || 0;
+  const want = backDepth(), have = UI.hDepth || 0, top = Math.max(UI.hTop || 0, have);
   try {
-    if (want > have) { for (let i = have + 1; i <= want; i++) history.pushState({ spms: i }, ''); UI.hDepth = want; }
-    else if (want < have) { UI.hDepth = want; UI.hBusy = true; history.go(want - have); }
+    if (want > have) {
+      if (top > have) { hGo(Math.min(want, top) - have); return; }   /* entries SPMS already has: step forward onto them */
+      if (!canPush()) return;
+      for (let i = have + 1; i <= want; i++) history.pushState({ spms: i }, '');
+      UI.hDepth = UI.hTop = want;
+    } else if (want < have) hGo(want - have);
   } catch (e) { UI.hBusy = false; }
 }
 function queueBack() { if (!UI.hQueued) { UI.hQueued = true; setTimeout(backSync, 0); } }
 window.addEventListener('popstate', e => {
   const at = (e.state && +e.state.spms) || 0;
-  if (UI.hBusy) { UI.hBusy = false; UI.hDepth = at; queueBack(); return; }   /* our own history.go has arrived */
+  if (UI.hBusy) { UI.hBusy = false; clearTimeout(UI.hBusyT); UI.hDepth = at; queueBack(); return; }   /* our own history.go has arrived */
   UI.hDepth = at;
   if (backDepth() > at) {   /* the user pressed Back: close the top layer */
     if ($('#pv')) photoClose();
     else if (UI.sheet) closeSheet();
-    else { const me = ME(), tabs = me ? tabsFor(me) || [] : []; if (tabs.length) { UI.tab = tabs[0][0]; render(); const s = $('#scr'); if (s) s.scrollTop = 0; } }
+    else if (!onHomeTab()) { const tabs = tabsFor(ME()) || []; UI.tab = tabs[0][0]; render(); const s = $('#scr'); if (s) s.scrollTop = 0; }
+    else if (guardOn()) {   /* only the guard was left: Back on the home tab asks first */
+      UI.hAsked = true; toast('Press Back again to close SPMS');
+      clearTimeout(UI.hAskT); UI.hAskT = setTimeout(() => { UI.hAsked = false; const t = $('#toast'); if (t && /Press Back again/.test(t.textContent)) t.classList.remove('show'); queueBack(); }, BACK_AGAIN_MS);
+    }
   }
   queueBack();
 });
+/* a touch (or a key) puts the guard back at once and lets SPMS add the entries it needs */
+['pointerup', 'click', 'keydown'].forEach(t => document.addEventListener(t, e => {
+  if (t === 'keydown' && (e.key === 'Escape' || e.key === 'Tab')) return;
+  if (UI.hAsked) { UI.hAsked = false; clearTimeout(UI.hAskT); }
+  queueBack();
+}, true));
 /* opened again on an entry SPMS had added before (a reload): count from here */
 try { if (history.state && history.state.spms) history.replaceState(null, ''); } catch (e) { /* no history */ }
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
