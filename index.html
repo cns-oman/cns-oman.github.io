@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261122125319">
+<meta name="spms-build" content="20261124220641">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -7305,50 +7305,42 @@ const BUILTIN_MGR = [
   { email: 'hany.khalifa@cns-me.com', name: 'Hany Khalifa', title: 'Regional Operations Manager', hub: 'MMH' }
 ];
 const builtinMgr = email => BUILTIN_MGR.find(t => t.email === String(email || '').trim().toLowerCase()) || null;
-/* where the link in a password email brings people back to: this copy of SPMS */
-const mailLink = () => ({ url: location.origin + location.pathname.replace(/index\.html$/, '') });
 function randomPw() { const a = new Uint8Array(24); crypto.getRandomValues(a); return 'x' + Array.from(a, b => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 56]).join(''); }
-/* "Get a password by email": a built-in Team Leader without a login gets one first (with a random password nobody
-   knows); then Firebase emails a link to choose a password. Anyone else needs a login the Team Leader made. */
-async function fbSendPwMail(raw) {
-  const email = String(raw || '').trim().toLowerCase();
-  if (!EMAIL_RE.test(email)) throw E('Enter your work email.');
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
-  if (builtinTL(email) || builtinMgr(email)) {
-    const a2 = await fbSecondaryAuth();
-    try { await a2.createUserWithEmailAndPassword(email, randomPw()); }
-    catch (e) { if (!/email-already-in-use/.test(String(e && e.code))) throw mapAuthErr(e, true); }
-    finally { try { await a2.signOut(); } catch (e) { /* already signed out */ } }
-  }
-  try { FB.auth.languageCode = 'en'; } catch (e) { /* default language */ }
-  try { await FB.auth.sendPasswordResetEmail(email, mailLink()); }
-  catch (e) {
-    const c = String((e && e.code) || '');
-    if (/user-not-found/.test(c)) throw E('There is no SPMS login for this email. Ask your Team Leader to add you.');
-    if (/continue-uri|unauthorized-domain/.test(c)) { try { await FB.auth.sendPasswordResetEmail(email); } catch (e2) { throw mapAuthErr(e2); } }
-    else throw mapAuthErr(e);
-  }
-  return email;
+/* a built-in Team Leader or the Operations Manager with no login yet gets one first (a random password nobody knows),
+   so that a password link can be sent to them */
+async function fbEnsureBuiltinLogin(email) {
+  if (!builtinTL(email) && !builtinMgr(email)) return;
+  const a2 = await fbSecondaryAuth();
+  try { await a2.createUserWithEmailAndPassword(email, randomPw()); }
+  catch (e) { if (!/email-already-in-use/.test(String(e && e.code))) throw mapAuthErr(e, true); }
+  finally { try { await a2.signOut(); } catch (e) { /* already signed out */ } }
 }
-SH.pwmail = d => ({
-  title: 'Get a password by email', sub: 'First time, or forgot your password',
-  body: `<div class="infobox">${ic('lock', 'sm')}SPMS emails you a link. Open it, choose your password, then come back and sign in.</div>
-    ${fld('Work email *', `<input class="inp" id="f-email" data-d="email" type="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@cns-me.com" value="${esc(d.email || '')}">`, '', 'f-email')}
-    <p class="hint" style="margin:0">The email comes from <b>noreply@${esc((FB && FB.cfg && FB.cfg.authDomain) || 'firebaseapp.com')}</b>. Not there after 5 minutes? Look in <b>Junk / Spam</b>.</p>`,
-  op: { label: 'Send the email', run: () => fbSendPwMail(d.email), ok: e => `Email sent to ${e}. Open the link in it.` }
-});
-/* the Team Leader sends someone a password email (they forgot theirs) */
+/* the Team Leader sends someone a link to choose a new password (24 Nov 2026). The SPMS Sender makes the link and emails
+   it from SPMS's own mailbox (spms@cns-me.com), like every other SPMS email, never from Firebase's no-reply address.
+   When the Sender can't be reached, nothing is sent and the Team Leader is told to try again. */
+const PW_LINK_ERR = {
+  'no user': 'This person has no login yet. Add them again under Add one.',
+  'no access': 'This person has no access to SPMS.',
+  'not a team leader': 'Only a Team Leader can send password emails. Sign out and in again.',
+  'not signed in': 'Sign out and in again, then try again.',
+  limit: 'Today’s email limit is reached. Try again tomorrow.',
+  'email failed': 'The email could not be sent. Try again in a few minutes.',
+  'no-admin': 'SPMS can’t send password emails right now. Try again in a few minutes.'
+};
 async function fbSendResetFor(email) {
-  mustRole('TL'); email = String(email || '').toLowerCase();
-  try { FB.auth.languageCode = 'en'; } catch (e) { /* default language */ }
-  try { await FB.auth.sendPasswordResetEmail(email, mailLink()); }
-  catch (e) { const c = String((e && e.code) || ''); if (/user-not-found/.test(c)) throw E('This person has no login yet. Add them again under Add one.'); if (/continue-uri|unauthorized-domain/.test(c)) await FB.auth.sendPasswordResetEmail(email); else throw mapAuthErr(e); }
-  return email;
+  mustRole('TL'); email = String(email || '').trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) throw E('This person has no email address.');
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
+  await fbEnsureBuiltinLogin(email);
+  const me = FB.auth.currentUser; if (!me) throw E('Sign in again.');
+  const r = await callSender({ op: 'pw-link-send', t: await me.getIdToken(), email });
+  if (r === 'sent') return email;
+  throw E(PW_LINK_ERR[r] || 'The password email could not be sent. Try again in a few minutes.');
 }
 
-/* the Team Leader sends the password email to many people in one go. Each person gets their own email from Firebase,
-   which sends at most 150 password emails a day on the free plan. People with a username (no email) or no access are skipped. */
-const PW_MAIL_DAY = 150, PW_DAY_MSG = `Tick at most ${PW_MAIL_DAY} people. Firebase sends up to ${PW_MAIL_DAY} password emails a day.`;
+/* the Team Leader sends the password email to many people in one go, one person after another, each from SPMS's own
+   mailbox. People with a username (no email) or no access are skipped. */
+const PW_MAIL_DAY = 150, PW_DAY_MSG = `Tick at most ${PW_MAIL_DAY} people at a time.`;
 async function fbSendResetMany(ids, progress) {
   mustRole('TL');
   if (ids.length > PW_MAIL_DAY) throw E(PW_DAY_MSG);
@@ -7359,13 +7351,14 @@ async function fbSendResetMany(ids, progress) {
     if (isUserLogin(id) || !EMAIL_RE.test(id)) { res.skipped.push(`${name} (username, no email)`); continue; }
     if (u && u.active === false) { res.skipped.push(`${name} (no access)`); continue; }
     try {
-      if (builtinTL(id) || builtinMgr(id)) await fbSendPwMail(id); else await fbSendResetFor(id);   /* a built-in account gets its login first */
+      await fbSendResetFor(id);   /* a built-in account gets its login first */
       res.sent.push(name);
     } catch (e) {
-      res.failed.push(`${name} (${String(e.message || 'not sent').replace(/\.$/, '')})`);
-      if (/too many|wait/i.test(String(e.message))) { ids.slice(i + 1).forEach(x => res.failed.push(`${nameOf(String(x).toLowerCase())} (not tried: try again later)`)); break; }   /* Firebase asked to slow down */
+      const msg = String(e.message || 'not sent');
+      res.failed.push(`${name} (${msg.replace(/\.$/, '')})`);
+      /* the next ones would fail the same way: stop and say so */
+      if (/limit|right now|reach|set up|internet|Sign (out|in)|Only a Team Leader/i.test(msg)) { ids.slice(i + 1).forEach(x => res.failed.push(`${nameOf(String(x).toLowerCase())} (not tried: try again later)`)); break; }
     }
-    if (i < ids.length - 1) await new Promise(r => setTimeout(r, 300));
   }
   if (progress) progress(ids.length, ids.length);
   if (!res.sent.length && !res.failed.length) throw E('Nobody to email: ' + res.skipped.join(', ') + '.');
@@ -7900,7 +7893,8 @@ async function otpLoginCheck(code) {
   throw E({ bad: 'That code is wrong. Check the email and try again.', expired: 'That code has expired. Tap “Send a new code”.', locked: 'Too many wrong tries. Tap “Send a new code”.', 'no code': 'No code yet. Tap “Send a new code”.' }[r] || 'Could not check the code. Try again.');
 }
 
-/* ---------- password reset by code (falls back to the e-mail link if the owner hasn't added the service-account key) ---------- */
+/* ---------- password reset by code. The code email comes from SPMS's own mailbox (spms@cns-me.com); since 24 Nov 2026
+   there is no fallback to Firebase's no-reply email: when the Sender can't send, the person is told to try again. ---------- */
 async function resetSend(email) {
   email = String(email || '').trim().toLowerCase(); if (!EMAIL_RE.test(email)) throw E('Enter your work email.');
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw E('No internet connection. Connect and try again.');
@@ -7911,8 +7905,8 @@ async function resetSend(email) {
     catch (e) { if (!/email-already-in-use/.test(String(e && e.code))) throw mapAuthErr(e, true); }
     finally { try { await a2.signOut(); } catch (e) { /* already out */ } }
   }
-  let r; try { r = await callSender({ op: 'otp-reset-send', email }); } catch (e) { r = 'no-admin'; }   /* if the service can't be reached, use the link */
-  if (r === 'no-admin') { await fbSendPwMail(email); return { mode: 'link', email: email }; }
+  const r = await callSender({ op: 'otp-reset-send', email });
+  if (r === 'no-admin') throw E('SPMS can’t send password emails right now. Try again in a few minutes. If it keeps failing, tell your Team Leader.');
   if (!/^sent/.test(r)) throw E('Could not send a code. Try again.');
   return { mode: 'code', email: email };
 }
@@ -7921,7 +7915,7 @@ async function resetCheck(email, code, pw) {
   const weak = pwProblem(pw); if (weak) throw E(weak + '.');
   const r = await callSender({ op: 'otp-reset-check', email: String(email).toLowerCase(), code: code, pw: String(pw) });
   if (r === 'ok') return true;
-  throw E({ bad: 'That code is wrong.', expired: 'That code has expired. Send a new one.', locked: 'Too many wrong tries. Send a new one.', 'no code': 'No code was sent. Send one first.', short: PW_RULE, weak: 'The password is too weak. ' + PW_RULE, 'no user': 'No SPMS login for this email. Ask the Team Leader.', 'no-admin': 'Reset by code isn’t set up yet. Use the email link instead.' }[r] || 'Could not reset the password. Try again.');
+  throw E({ bad: 'That code is wrong.', expired: 'That code has expired. Send a new one.', locked: 'Too many wrong tries. Send a new one.', 'no code': 'No code was sent. Send one first.', short: PW_RULE, weak: 'The password is too weak. ' + PW_RULE, 'no user': 'No SPMS login for this email. Ask the Team Leader.', 'no-admin': 'SPMS can’t set passwords right now. Try again in a few minutes.' }[r] || 'Could not reset the password. Try again.');
 }
 /* the reset sheet, opened from the sign-in page: step 1 ask for the email, step 2 enter the code and a new password */
 SH.pwmail = d => {
@@ -7937,12 +7931,12 @@ SH.pwmail = d => {
   }
   return {
     title: 'Get a password by email', sub: 'First time, or forgot your password',
-    body: `<div class="infobox">${ic('lock', 'sm')}SPMS emails you a 6-digit code (or a link). Then you choose a new password and sign in.</div>
+    body: `<div class="infobox">${ic('lock', 'sm')}SPMS emails you a 6-digit code. Then you choose a new password and sign in.</div>
       ${fld('Work email *', `<input class="inp" id="f-email" data-d="email" type="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@cns-me.com" value="${esc(d.email || '')}">`, '', 'f-email')}
-      <p class="hint" style="margin:0">The email comes from <b>noreply@${esc((FB && FB.cfg && FB.cfg.authDomain) || 'firebaseapp.com')}</b>. Not there in 5 minutes? Look in <b>Junk / Spam</b>.</p>`,
+      <p class="hint" style="margin:0">The email comes from <b>Fintech SPMS (spms@cns-me.com)</b>. Not there in 5 minutes? Look in <b>Junk / Spam</b>.</p>`,
     op: { label: 'Send the code', run: () => resetSend(d.email),
       /* swap in a fresh sheet so runOp sees UI.sheet change and leaves our new step alone (the old op.stay reset was wiping it) */
-      after: r => { if (r.mode === 'code') { UI.sheet = { name: 'pwmail', p: {}, d: { step: 'code', email: r.email }, seen: null, status: null, upd: null, busy: false }; renderSheet(true); toast(`Code sent to ${r.email}.`); } else { closeSheet(); toast(`Email sent to ${r.email}. Open the link in it to set your password.`); } } }
+      after: r => { UI.sheet = { name: 'pwmail', p: {}, d: { step: 'code', email: r.email }, seen: null, status: null, upd: null, busy: false }; renderSheet(true); toast(`Code sent to ${r.email}.`); } }
   };
 };
 
