@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261121130931">
+<meta name="spms-build" content="20261122125319">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -1116,6 +1116,9 @@ const ST = {
   REPAIRED: { label: 'Repaired · back to Stock', tone: 'ok', who: 'STOCK', next: 'Confirm back in stock' },
   /* a customer's part the Workshop repaired (or could not repair): Stock sends it back to the customer (16 Nov 2026) */
   TO_CUST: { label: 'Back to Stock · to send to the customer', tone: 'ok', who: 'STOCK', next: 'Send to the customer' },
+  /* a chargeable case with no part (22 Nov 2026, e.g. a SW reload): after the Team Leader approves, the Service
+     Coordinator confirms he received it and it closes */
+  SC_CONF: { label: 'Approved · waiting for the Service Coordinator', tone: 'info', who: 'SC', next: 'Confirm receipt' },
   CLOSED: { label: 'Closed', tone: 'ok', who: null, next: '' },
   REJECTED: { label: 'Rejected', tone: 'bad', who: null, next: '' },
   CANCELLED: { label: 'Cancelled', tone: '', who: null, next: '' }
@@ -1137,7 +1140,9 @@ const VAN_ST = { TL: { label: 'Van part use · waiting for Team Leader', next: '
 const XFER_ST = { REPL_CONF: { label: 'On the way to the hub', next: 'Confirm the parts arrived at your hub' }, CLOSED: { label: 'Received at the hub', next: '' } };
 /* a part the Workshop added to repair (16 Nov 2026, e.g. from a scrapped machine): the Team Leader approves it first */
 const WSADD_ST = { TL: { label: 'Workshop part · waiting for Team Leader', next: 'Approve or reject' }, WORKSHOP: { label: 'Approved · ready to repair', next: 'Accept the part' } };
-const TYPE_ST = { rep: REP_ST, ret: RET_ST, van: VAN_ST, xfer: XFER_ST, wsadd: WSADD_ST };
+/* a chargeable case with no part (type 'svc', 22 Nov 2026): Team Leader, then Service Coordinator, then closed */
+const SVC_ST = { TL: { label: 'Chargeable case · waiting for Team Leader', next: 'Approve or reject' }, SC_CONF: { label: 'Approved · waiting for the Service Coordinator', next: 'Confirm receipt' }, CLOSED: { label: 'Closed · received by the Service Coordinator', next: '' } };
+const TYPE_ST = { rep: REP_ST, ret: RET_ST, van: VAN_ST, xfer: XFER_ST, wsadd: WSADD_ST, svc: SVC_ST };
 const stType = j => j.xfer ? 'xfer' : j.type;
 /* the part waits at Stock for the engineer to collect it (instead of a driver bringing it) */
 const COLLECT_ST = {
@@ -1816,7 +1821,7 @@ function mergeJobs() {
   for (const j of (ARCHIVE || [])) m.set(j.id, j);
   for (const j of JOBS_RECENT) m.set(j.id, j);
   for (const j of JOBS_OPEN) m.set(j.id, j);
-  const list = [...m.values()].filter(j => j.status && j.pn).map(normJob).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const list = [...m.values()].filter(j => j.status && (j.pn || j.type === 'svc')).map(normJob).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   notifyChanges(list); JOBS = list; DATAV.jobs++; afterLoad();
 }
 function notifyChanges(list) {
@@ -2409,12 +2414,17 @@ async function vanAddMany(rows, fileName) {
 }
 async function techCancel(id, d) {
   return jobStep(id, ['TL', 'STOCK', 'USE_OK', 'VAN_OK'], 'TECH', async (j, me) => {
-    if (!['req', 'van'].includes(j.type)) throw E('Only part requests can be cancelled.');
+    if (!['req', 'van', 'svc'].includes(j.type)) throw E('Only part requests can be cancelled.');
     const note = (d.cnote || '').trim();
     return saveJob(nextDoc(j, me, 'CANCELLED', 'Cancelled by engineer', note, { outcome: 'Cancelled by engineer' }));
   });
 }
 function checkTl(j, d) {
+  if (isSvc(j)) {   /* a chargeable case with no part: approve as it is, or reject with a reason */
+    if (d.mode !== 'reject') return null;
+    if (!(d.remarks || '').trim()) throw E('Write why you are rejecting it.');
+    return `Reject this chargeable case (${j.work || 'no part'} on ${j.scn})? The engineer sees your reason.`;
+  }
   if (j.type === 'wsadd') {   /* a part the Workshop added: approve as it is, or reject with a reason */
     if (d.mode !== 'reject') return null;
     if (!(d.remarks || '').trim()) throw E('Write why you are rejecting it.');
@@ -2436,6 +2446,10 @@ function chargeAt(j, d, me, now) {
 async function tlDecide(id, d) {
   return jobStep(id, 'TL', 'TL', async (j, me) => {
     checkTl(j, d); let note = (d.remarks || '').trim(); const now = Date.now();
+    if (isSvc(j)) {   /* a chargeable case with no part: approved, it goes to the Service Coordinator (22 Nov 2026) */
+      if (d.mode === 'reject') return saveJob(nextDoc(j, me, 'REJECTED', 'Rejected by Team Leader', note, { tl: { by: me.name, at: now, note, rejected: true }, outcome: 'Rejected' }));
+      return saveJob(nextDoc(j, me, 'SC_CONF', 'Approved by Team Leader', note, { tl: { by: me.name, at: now, note } }));
+    }
     if (j.type === 'wsadd') {   /* approved: the Workshop accepts it and repairs it like any other part */
       if (d.mode === 'reject') return saveJob(nextDoc(j, me, 'REJECTED', 'Rejected by Team Leader', note, { tl: { by: me.name, at: now, note, rejected: true }, outcome: 'Rejected' }));
       return saveJob(nextDoc(j, me, 'WORKSHOP', 'Approved by Team Leader', note, { qtyApproved: j.qty, tl: { by: me.name, at: now, note } }));
@@ -2856,6 +2870,54 @@ function dnOf(d) {
   return p;
 }
 const noReturnOf = (j, d) => ccReturn(j) && d && d.ccto === 'none';
+/* ---------- chargeable case with no part (22 Nov 2026) ----------
+   Work the customer pays for without a spare part, e.g. a software reload. The engineer picks the machine and the work
+   (SW reload or Other), writes the details and the service call number, and adds one photo of the SAR signed by the
+   customer. It never passes Stock and is not taken from his budget: the Team Leader approves or rejects it, then the
+   Service Coordinator confirms he received it and it closes. It is in the Cash charge tab and its Excel. */
+const SVC_WORK = ['SW reload', 'Other'];
+const SAR_MAX = 1;   /* one photo of the signed SAR */
+const SAR_MSG = 'Add a photo of the SAR signed by the customer.';
+const isSvc = j => !!j && j.type === 'svc';
+/* on the Cash charge tab: approved by the Team Leader (waiting for the Service Coordinator, or confirmed) */
+const svcCase = j => isSvc(j) && ['SC_CONF', 'CLOSED'].includes(j.status);
+function sarOf(d) {
+  const p = ((d && d.sar) || []).filter(x => /^data:image\//.test(x)).slice(0, SAR_MAX);
+  if (!p.length) throw E(SAR_MSG);
+  return p;
+}
+function checkSvc(d) {
+  d = d || {};
+  const work = SVC_WORK.includes(d.work) ? d.work : ''; if (!work) throw E('Pick the work: SW reload or Other.');
+  const details = String(d.details || '').trim(); if (!details) throw E(work === 'Other' ? 'Write what work you did.' : 'Write the details of the SW reload.');
+  const scn = String(d.scn || '').trim().toUpperCase(); if (!scn) throw E('Enter the Service Call Number.');
+  const machine = String(d.machine || '').trim().toUpperCase(); if (!machine) throw E('Enter the machine ID.');
+  const sar = sarOf(d), me = ME();
+  const dup = me && JOBS.find(x => isSvc(x) && x.techId === me.id && (x.scn || '') === scn && ['TL', 'SC_CONF'].includes(x.status));
+  if (dup) throw E(`You already have an open chargeable case on ${scn} (${dup.id}).`);
+  return { work, details, scn, machine, sar };
+}
+async function createSvc(d) {
+  const me = mustRole('TECH'), c = checkSvc(d);   /* checkSvc also refuses a second open case on the same service call */
+  const now = Date.now(), id = newId('CHG'), m = findMachine(c.machine) || {};
+  const job = { id, type: 'svc', pn: '', desc: c.work, work: c.work, details: c.details, scn: c.scn, machine: c.machine, machineSn: m.sn || '', model: String(d.model || '').trim(), customer: String(d.customer || '').trim(), contract: String(d.contract || '').trim(), site: String(d.site || '').trim(),
+    chargeable: true, sar: c.sar, urgency: 'normal', note: '', techId: me.id, techName: me.name, hub: myHub(), status: 'TL', open: true, createdAt: now, updatedAt: now, updatedBy: me.name,
+    history: [{ at: now, by: me.name, role: ROLE.TECH, action: 'Chargeable case · no part', note: `${c.work} on ${c.scn} · ${c.machine} · SAR photo added` }] };
+  await saveJob(job); return id;
+}
+/* the Service Coordinator confirms he received the case: it closes. Like jobStep, but without a lock (he is read only
+   everywhere else): the security rules let him close it only while it waits for him, so a second confirmation fails. */
+async function scConfirm(id, d) {
+  must(JOB(id), 'SC_CONF', 'SC');
+  const j = await api.get('jobs', id); if (!j) throw E('This request no longer exists.');
+  const me = must(normJob(j), 'SC_CONF', 'SC');
+  if (!isSvc(j)) throw E('Only a chargeable case with no part is confirmed here.');
+  const outer = REC; REC = { key: rid('U'), id, base: JSON.parse(JSON.stringify(j)), puts: [], takes: [], made: [], main: null, entry: null, n: 0 };
+  try {
+    const note = String((d && d.scnote) || '').trim(), now = Date.now();
+    return await saveJob(nextDoc(j, me, 'CLOSED', 'Received by Service Coordinator', note, { sc: { by: me.name, byId: me.id || '', at: now, note }, outcome: 'Received by Service Coordinator' }));
+  } finally { REC = outer; }
+}
 async function techShip(id, d) {
   return jobStep(id, 'RETURN', 'TECH', async (j, me) => {
     const cc = ccReturn(j), dn = cc ? dnOf(d) : null, now = Date.now();
@@ -3671,7 +3733,7 @@ const TABS = {
 /* an engineer at a regional hub has no van: his "My van" tab is "My hub", the stock on his hub's shelf */
 const noVanMe = me => !!me && me.role === 'TECH' && !hasVan(me.id);
 const tabsFor = me => noVanMe(me) ? TABS.TECH.map(t => t[0] === 'van' ? ['van', 'My hub', 'hub'] : t) : isWsLead(me) ? TABS.WS.concat([['rep', 'Reports', 'chart']]) : TABS[me.role];
-const quickFor = me => noVanMe(me) ? [['sheet', 'new', 'plus', 'New request', 1], ['tab', 'van', 'hub', 'My hub'], ['tab', 'all', 'list', 'My requests']] : QUICK[me.role] || [];
+const quickFor = me => noVanMe(me) ? [['sheet', 'new', 'plus', 'New request', 1], SVC_QA, ['tab', 'van', 'hub', 'My hub'], ['tab', 'all', 'list', 'My requests']] : QUICK[me.role] || [];
 /* the Workshop sees parts sent for repair only from 08:00 on the next working day (the morning batch) */
 function myJobs(me) { return me.role === 'TECH' ? JOBS.filter(j => j.techId === me.id) : me.role === 'WS' ? JOBS.filter(j => wsSees(j, me)) : JOBS; }
 /* the Workshop sees the parts sent to it (from the morning batch on), the repairs it accepted, and the parts it added
@@ -3790,8 +3852,10 @@ function homeCard(me, n) {
     <div class="h-row"><button class="h-pill" data-a="filter" data-v="open"><b>${open}</b>${me.role === 'WS' ? 'in workshop' : 'open'}</button><button class="h-pill" data-a="filter" data-v="closed"><b>${done}</b>${me.role === 'WS' ? 'repaired' : 'completed'}</button></div></section>`;
 }
 /* round shortcuts under the home card: [action, value, icon, label, primary] */
+/* a chargeable case with no part, e.g. a SW reload (22 Nov 2026) */
+const SVC_QA = ['sheet', 'svc', 'wallet', 'Chargeable · no part'];
 const QUICK = {
-  TECH: [['sheet', 'new', 'plus', 'New request', 1], ['sheet', 'vanuse', 'wrench', 'Use from van'], ['tab', 'van', 'van', 'My van'], ['tab', 'all', 'list', 'My requests']],
+  TECH: [['sheet', 'new', 'plus', 'New request', 1], ['sheet', 'vanuse', 'wrench', 'Use from van'], SVC_QA, ['tab', 'van', 'van', 'My van'], ['tab', 'all', 'list', 'My requests']],
   TL: [['goReport', 'dash', 'chart', 'Dashboard'], ['goReport', 'returns', 'ret', 'Returns'], ['goReport', 'stock', 'box', 'Stock levels'], ['excel', '', 'download', 'Excel']],
   STOCK: [['sheet', 'receive', 'plus', 'Receive', 1], ['sheet', 'import', 'sheet', 'Import Excel'], ['sheet', 'sendvan', 'send', 'Send to van'], ['sheet', 'sendhub', 'hub', 'Send to a hub'], ['tab', 'inv', 'search', 'Find stock']],
   WS: [['sheet', 'wsadd', 'plus', 'Add part to repair', 1]]   /* a part that did not come from a return, e.g. from a scrapped machine (16 Nov 2026) */
@@ -3815,6 +3879,7 @@ function steps(j) {
   if (j.type === 'hubrep' && j.xfer) return [['Sent by the Muscat Main Hub', true], ['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']];
   if (j.type === 'hubrep') return [['Refill raised', true], ['Sent by the Muscat Main Hub', !!j.dispatch]].concat(dc, [['Arrived at ' + (HUB_NAME[j.to] || j.to), j.status === 'CLOSED']]);
   if (j.type === 'ret') return [['Sent back by the engineer', true], ['Received at ' + (HUB_NAME[j.hub] || j.hub), j.status === 'CLOSED']];
+  if (isSvc(j)) return [['Chargeable case sent', true], ['Team Leader approved', !!j.tl && !j.tl.rejected], ['Received by the Service Coordinator', j.status === 'CLOSED' && !!j.sc]];
   if (isCustPart(j)) return [['Added by the Workshop', true], ['Workshop repair done', !!w.doneAt], ['Sent to the customer', j.status === 'CLOSED' && !!j.toCust]];
   if (j.type === 'wsadd') return [['Added by the Workshop', true], ['Team Leader approved', !!j.tl && !j.tl.rejected], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   const tail = r.noReturn ? [['No return · left with the customer', true], ['Closed', j.status === 'CLOSED']]   /* cash charge: the part stayed on site (17 Nov 2026) */
@@ -3842,7 +3907,8 @@ function kindPills(j) {
   if (j.type === 'hubrep') s += `<span class="pill">${j.xfer ? 'Hub transfer' : 'Hub refill'} · ${esc(j.to || '')}</span>`;
   if (j.type === 'ret') s += `<span class="pill">Return · ${esc(isVan(j.from) ? 'van' : j.from || '')}</span>`;
   if (j.type === 'wsadd') s += isCustPart(j) ? '<span class="pill">Customer part</span>' : '<span class="pill">Workshop part</span>';
-  if (j.chargeable) s += '<span class="pill">Chargeable</span>';
+  if (isSvc(j)) s += '<span class="pill">Chargeable · no part</span>';   /* 22 Nov 2026 */
+  else if (j.chargeable) s += '<span class="pill">Chargeable</span>';
   if (fromHub(j)) s += `<span class="pill">From ${esc(j.hub)} stock</span>`;
   if (j.backorder) s += '<span class="pill">Back-order</span>';
   if (j.split) s += '<span class="pill">Separate return</span>';
@@ -3854,7 +3920,7 @@ function jobMeta(j, me) {
   return `${me.role !== 'TECH' ? esc(j.techName) + ' · ' : ''}<span class="mono">${esc(j.scn)}</span> · ${esc(j.machine)}${j.customer ? ' · ' + esc(j.customer) : ''}`;
 }
 /* one icon per step, so a list can be read at a glance */
-const ST_IC = { TL: 'check', STOCK: 'box', VAN_OK: 'van', DISPATCHED: 'truck', DRV_COUR: 'truck', RECEIVED: 'wrench', RETURN: 'ret', RETURNING: 'truck', ATHUB: 'hub', WORKSHOP: 'wrench', REPAIRING: 'gear', REPAIRED: 'check', TO_CUST: 'truck', CLOSED: 'check', REJECTED: 'ban', CANCELLED: 'ban' };
+const ST_IC = { SC_CONF: 'wallet', TL: 'check', STOCK: 'box', VAN_OK: 'van', DISPATCHED: 'truck', DRV_COUR: 'truck', RECEIVED: 'wrench', RETURN: 'ret', RETURNING: 'truck', ATHUB: 'hub', WORKSHOP: 'wrench', REPAIRING: 'gear', REPAIRED: 'check', TO_CUST: 'truck', CLOSED: 'check', REJECTED: 'ban', CANCELLED: 'ban' };
 function jobRow(j, me) {
   const mine = myTurn(j, me), late = isLate(j);
   const tone = late ? 'bad' : !isOpenStatus(j.status) ? (j.status === 'CLOSED' ? 'ok' : j.status === 'REJECTED' ? 'bad' : '') : (ST[j.status] || {}).tone || '';
@@ -3863,6 +3929,7 @@ function jobRow(j, me) {
   else if (j.status === 'REPAIRING') extra = `${tmState(j) === 'running' ? 'Running' : tmState(j) === 'paused' ? 'Paused' : 'Not started'} · <span data-timer="${esc(j.id)}">${fmtDur(repairMs(j))}</span>`;
   const rem = j.status === 'RETURN' && (j.reminders || []).length ? `<span class="remline">${ic('bell', 'sm')}Team Leader reminder · ${esc(rel(j.reminders[j.reminders.length - 1].at))}</span>` : '';
   if (j.type === 'ret') return retRow(j, me, mine, tone);
+  if (isSvc(j)) return svcRow(j, me, mine, tone);
   const who = isCustPart(j) ? `Customer · ${esc(j.customer || '')}` : j.type === 'wsadd' ? `Workshop · ${esc(j.byName || '')}` : j.type === 'rep' ? `${esc(j.techName)}’s van` : j.type === 'hubrep' ? `${j.xfer ? 'To' : 'Refill ·'} ${esc(HUB_NAME[j.to] || j.to)}` : me.role !== 'TECH' ? esc(j.techName) : j.scn ? `<span class="mono">${esc(j.scn)}</span>` : '';
   const title = j.desc || partName(j.pn) || (j.type === 'rep' ? 'Van restock' : 'Request');
   return `<button class="jcard ${mine ? 'mine' : ''} ${late ? 'late' : ''}" data-a="sheet" data-s="job" data-id="${esc(j.id)}">
@@ -3872,6 +3939,14 @@ function jobRow(j, me) {
       <span class="j-t3">${mine && stNext(j) ? `<span class="next">${esc(stNext(j))}${ic('chev')}</span>` : stChip(j)}${lateChip(j)}${slaChip(j)}</span>
       ${extra ? `<span class="wait">${extra}</span>` : ''}${rem}</span>
   </button>`;
+}
+/* a chargeable case with no part in a list: the work, the machine and the service call (22 Nov 2026) */
+function svcRow(j, me, mine, tone) {
+  return `<button class="jcard ${mine ? 'mine' : ''}" data-a="sheet" data-s="job" data-id="${esc(j.id)}">
+    <span class="j-ic ${tone ? 't-' + tone : ''}">${ic(ST_IC[j.status] || 'wallet')}</span>
+    <span class="j-main"><span class="j-t1"><b>${esc(j.work || 'Chargeable case')}</b><span class="when">${rel(j.updatedAt)}</span></span>
+      <span class="j-t2"><span class="mono">${esc(j.machine || '–')}</span>${me.role !== 'TECH' ? `<span>· ${esc(j.techName)}</span>` : `<span>· <span class="mono">${esc(j.scn || '')}</span></span>`}${kindPills(j)}</span>
+      <span class="j-t3">${mine && stNext(j) ? `<span class="next">${esc(stNext(j))}${ic('chev')}</span>` : stChip(j)}${slaChip(j)}</span></span></button>`;
 }
 /* multi-part requests waiting for the Team Leader show as ONE card (the group); everything else as its own card */
 function todoRows(jobs, me) {
@@ -3936,7 +4011,7 @@ function todoView(me) {
 
 const FILTERS = [['open', 'Open'], ['closed', 'Completed'], ['rejected', 'Rejected'], ['all', 'All']];
 const inFilter = (j, f) => f === 'all' || (f === 'open' ? isOpenStatus(j.status) : f === 'closed' ? j.status === 'CLOSED' : ['REJECTED', 'CANCELLED'].includes(j.status));
-function jobText(j) { return [j.id, j.pn, j.desc, j.scn, j.machine, j.model, j.techName, j.customer, j.dispatch && j.dispatch.sn, j.ret && j.ret.sn, j.ret && j.ret.snWas, j.parent].join(' ').toLowerCase(); }
+function jobText(j) { return [j.id, j.pn, j.desc, j.details, j.scn, j.machine, j.model, j.techName, j.customer, j.dispatch && j.dispatch.sn, j.ret && j.ret.sn, j.ret && j.ret.snWas, j.parent].join(' ').toLowerCase(); }
 function allView(me) {
   const base = myJobs(me), f = UI.filter || 'open';
   const cnt = {}; for (const [v] of FILTERS) cnt[v] = base.filter(j => inFilter(j, v)).length;
@@ -3957,17 +4032,23 @@ function allList(me) {
 /* chargeable replaced parts the engineer sent back to Stock with the Delivery Note photo, or left with the customer
    (No return). Read only: the coordinator updates the cash charge case outside SPMS. */
 function ccView() {
-  return `<button class="btn sec block" data-a="ccxl">${ic('download', 'sm')}Download Excel · all cases</button>
+  const me = ME(), todo = JOBS.filter(j => isSvc(j) && j.status === 'SC_CONF' && myTurn(j, me)).sort((a, b) => (+a.updatedAt || 0) - (+b.updatedAt || 0));
+  const conf = todo.length ? `<section class="blk"><div class="sec-h"><h2>To confirm · ${todo.length}</h2></div><div class="jobs">${todo.map(j => svcRow(j, me, true, '')).join('')}</div></section>` : '';
+  return `${conf}<button class="btn sec block" data-a="ccxl">${ic('download', 'sm')}Download Excel · all cases</button>
   ${searchBox('ccq', 'ccq', 'Search part, SCN, machine, serial, engineer', UI.ccq || '')}<div id="live-cc">${ccList()}</div>`;
 }
+/* every cash-charge case: parts sent back or left with the customer, and chargeable cases with no part (22 Nov 2026) */
+const ccAny = j => ccCase(j) || svcCase(j);
+const ccAt = j => isSvc(j) ? +(j.tl && j.tl.at) || +j.updatedAt || 0 : +j.ret.dnAt || +j.updatedAt || 0;
 function ccList() {
   const q = String(UI.ccq || '').trim().toLowerCase();
-  const all = JOBS.filter(ccCase).filter(j => !q || jobText(j).includes(q)).sort((a, b) => (+b.ret.dnAt || +b.updatedAt || 0) - (+a.ret.dnAt || +a.updatedAt || 0));
+  const all = JOBS.filter(ccAny).filter(j => !q || jobText(j).includes(q)).sort((a, b) => ccAt(b) - ccAt(a));
   const shown = all.slice(0, 200);
   const more = allLoaded() ? '' : `<button class="btn sec block" data-a="older">${ic('clock', 'sm')}Load older requests</button>`;
-  return `${shown.length ? `<div class="jobs">${shown.map(ccRow).join('')}</div>` : emptyBox(q ? 'No matches' : 'No cash-charge cases yet', q ? 'Try another search.' : 'When an engineer sends back a cash-charge part, or leaves it with the customer, it shows here with the Delivery Note photo.')}${all.length > shown.length ? `<p class="note">Showing 200 of ${all.length}. Search to narrow it.</p>` : ''}${more}`;
+  return `${shown.length ? `<div class="jobs">${shown.map(ccRow).join('')}</div>` : emptyBox(q ? 'No matches' : 'No cash-charge cases yet', q ? 'Try another search.' : 'When an engineer sends back a cash-charge part, or leaves it with the customer, it shows here with the Delivery Note photo. A chargeable case with no part shows here once the Team Leader approves it.')}${all.length > shown.length ? `<p class="note">Showing 200 of ${all.length}. Search to narrow it.</p>` : ''}${more}`;
 }
 function ccRow(j) {
+  if (isSvc(j)) return svcRow(j, ME(), false, j.status === 'CLOSED' ? 'ok' : '');
   const r = j.ret, title = r.name || j.desc || partName(r.pn) || 'Part';
   return `<button class="jcard" data-a="sheet" data-s="job" data-id="${esc(j.id)}">
     <span class="j-ic ${r.noReturn ? 't-warn' : 't-ok'}">${ic(r.noReturn ? 'pin' : 'ret')}</span>
@@ -4144,7 +4225,7 @@ function chime(force) {
 }
 let headsT;
 const HEAD_TITLE = { TL: 'New part request', STOCK: 'Approved · ready to send', DISPATCHED: 'Part on the way to you', RECEIVED: 'Record the replacement', RETURN: 'Return due', RETURNING: 'Return on the way', ATHUB: 'Return to route', WORKSHOP: 'Part sent for repair', REPAIRING: 'Repair to finish', REPAIRED: 'Repaired part coming back' };
-function headTitle(j) { if (j.type === 'wsadd') return { TL: 'Workshop part to approve', WORKSHOP: 'Workshop part approved · ready to repair', REJECTED: 'Workshop part rejected', TO_CUST: 'Customer part to send' }[j.status] || HEAD_TITLE[j.status] || stLabel(j); if (j.type === 'ret') return j.status === 'RETURNING' ? 'Parts coming back to the Main Hub' : stLabel(j); if (j.type === 'rep') return { TL: 'Van restock to approve', STOCK: 'Van restock to send', DISPATCHED: 'Restock on the way to your van' }[j.status] || 'Van restock'; return HEAD_TITLE[j.status] || stNext(j) || 'Update'; }
+function headTitle(j) { if (isSvc(j)) return { TL: 'Chargeable case to approve', SC_CONF: 'Chargeable case to confirm', REJECTED: 'Chargeable case rejected' }[j.status] || stLabel(j); if (j.type === 'wsadd') return { TL: 'Workshop part to approve', WORKSHOP: 'Workshop part approved · ready to repair', REJECTED: 'Workshop part rejected', TO_CUST: 'Customer part to send' }[j.status] || HEAD_TITLE[j.status] || stLabel(j); if (j.type === 'ret') return j.status === 'RETURNING' ? 'Parts coming back to the Main Hub' : stLabel(j); if (j.type === 'rep') return { TL: 'Van restock to approve', STOCK: 'Van restock to send', DISPATCHED: 'Restock on the way to your van' }[j.status] || 'Van restock'; return HEAD_TITLE[j.status] || stNext(j) || 'Update'; }
 function headsUp(items) {
   if (!items.length) return;
   const it = items[0], more = items.length - 1;
@@ -4156,7 +4237,7 @@ function headsUp(items) {
 }
 function hideHeads() { clearTimeout(headsT); const h = $('#heads'); if (h) h.classList.remove('show'); }
 function hideHeadsFor(id) { const h = $('#heads'); if (h && h.classList.contains('show') && h.querySelector(`[data-id="${CSS.escape(id)}"]`)) hideHeads(); }
-const jobHead = j => ({ s: 'job', id: j.id, icon: j.type === 'rep' ? 'van' : ST_IC[j.status] || 'bell2', title: headTitle(j), urgent: j.urgency === 'urgent' && j.status === 'TL', line: j.type === 'wsadd' ? `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${isCustPart(j) ? 'for ' + (j.customer || 'the customer') : 'added by ' + (j.byName || 'the Workshop')}` : j.type === 'ret' ? `${jobQty(j)} part${jobQty(j) === 1 ? '' : 's'} · ${j.desc || ''} · ${j.techName}` : `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${j.type === 'rep' ? j.techName + '’s van' : j.techName}` });
+const jobHead = j => ({ s: 'job', id: j.id, icon: j.type === 'rep' ? 'van' : ST_IC[j.status] || 'bell2', title: headTitle(j), urgent: j.urgency === 'urgent' && j.status === 'TL', line: isSvc(j) ? `${j.work || 'Chargeable case'} · no part · ${j.machine || ''} · ${j.scn || ''} · ${j.techName || ''}` : j.type === 'wsadd' ? `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${isCustPart(j) ? 'for ' + (j.customer || 'the customer') : 'added by ' + (j.byName || 'the Workshop')}` : j.type === 'ret' ? `${jobQty(j)} part${jobQty(j) === 1 ? '' : 's'} · ${j.desc || ''} · ${j.techName}` : `${j.pn} × ${jobQty(j)}${j.desc ? ' · ' + j.desc : ''} · ${j.type === 'rep' ? j.techName + '’s van' : j.techName}` });
 
 
 function sheetErr(e) {
@@ -4238,6 +4319,7 @@ const histFold = (j, turn) => `<details class="fold"${turn ? '' : ' open'}><summ
 SH.job = (d, p) => {
   const j = JOB(p.id); if (!j) return { title: 'Not found', body: emptyBox('This request no longer exists', '') };
   if (j.type === 'ret') return retSheet(j, d);
+  if (isSvc(j)) return svcSheet(j, d);
   const me = ME(), turn = myTurn(j, me), alts = altActions(j, me);
   let a = null;
   if (d.alt) a = altForm(j, me, d); else if (turn) a = actionForm(j, me, d);
@@ -4765,7 +4847,7 @@ function compressPhoto(file) {
   });
 }
 async function addPhotos(key, files) {
-  const s = UI.sheet; if (!s) return; const d = s.d; d[key] = d[key] || []; const max = key === 'rcpt' ? RCPT_MAX : key === 'dn' ? DN_MAX : PHOTO_MAX;
+  const s = UI.sheet; if (!s) return; const d = s.d; d[key] = d[key] || []; const max = key === 'rcpt' ? RCPT_MAX : key === 'dn' ? DN_MAX : key === 'sar' ? SAR_MAX : PHOTO_MAX;
   for (const f of files) {
     if (d[key].length >= max) { toast(max === 1 ? 'One photo here.' : `Up to ${max} photos.`); break; }
     if (!/^image\//.test(f.type)) continue;
@@ -4921,6 +5003,58 @@ function retSheet(j, d) {
   if (me && me.role === 'TL' && lastUndo(j) && inMyHub(jobHub(j), me)) body += `<div class="alts"><button class="btn sm sec" data-a="alt" data-v="undo">Undo the last step</button></div>`;
   body += histFold(j, turn);
   return { title: turn && open ? stNext(j) : 'Return to the Main Hub', sub: `${esc(j.techName)} · <span class="mono">${esc(j.id)}</span>`, body, op };
+}
+
+/* ---------- chargeable case with no part (22 Nov 2026), e.g. a SW reload ---------- */
+/* the engineer: the machine, the work and its details, the service call number and one photo of the signed SAR */
+SH.svc = d => {
+  const me = ME(); if (!me || me.role !== 'TECH') return { title: 'Chargeable case · no part', body: '<div class="err">Only an engineer can open this.</div>' };
+  return {
+    title: 'Chargeable case · no part', sub: 'No spare part · goes to the Team Leader, then the Service Coordinator',
+    body: `<div class="infobox">${ic('wallet', 'sm')}<span>For work the customer pays for without a spare part, for example a SW reload. Nothing goes through Stock and nothing is taken from your budget. The Team Leader approves it, then the Service Coordinator confirms he received it.</span></div>
+      ${fld('Work *', segBtns(d, 'work', SVC_WORK.map(w => [w, w])))}
+      ${area(d, 'details', 'Details *', d.work === 'Other' ? 'What work did you do?' : 'e.g. Software version loaded, reason for the reload')}
+      ${inp(d, 'scn', 'Service Call Number *', 'e.g. SCN-26-04831', { mono: true, auto: 'scn' })}${machineField(d)}${autoHint(d, 'scn', 'machine')}
+      <div class="two">${inp(d, 'model', 'Machine model', '')}${inp(d, 'customer', 'Customer / bank', '')}</div>${inp(d, 'site', 'Site', 'Branch or address')}
+      ${photoField(d, 'sar', 'Photo of the signed SAR', true, { max: SAR_MAX, need: 'A photo of the SAR signed by the customer is required.', ok: 'The Team Leader and the Service Coordinator can see it.' })}`,
+    op: { label: 'Send to Team Leader', check: () => { const c = checkSvc(d); return `Send this chargeable case (${c.work} on ${c.scn}) to the Team Leader?`; }, run: () => createSvc(d), after: () => { UI.tab = 'all'; UI.filter = 'open'; }, ok: 'Sent to the Team Leader' }
+  };
+};
+/* the case itself: the Team Leader approves or rejects it, the Service Coordinator confirms he received it */
+function svcSheet(j, d) {
+  const me = ME(), turn = myTurn(j, me);
+  const fact = (k, v) => v ? `<div class="fact"><span>${k}</span><b>${v}</b></div>` : '';
+  const sub = `${esc(j.techName)} · <span class="mono">${esc(j.scn || j.id)}</span>`;
+  if (d.alt === 'undo') { const a = undoForm(j, d); return { title: a.title, sub, body: a.form + histFold(j, false), op: a.op }; }
+  if (/^hold/.test(d.alt || '')) { const a = slaAltForm(j, me, d); return { title: a.title, sub, body: a.form + histFold(j, false), op: a.op }; }
+  if (d.alt === 'cancel') return { title: 'Cancel chargeable case', sub, body: box(`<p style="margin:0">Cancel the chargeable case <b>${esc(j.work || '')}</b> on <span class="mono">${esc(j.scn)}</span>? Use this when it was sent by mistake.</p>${area(d, 'cnote', 'Reason (optional)', 'e.g. Wrong machine')}`) + histFold(j, false),
+    op: { label: 'Cancel', cls: 'danger', danger: true, yes: 'Yes, cancel it', check: () => 'Cancel this chargeable case? It closes and the Team Leader no longer sees it.', run: () => techCancel(j.id, d), ok: 'Cancelled' } };
+  const st = steps(j), cur = st.findIndex(x => !x[1]), doneN = st.filter(x => x[1]).length;
+  const pbar = ['REJECTED', 'CANCELLED'].includes(j.status) ? '' : `<div class="pbar" aria-label="${doneN} of ${st.length} steps done"><div class="segs">${st.map(([, ok], i) => `<i class="${ok ? 'on' : i === cur ? 'cur' : ''}"></i>`).join('')}</div><div class="lab"><span>${cur < 0 ? '<b>All steps done</b>' : `Next: <b>${esc(st[cur][0])}</b>`}</span><span>${doneN} of ${st.length}</span></div></div>`;
+  const facts = fact('Engineer', esc(j.techName)) + fact('Work', esc(j.work || '')) + fact('Service call', `<span class="mono">${esc(j.scn || '–')}</span>`)
+    + fact('Machine', `<span class="mono">${esc(j.machine || '–')}${j.machineSn && j.machineSn !== j.machine ? ' · SN ' + esc(j.machineSn) : ''}</span>`) + fact(j.customer || !j.site ? 'Customer' : 'Site', esc(j.customer || j.site || '–')) + fact('Sent', fmtDT(j.createdAt));
+  let body = `<div class="card"><div class="chips">${stChip(j)}${slaChip(j)}${kindPills(j)}</div><div class="jh-t">${esc(j.work || 'Chargeable case')} · no part</div><div class="facts">${facts}</div>${j.details ? `<p style="margin:0;white-space:pre-wrap">${esc(j.details)}</p>` : ''}${pbar}${slaBox(j, me)}${stWho(j) && !turn ? `<div class="infobox nextbox"><span>Next: <b>${esc(ROLE[stWho(j)])}</b> · ${esc(stNext(j))}</span></div>` : ''}</div>`;
+  let op = null;
+  if (turn && j.status === 'TL') {
+    if (!d.mode) d.mode = 'approve';
+    body += box(`<div class="infobox">${ic('wallet', 'sm')}<span>${esc(j.techName)} did <b>${esc(j.work || '')}</b> on <span class="mono">${esc(j.machine || '')}</span> with no spare part. After you approve, the Service Coordinator gets it with the SAR photo and confirms he received it.</span></div>
+      ${segBtns(d, 'mode', [['approve', 'Approve'], ['reject', 'Reject']])}${area(d, 'remarks', d.mode === 'reject' ? 'Why are you rejecting it? *' : 'Remarks (optional)', 'Visible to the engineer')}`);
+    op = { label: d.mode === 'reject' ? 'Reject' : 'Approve', cls: d.mode === 'reject' ? 'danger' : 'ok', danger: true, yes: 'Yes, reject', check: () => checkTl(j, d), run: () => tlDecide(j.id, d), ok: d.mode === 'reject' ? 'Rejected' : 'Approved. Next: the Service Coordinator' };
+  } else if (turn && j.status === 'SC_CONF') {
+    body += box(`<p style="margin:0">Approved by ${esc((j.tl && j.tl.by) || 'the Team Leader')}${j.tl && j.tl.at ? ', ' + fmtDT(j.tl.at) : ''}${j.tl && j.tl.note ? ': ' + esc(j.tl.note) : ''}. Check the SAR photo below, then confirm you received this chargeable case. It closes.</p>${area(d, 'scnote', 'Note (optional)', 'e.g. Cash charge case number')}`);
+    op = { label: 'Confirm receipt', cls: 'ok', yes: 'Yes, confirm', check: () => 'Confirm you received this chargeable case? It closes.', run: () => scConfirm(j.id, d), ok: 'Received · the case is closed' };
+  }
+  const alts = [];
+  if (me && me.role === 'TECH' && j.techId === me.id && j.status === 'TL') alts.push(['cancel', 'Cancel']);
+  if (me && me.role === 'TL' && lastUndo(j) && inMyHub(jobHub(j), me)) alts.push(['undo', 'Undo the last step']);
+  for (const x of slaAlts(j, me)) alts.push(x);
+  if (alts.length) body += `<div class="alts">${alts.map(([v, l]) => `<button class="btn sm sec" data-a="alt" data-v="${v}">${esc(l)}</button>`).join('')}</div>`;
+  body += `<details class="fold"><summary>Details<span class="t3 mono">${esc(j.id)}</span></summary><div class="fold-b">${dl([['Reference', `<span class="mono">${esc(j.id)}</span>`], ['Hub', esc(HUB_NAME[jobHub(j)] || jobHub(j))], j.model && ['Model', esc(j.model)], j.site && j.customer && ['Site', esc(j.site)],
+    j.tl && ['Team Leader', `${j.tl.rejected ? '<b>Rejected</b>' : 'Approved'} by ${esc(j.tl.by)}, ${fmtDT(j.tl.at)}${j.tl.note ? ': ' + esc(j.tl.note) : ''}`],
+    j.sc && ['Service Coordinator', `Received by ${esc(j.sc.by)}, ${fmtDT(j.sc.at)}${j.sc.note ? ': ' + esc(j.sc.note) : ''}`], j.outcome && ['Outcome', esc(j.outcome)]])}</div></details>`;
+  body += `<section class="blk"><div class="card">${photoStrip(j.sar, 'SAR · signed by the customer')}</div></section>`;
+  body += histFold(j, turn);
+  return { title: turn ? stNext(j) : 'Chargeable case · no part', sub, body, op };
 }
 
 /* ---------- engineer: add a part to their own van ---------- */
@@ -6151,7 +6285,7 @@ const REPORT_FN = { dash: repDash, returns: repReturns, stock: repStock, eng: re
 
 /* ---------- Excel workbook ---------- */
 const cv = x => x == null ? '' : x;
-const JOB_TYPE = { req: 'Request', rep: 'Van restock', van: 'Used from van', hubrep: 'Hub refill', ret: 'Return to Main Hub' };
+const JOB_TYPE = { req: 'Request', rep: 'Van restock', van: 'Used from van', hubrep: 'Hub refill', ret: 'Return to Main Hub', svc: 'Chargeable case · no part' };
 const REQ_COLS = [
   ['Request', j => j.id], ['Type', j => j.xfer ? 'Hub transfer' : JOB_TYPE[j.type] || 'Request'], ['Parent request', j => j.parent || ''], ['Created', j => isoDT(j.createdAt)], ['Engineer', j => j.techName],
   ['Part number', j => j.pn], ['Description', j => j.desc], ['Qty requested', j => j.qty], ['Qty approved', j => j.qtyApproved || ''], ['Qty sent', j => j.dispatch ? jobQty(j) : ''],
@@ -6169,12 +6303,16 @@ const REQ_COLS = [
 const DB_COLS = REQ_COLS.map(c => c[0]);
 /* Cash charge cases, one row each (19 Nov 2026): the Service Coordinator downloads them from the Cash charge tab,
    and the database workbook has the same sheet. */
-const CC_HEAD = ['Request', 'Date', 'Engineer', 'Part number', 'Part name', 'Serial number', 'Qty', 'Machine ID', 'Service call number', 'Customer', 'Where the part went'];
+/* chargeable cases with no part (22 Nov 2026) are in it too, from the Team Leader's approval: their details and when the
+   Service Coordinator confirmed he received them */
+const CC_HEAD = ['Request', 'Date', 'Engineer', 'Part number', 'Part name', 'Serial number', 'Qty', 'Machine ID', 'Service call number', 'Customer', 'Where the part went', 'Details (no part)', 'Received by Service Coordinator'];
 function ccRows(jobs) {
-  return jobs.filter(ccCase).sort((a, b) => (+b.ret.dnAt || +b.updatedAt || 0) - (+a.ret.dnAt || +a.updatedAt || 0)).map(j => {
+  return jobs.filter(ccAny).sort((a, b) => ccAt(b) - ccAt(a)).map(j => {
+    if (isSvc(j)) return [j.id, isoDT(ccAt(j)), j.techName || '', '', 'No part · ' + (j.work || ''), '', '', j.machine || '', j.scn || '', j.customer || '', 'No part', j.details || '',
+      j.sc ? isoDT(j.sc.at) + ' · ' + (j.sc.by || '') : 'Waiting'];
     const r = j.ret;
     return [j.id, isoDT(+r.dnAt || r.shippedAt || j.updatedAt), j.techName || '', r.pn || '', r.name || j.desc || partName(r.pn) || '', r.sn || '', r.qty || 1,
-      j.machine || '', j.scn || '', j.customer || '', r.noReturn ? 'No return · left with the customer' : 'Sent to Stock'];
+      j.machine || '', j.scn || '', j.customer || '', r.noReturn ? 'No return · left with the customer' : 'Sent to Stock', '', ''];
   });
 }
 function buildSheets(jobs, led, adj) {
