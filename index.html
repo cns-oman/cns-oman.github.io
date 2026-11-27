@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="SPMS Oman">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="spms-build" content="20261124220641">
+<meta name="spms-build" content="20261125142831">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
 <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
@@ -1138,8 +1138,9 @@ const RET_ST = {
 const VAN_ST = { TL: { label: 'Van part use · waiting for Team Leader', next: 'Approve or reject' } };
 /* parts Stock sends from the Muscat Main Hub to a regional hub (type 'hubrep' with xfer) */
 const XFER_ST = { REPL_CONF: { label: 'On the way to the hub', next: 'Confirm the parts arrived at your hub' }, CLOSED: { label: 'Received at the hub', next: '' } };
-/* a part the Workshop added to repair (16 Nov 2026, e.g. from a scrapped machine): the Team Leader approves it first */
-const WSADD_ST = { TL: { label: 'Workshop part · waiting for Team Leader', next: 'Approve or reject' }, WORKSHOP: { label: 'Approved · ready to repair', next: 'Accept the part' } };
+/* a part the Workshop added to repair (16 Nov 2026, e.g. from a scrapped machine): the Workshop Team Leader approves it
+   first (only he, since 25 Nov 2026; the status stays 'TL') */
+const WSADD_ST = { TL: { label: 'Workshop part · waiting for Workshop Team Leader', next: 'Approve or reject' }, WORKSHOP: { label: 'Approved · ready to repair', next: 'Accept the part' } };
 /* a chargeable case with no part (type 'svc', 22 Nov 2026): Team Leader, then Service Coordinator, then closed */
 const SVC_ST = { TL: { label: 'Chargeable case · waiting for Team Leader', next: 'Approve or reject' }, SC_CONF: { label: 'Approved · waiting for the Service Coordinator', next: 'Confirm receipt' }, CLOSED: { label: 'Closed · received by the Service Coordinator', next: '' } };
 const TYPE_ST = { rep: REP_ST, ret: RET_ST, van: VAN_ST, xfer: XFER_ST, wsadd: WSADD_ST, svc: SVC_ST };
@@ -1311,7 +1312,8 @@ const searchBox = (id, key, ph, val) => `<div class="searchbox">${ic('search')}<
    - The Workshop has one step only: receiving the part for repair. */
 const SLA_STEPS = [
   { k: 'tl', label: 'Approve the request', who: 'Team Leader', kind: 'urg', def: [1, 0] },
-  { k: 'tlx', label: 'Approve van part use or a Workshop part', who: 'Team Leader', kind: 'one', def: [1] },
+  { k: 'tlx', label: 'Approve van part use', who: 'Team Leader', kind: 'one', def: [1] },
+  { k: 'wsl', label: 'Approve a Workshop part', who: 'Workshop Team Leader', kind: 'one', def: [1] },
   { k: 'tm', label: 'Technical Manager approval', who: 'Technical Manager', kind: 'one', def: [1] },
   { k: 'stock', label: 'Pick and dispatch', who: 'Stock', kind: 'urg', def: [1, 0] },
   { k: 'drv', label: 'Hand the part to the courier', who: 'Driver', kind: 'one', def: [1] },
@@ -1326,7 +1328,7 @@ const SLA_STEPS = [
   { k: 'replc', label: 'Confirm the parts arrived at the hub', who: 'Engineer', kind: 'one', def: [4] }
 ];
 /* who must act on each step (the roles in SPMS) */
-const SLA_WHO = { tl: 'TL', tlx: 'TL', tm: 'TM', stock: 'STOCK', drv: 'DRIVER', rcv: 'TECH', act: 'TECH', rret: 'STOCK', route: 'STOCK', ws: 'WS', back: 'STOCK', cust: 'STOCK', repl: 'STOCK', replc: 'TECH' };
+const SLA_WHO = { tl: 'TL', tlx: 'TL', wsl: 'WSL', tm: 'TM', stock: 'STOCK', drv: 'DRIVER', rcv: 'TECH', act: 'TECH', rret: 'STOCK', route: 'STOCK', ws: 'WS', back: 'STOCK', cust: 'STOCK', repl: 'STOCK', replc: 'TECH' };
 const SLA_MAX = 30, SLA_ESC_DAYS = 2;
 const slaStep = k => SLA_STEPS.find(s => s.k === k) || null;
 /* the days of every step: what the Team Leader saved, else the defaults */
@@ -1343,7 +1345,7 @@ function slaDays(cfg) {
 function slaKey(j) {
   if (!j || !j.status) return '';
   switch (j.status) {
-    case 'TL': return j.type === 'van' || j.type === 'wsadd' ? 'tlx' : 'tl';
+    case 'TL': return j.type === 'wsadd' ? 'wsl' : j.type === 'van' ? 'tlx' : 'tl';   /* a Workshop part: the Workshop Team Leader (25 Nov 2026) */
     case 'TM': return 'tm';
     case 'STOCK': return 'stock';
     case 'DRV_PICK': case 'DRV_GO': case 'DRV_COUR': case 'DRV_RET_PICK': case 'DRV_RET_GO': case 'REPL_GO': return 'drv';
@@ -2300,6 +2302,7 @@ const isOwner = (o, me) => !o || isWsLead(me) || (o.id ? o.id === me.id : o.name
 function myTurn(j, me) {
   me = me || ME(); if (!me) return false;
   if (wsHeld(j)) return false;   /* waits for the morning repair batch */
+  if (j.type === 'wsadd' && j.status === 'TL') return isWsLead(me);   /* a part the Workshop added: only the Workshop Team Leader approves it (25 Nov 2026) */
   if (stWho(j) === 'TM') return isTM(me);
   if (stWho(j) !== me.role) return false;
   if (me.role === 'TECH') return j.techId === me.id;
@@ -2450,10 +2453,7 @@ async function tlDecide(id, d) {
       if (d.mode === 'reject') return saveJob(nextDoc(j, me, 'REJECTED', 'Rejected by Team Leader', note, { tl: { by: me.name, at: now, note, rejected: true }, outcome: 'Rejected' }));
       return saveJob(nextDoc(j, me, 'SC_CONF', 'Approved by Team Leader', note, { tl: { by: me.name, at: now, note } }));
     }
-    if (j.type === 'wsadd') {   /* approved: the Workshop accepts it and repairs it like any other part */
-      if (d.mode === 'reject') return saveJob(nextDoc(j, me, 'REJECTED', 'Rejected by Team Leader', note, { tl: { by: me.name, at: now, note, rejected: true }, outcome: 'Rejected' }));
-      return saveJob(nextDoc(j, me, 'WORKSHOP', 'Approved by Team Leader', note, { qtyApproved: j.qty, tl: { by: me.name, at: now, note } }));
-    }
+    if (j.type === 'wsadd') throw E('Only the Workshop Team Leader can approve or reject a Workshop part.');   /* 25 Nov 2026: see wslDecide */
     if (d.mode !== 'reject') {
       const q = parseInt(d.q, 10) || j.qty; if (q !== j.qty) note = `Quantity changed ${j.qty} → ${q}` + (note ? '. ' + note : '');
       const ch = chargeAt(j, d, me, now), chSet = ch ? ch.set : {}, hn = ch ? ch.txt + (note ? '. ' + note : '') : note;   /* the history says when the Team Leader changed the chargeable case */
@@ -3042,12 +3042,13 @@ async function sendReplacement(j, d, me, now, repId) {
 }
 /* ---------- Workshop: add a part to repair (16 Nov 2026) ----------
    A part that did not come back from an engineer, e.g. one taken from a scrapped machine. The Workshop (or the Workshop
-   Team Leader) records it with where it came from; the Team Leader approves or rejects it. Once approved it is repaired
+   Team Leader) records it with where it came from; the Workshop Team Leader approves or rejects it (the Team Leader did
+   until 25 Nov 2026). Once approved it is repaired
    like any other part: repaired → back to Stock (Stock puts it on a shelf), can't be repaired → the scrap pool.
    The request (type 'wsadd') keeps the part in ret, as a returned part, so the Workshop steps work unchanged; it has no
    engineer, no route and no return deadline, so the return reports leave it out. */
-/* 16 Nov 2026: two destinations. "stock": a part to repair for our stock (e.g. from a scrapped machine); the Team Leader
-   approves it first, and a repaired part goes back to stock (one that can't be repaired to the scrap pool). "customer": a
+/* 16 Nov 2026: two destinations. "stock": a part to repair for our stock (e.g. from a scrapped machine); the Workshop Team
+   Leader approves it first (25 Nov 2026), and a repaired part goes back to stock (one that can't be repaired to the scrap pool). "customer": a
    customer's part sent in for repair (e.g. cassettes); no approval, it goes straight into the Workshop person's repairs; when
    it is repaired, or can't be repaired, the Workshop sends it to Stock and Stock sends it back to the customer. It is not
    linked to a machine and never goes into stock. */
@@ -3079,6 +3080,18 @@ async function wsAddPart(d) {
   await saveJob(doc);
   log({ t: 'Added to the Workshop', pn: a.pn, sn: a.sn, qty: a.qty, from: a.from, to: 'Workshop', ref: id, note: a.note });
   return doc;
+}
+/* a part the Workshop added (type 'wsadd', status 'TL'): only the Workshop Team Leader approves or rejects it (Mohamed,
+   25 Nov 2026; before, the Team Leader did). Approved, the Workshop accepts it and repairs it like any other part. The
+   decision stays in j.tl, as before, so the reports and the Excel read it the same way. */
+async function wslDecide(id, d) {
+  return jobStep(id, 'TL', 'WS', async (j, me) => {
+    if (!isWsLead(me)) throw E('Only the Workshop Team Leader can approve or reject a Workshop part.');
+    if (j.type !== 'wsadd') throw E('Only the Team Leader can decide this request.');
+    checkTl(j, d); const note = (d.remarks || '').trim(), now = Date.now();
+    if (d.mode === 'reject') return saveJob(nextDoc(j, me, 'REJECTED', 'Rejected by Workshop Team Leader', note, { tl: { by: me.name, at: now, note, rejected: true, wsl: true }, outcome: 'Rejected' }));
+    return saveJob(nextDoc(j, me, 'WORKSHOP', 'Approved by Workshop Team Leader', note, { qtyApproved: j.qty, tl: { by: me.name, at: now, note, wsl: true } }));
+  });
 }
 async function wsAccept(id) {
   return jobStep(id, 'WORKSHOP', 'WS', async (j, me) => {
@@ -3737,7 +3750,7 @@ const quickFor = me => noVanMe(me) ? [['sheet', 'new', 'plus', 'New request', 1]
 /* the Workshop sees parts sent for repair only from 08:00 on the next working day (the morning batch) */
 function myJobs(me) { return me.role === 'TECH' ? JOBS.filter(j => j.techId === me.id) : me.role === 'WS' ? JOBS.filter(j => wsSees(j, me)) : JOBS; }
 /* the Workshop sees the parts sent to it (from the morning batch on), the repairs it accepted, and the parts it added
-   itself (waiting for the Team Leader, or rejected). The Workshop Team Leader sees every Workshop repair and every
+   itself (waiting for the Workshop Team Leader, or rejected). The Workshop Team Leader sees every Workshop repair and every
    added part (16 Nov 2026). */
 function wsSees(j, me) {
   if (j.type === 'wsadd' && (isWsLead(me) || j.byId === me.id)) return true;
@@ -3881,7 +3894,7 @@ function steps(j) {
   if (j.type === 'ret') return [['Sent back by the engineer', true], ['Received at ' + (HUB_NAME[j.hub] || j.hub), j.status === 'CLOSED']];
   if (isSvc(j)) return [['Chargeable case sent', true], ['Team Leader approved', !!j.tl && !j.tl.rejected], ['Received by the Service Coordinator', j.status === 'CLOSED' && !!j.sc]];
   if (isCustPart(j)) return [['Added by the Workshop', true], ['Workshop repair done', !!w.doneAt], ['Sent to the customer', j.status === 'CLOSED' && !!j.toCust]];
-  if (j.type === 'wsadd') return [['Added by the Workshop', true], ['Team Leader approved', !!j.tl && !j.tl.rejected], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
+  if (j.type === 'wsadd') return [['Added by the Workshop', true], [j.tl && !j.tl.wsl ? 'Team Leader approved' : 'Workshop Team Leader approved', !!j.tl && !j.tl.rejected], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   const tail = r.noReturn ? [['No return · left with the customer', true], ['Closed', j.status === 'CLOSED']]   /* cash charge: the part stayed on site (17 Nov 2026) */
     : [['Return sent', !!r.shippedAt], ['Return received at Stock', !!r.hubAt], ['Workshop accepted', !!w.inAt], ['Repaired', w.outcome === 'Repaired'], ['Closed', j.status === 'CLOSED']];
   if (j.type === 'van') return (j.van ? [['Asked to use from van', true], ['Team Leader approved', !!j.use || (!!j.tl && !j.tl.rejected && !j.tl.withdrawn)], ['Used from van stock', !!j.use]] : [['Used from van stock', true]]).concat(tail);   /* older records: used without approval */
@@ -4486,7 +4499,7 @@ function actionForm(j, me, d) {
         if (!d.mode) d.mode = 'approve'; const src = j.src || {};
         return { form: box(`<div class="infobox">${ic('wrench', 'sm')}<span>${esc(j.byName || 'The Workshop')} added <b class="mono">${esc(j.pn)} ${r.sn ? 'SN ' + esc(r.sn) : '× ' + (r.qty || j.qty)}</b> (${esc(j.desc || '')}) to repair. From: <b>${esc(src.from || '')}</b>${src.note ? ' · ' + esc(src.note) : ''}. After you approve, the Workshop repairs it: a repaired part goes back to Stock, one that can’t be repaired goes to the scrap pool.</span></div>
           ${segBtns(d, 'mode', [['approve', 'Approve'], ['reject', 'Reject']])}${area(d, 'remarks', d.mode === 'reject' ? 'Why are you rejecting it? *' : 'Remarks (optional)', 'Visible to the Workshop')}`),
-          op: { label: d.mode === 'reject' ? 'Reject' : 'Approve', cls: d.mode === 'reject' ? 'danger' : 'ok', danger: true, yes: 'Yes, reject', check: () => checkTl(j, d), run: () => tlDecide(j.id, d), ok: d.mode === 'reject' ? 'Rejected' : 'Approved. Next: the Workshop repairs it' } };
+          op: { label: d.mode === 'reject' ? 'Reject' : 'Approve', cls: d.mode === 'reject' ? 'danger' : 'ok', danger: true, yes: 'Yes, reject', check: () => checkTl(j, d), run: () => wslDecide(j.id, d), ok: d.mode === 'reject' ? 'Rejected' : 'Approved. Next: the Workshop repairs it' } };
       }
       if (!d.mode) d.mode = 'approve'; if (d.q == null) d.q = j.qty; if (!d.reason) d.reason = REJECT_REASONS[0];
       if (d.charge == null && canCharge(j)) d.charge = j.chargeable ? '1' : '';
@@ -5092,14 +5105,14 @@ SH.wsadd = d => {
   return {
     title: 'Add part to repair', sub: 'A part that didn’t come from a return',
     body: `${fld('Where does it go after the repair?', segBtns(d, 'dest', [['stock', 'Back to stock'], ['customer', 'Back to the customer']]))}
-      <div class="infobox">${ic('wrench', 'sm')}<span>${cust ? 'A customer’s part sent in for repair (e.g. cassettes). No approval: it goes straight to your repairs. When it is repaired, or can’t be repaired, you send it to Stock and Stock sends it back to the customer. It is not linked to a machine and never goes into stock.' : 'For our stock, e.g. a part from a scrapped machine. The Team Leader approves it first. Then you repair it like any other part: a repaired part goes back to Stock, one that can’t be repaired goes to the scrap pool.'}</span></div>
+      <div class="infobox">${ic('wrench', 'sm')}<span>${cust ? 'A customer’s part sent in for repair (e.g. cassettes). No approval: it goes straight to your repairs. When it is repaired, or can’t be repaired, you send it to Stock and Stock sends it back to the customer. It is not linked to a machine and never goes into stock.' : 'For our stock, e.g. a part from a scrapped machine. The Workshop Team Leader approves it first. Then you repair it like any other part: a repaired part goes back to Stock, one that can’t be repaired goes to the scrap pool.'}</span></div>
       ${inp(d, 'pn', 'Part number *', 'e.g. 01750123456', { mono: true, live: 'rcvsug', auto: 'pn' })}<div id="live-rcvsug">${rcvSuggest(d)}</div>${inp(d, 'name', known ? 'Part name' : 'Part name *', known ? known.name || '' : 'Filled in for known part numbers')}
       <div class="two">${inp(d, 'sn', 'Serial number', 'As printed on the part', { mono: true })}${inp(d, 'qty', 'Quantity', '1', { type: 'number', num: true })}</div><span class="hint">With a serial number the quantity is 1. Leave the serial number empty for parts that have none.</span>
       ${cust ? `<div class="two">${inp(d, 'cust', 'Customer *', 'e.g. Bank Muscat')}${inp(d, 'cref', 'Customer reference', 'Optional · e.g. delivery note')}</div>` : inp(d, 'from', 'Where did it come from? *', 'e.g. Scrapped machine ABO-FFM6047')}
       ${area(d, 'note', 'Note', 'Optional · condition, what is wrong')}`,
     op: cust
       ? { label: 'Add to my repairs', check: () => { const a = wsAddCheck(d); return `Add ${a.pn}${a.sn ? ' SN ' + a.sn : ' × ' + a.qty} from ${a.customer} to your repairs?`; }, run: () => wsAddPart(d), ok: 'Added to your repairs' }
-      : { label: 'Send to Team Leader', check: () => { const a = wsAddCheck(d); return `Add ${a.pn}${a.sn ? ' SN ' + a.sn : ' × ' + a.qty} (from ${a.from}) and send it to the Team Leader to approve?`; }, run: () => wsAddPart(d), ok: 'Sent to the Team Leader to approve' }
+      : { label: 'Send to Workshop Team Leader', check: () => { const a = wsAddCheck(d); return `Add ${a.pn}${a.sn ? ' SN ' + a.sn : ' × ' + a.qty} (from ${a.from}) and send it to the Workshop Team Leader to approve?`; }, run: () => wsAddPart(d), ok: 'Sent to the Workshop Team Leader to approve' }
   };
 };
 
@@ -7174,7 +7187,7 @@ const SLA_PERIODS = [[7, '7 days'], [30, '30 days'], [90, '90 days']];
 function slaWho(j, x) {
   if (x.who === 'TECH') return j.techName || 'Engineer';
   if (x.who === 'TM') return 'Technical Manager';
-  const o = stepOwner(j); return (o && o.name) || `${ROLE[x.who]} · ${HUB_NAME[jobHub(j)] || jobHub(j)}`;
+  const o = stepOwner(j); return (o && o.name) || `${ROLE[x.who] || x.step.who} · ${HUB_NAME[jobHub(j)] || jobHub(j)}`;
 }
 const slaDone = (jobs, since) => [].concat(...jobs.map(j => (Array.isArray(j.slaLog) ? j.slaLog : []).filter(e => +e.at >= since && slaStep(e.k)).map(e => Object.assign({ id: j.id }, e))));
 function slaOpen(now) { return JOBS.filter(j => isOpenStatus(j.status)).map(j => ({ j, x: slaOf(j, now) })).filter(o => o.x); }
